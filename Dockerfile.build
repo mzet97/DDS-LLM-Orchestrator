@@ -1,0 +1,37 @@
+# Dockerfile for building spike-interop with CycloneDDS
+# Uses a container with ext4 filesystem to avoid symlink issues
+FROM rust:1.85-bookworm AS builder
+
+RUN apt-get update && apt-get install -y \
+    cmake \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /usr/src/tese
+
+# Copy the entire project
+COPY . .
+
+# Build CycloneDDS C library first
+WORKDIR /usr/src/tese/third_party/cyclonedds-rust/cyclonedds-rust/vendor/cyclonedds
+RUN mkdir -p build && cd build && \
+    cmake .. -DBUILD_SHARED_LIBS=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_POSITION_INDEPENDENT_CODE=ON && \
+    cmake --build . --target ddsc -j$(nproc)
+
+# Set environment for Rust build
+ENV CYCLONEDDS_BUILD=/usr/src/tese/third_party/cyclonedds-rust/cyclonedds-rust/vendor/cyclonedds/build
+ENV CYCLONEDDS_SRC=/usr/src/tese/third_party/cyclonedds-rust/cyclonedds-rust/vendor/cyclonedds
+
+# Build the Rust project
+WORKDIR /usr/src/tese/src/rust
+RUN cargo build -p spike-interop --features dds --release
+
+# Copy the built binaries to output
+FROM debian:bookworm-slim
+COPY --from=builder /usr/src/tese/src/rust/target/release/pub-task /usr/local/bin/
+COPY --from=builder /usr/src/tese/src/rust/target/release/sub-task /usr/local/bin/
+COPY --from=builder /usr/src/tese/src/rust/target/release/pub-stream /usr/local/bin/
+COPY --from=builder /usr/src/tese/src/rust/target/release/sub-stream /usr/local/bin/
+COPY --from=builder /usr/src/tese/src/rust/target/release/llm-client /usr/local/bin/
+
+CMD ["echo", "Binaries built successfully"]

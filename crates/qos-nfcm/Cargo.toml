@@ -1,0 +1,19 @@
+[package]
+name = "qos-nfcm"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Neuro-Fuzzy Cognitive Map para seleção adaptativa de QoS (porte Rust do neuro_fuzzy Python)."
+
+[dependencies]
+rayon = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+# (criterion pode ser adicionado para benchmarks; testes cobrem a corretude)
+
+[lib]
+name = "qos_nfcm"

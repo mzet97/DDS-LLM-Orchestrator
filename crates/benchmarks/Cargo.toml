@@ -1,0 +1,40 @@
+[package]
+name = "benchmarks"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Geração de carga E1–E5/OP1–OP4 + coleta JSONL. Porte de benchmarks/ e benchmarks/qualificacao (Python). Análise estatística permanece no Python."
+
+[dependencies]
+client = { path = "../client" }
+dds-contract = { path = "../dds-contract" }
+dds-dataspace = { path = "../dds-dataspace" }
+qos-nfcm = { path = "../qos-nfcm" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+futures = { workspace = true }
+uuid = { version = "1", features = ["v4"] }
+cyclonedds = { workspace = true, optional = true }
+
+[features]
+default = []
+# Liga o runtime CycloneDDS (build C via cmake) e o driver DDS real.
+# `agent/dds` está aqui (e não forçado no dev-dependency abaixo) para que
+# `cargo check/test --workspace --all-targets` sem `--features dds` NÃO
+# dispare o build C do CycloneDDS via `tests/dds_loopback.rs` (que já é
+# `#![cfg(feature = "dds")]`) — ver OPTIMIZATION_AUDIT.md item corrigido.
+dds = ["dep:cyclonedds", "client/dds", "dds-dataspace/dds", "dds-contract/dds", "agent/dds"]
+
+[[bin]]
+name = "dds-bench"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile = "3"
+agent = { path = "../agent" }

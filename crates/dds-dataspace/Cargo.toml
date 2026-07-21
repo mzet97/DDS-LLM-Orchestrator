@@ -1,0 +1,27 @@
+[package]
+name = "dds-dataspace"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Camada DDS: readers/writers, WaitSet nativo, caches lock-free, zero-copy. Substitui dds_backend/."
+
+[dependencies]
+dds-contract = { path = "../dds-contract" }
+orch-common = { path = "../orch-common" }
+cyclonedds = { workspace = true, optional = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+futures-core = "0.3"
+async-stream = "0.3"
+async-trait = "0.1"
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+ahash = { workspace = true }
+crossbeam-channel = { workspace = true }
+parking_lot = { workspace = true }
+tracing = { workspace = true }
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dds-contract/dds"]

@@ -1,0 +1,74 @@
+[package]
+name = "spike-interop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Spike de interoperabilidade Rust↔Python↔C++ via DDS (Fase 0b)."
+
+[dependencies]
+cyclonedds = { workspace = true, optional = true }
+dds-contract = { path = "../dds-contract" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dds-contract/dds"]
+
+[[bin]]
+name = "pub-task"
+path = "src/bin/pub_task.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "sub-task"
+path = "src/bin/sub_task.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "llm-client"
+path = "src/bin/llm_client.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "pub-stream"
+path = "src/bin/pub_stream.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "sub-stream"
+path = "src/bin/sub_stream.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "repro-layout"
+path = "src/bin/repro_layout.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "dump-ops"
+path = "src/bin/dump_ops.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "rtt-bench"
+path = "src/bin/rtt_bench.rs"
+required-features = ["dds"]
+
+[[bench]]
+name = "roundtrip"
+harness = false
+required-features = ["dds"]
+
+[[bin]]
+name = "diag-knobs"
+path = "src/bin/diag_knobs.rs"
+required-features = ["dds"]

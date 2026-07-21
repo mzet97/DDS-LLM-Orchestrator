@@ -1,0 +1,35 @@
+[package]
+name = "observability"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Observabilidade: sink JSONL, coletores QoS/Trace e trackers (tokens/RTT/custo). Porte de observability/, qos_collector/, trace_collector/, metrics/ (Python)."
+
+[dependencies]
+dds-contract = { path = "../dds-contract" }
+dds-dataspace = { path = "../dds-dataspace" }
+orch-common = { path = "../orch-common" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dashmap = { workspace = true }
+ahash = { workspace = true }
+futures = { workspace = true }
+cyclonedds = { workspace = true, optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+
+[features]
+default = []
+# Liga o runtime CycloneDDS (build C via cmake) e os tipos reais do contrato.
+dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+
+[[bin]]
+name = "observability-collector"
+path = "src/main.rs"

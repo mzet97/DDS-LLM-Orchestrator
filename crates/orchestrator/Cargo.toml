@@ -1,0 +1,37 @@
+[package]
+name = "orchestrator"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Orquestrador: ingestão HTTP (axum) + scheduler/registry/selector + decisão de QoS (NFCM)."
+
+[dependencies]
+dds-dataspace = { path = "../dds-dataspace" }
+dds-contract = { path = "../dds-contract" }
+orch-common = { path = "../orch-common" }
+llm-gateway = { path = "../llm-gateway" }
+qos-nfcm = { path = "../qos-nfcm" }
+tokio = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+futures-util = "0.3"
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+ahash = { workspace = true }
+cyclonedds = { workspace = true, optional = true }
+parking_lot = { workspace = true }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+
+[[bin]]
+name = "orchestrator"
+path = "src/main.rs"

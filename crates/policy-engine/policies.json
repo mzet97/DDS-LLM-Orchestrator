@@ -1,0 +1,84 @@
+{
+  "version": 2,
+  "rules": {
+    "llm_inference": {
+      "allowed_agents": [
+        "CodeReviewAgent",
+        "EmbeddedSystemsAgent",
+        "DocumentationAgent",
+        "TestAgent"
+      ],
+      "agent_policies": {
+        "CodeReviewAgent": {
+          "allowed_model_policies": ["BALANCED", "CRITICAL"],
+          "allowed_security_levels": ["PUBLIC", "INTERNAL"],
+          "allowed_providers": ["openrouter", "local-cuda", "local-amd", "local-metal"],
+          "default_model": "deepseek/deepseek-v4-flash",
+          "max_tokens_per_request": 4096,
+          "max_temperature": 0.3
+        },
+        "EmbeddedSystemsAgent": {
+          "allowed_model_policies": ["BALANCED", "CRITICAL"],
+          "allowed_security_levels": ["PUBLIC", "INTERNAL", "CONFIDENTIAL"],
+          "allowed_providers": ["local-cuda", "local-amd", "local-metal"],
+          "default_model": "deepseek/deepseek-v4-pro",
+          "max_tokens_per_request": 8192,
+          "max_temperature": 0.2
+        },
+        "DocumentationAgent": {
+          "allowed_model_policies": ["LOW_COST", "BALANCED"],
+          "allowed_security_levels": ["PUBLIC"],
+          "allowed_providers": ["openrouter", "local-cuda", "local-amd", "local-metal"],
+          "default_model": "google/gemini-3-flash-preview",
+          "max_tokens_per_request": 8192,
+          "max_temperature": 0.5
+        },
+        "TestAgent": {
+          "allowed_model_policies": ["LOW_COST"],
+          "allowed_security_levels": ["PUBLIC"],
+          "allowed_providers": ["openrouter"],
+          "default_model": "qwen/qwen3.6-35b-a3b",
+          "max_tokens_per_request": 1024,
+          "max_temperature": 0.2
+        }
+      },
+      "default_action": "DENY"
+    },
+    "model_routing": {
+      "LOW_COST": {
+        "primary": "qwen/qwen3.6-35b-a3b",
+        "fallback": ["google/gemini-3-flash-preview", "deepseek/deepseek-v4-flash"]
+      },
+      "BALANCED": {
+        "primary": "deepseek/deepseek-v4-flash",
+        "fallback": ["google/gemini-3-flash-preview", "deepseek/deepseek-v4-pro"]
+      },
+      "CRITICAL": {
+        "primary": "deepseek/deepseek-v4-pro",
+        "fallback": ["moonshotai/kimi-k2.6", "deepseek/deepseek-v4-flash"]
+      }
+    },
+    "security_routing": {
+      "PUBLIC": {
+        "allowed_providers": ["openrouter", "local-cuda", "local-amd", "local-metal"]
+      },
+      "INTERNAL": {
+        "allowed_providers": ["openrouter", "local-cuda", "local-amd", "local-metal"]
+      },
+      "CONFIDENTIAL": {
+        "allowed_providers": ["local-cuda", "local-amd", "local-metal"]
+      }
+    },
+    "tool_call": {
+      "agent_tool_allowlist": {
+        "CodeReviewAgent": ["filesystem.read_file", "filesystem.list_directory"],
+        "EmbeddedSystemsAgent": ["filesystem.read_file", "filesystem.list_directory"],
+        "DocumentationAgent": ["filesystem.read_file", "filesystem.list_directory"],
+        "TestAgent": ["filesystem.read_file"]
+      },
+      "high_risk_tools": ["filesystem.write_file"],
+      "high_risk_action": "DENY",
+      "default_action": "DENY"
+    }
+  }
+}

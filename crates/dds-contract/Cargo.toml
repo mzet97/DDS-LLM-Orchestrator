@@ -1,0 +1,26 @@
+[package]
+name = "dds-contract"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Tipos DDS gerados de OrchestratorDDS.idl (+ V4) via cyclonedds-build + perfis de QoS."
+
+[dependencies]
+cyclonedds = { workspace = true, optional = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+regex = "1"
+tokio = { workspace = true }
+futures = { workspace = true }
+
+[build-dependencies]
+cyclonedds-build = { path = "../../../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds-build" }
+regex = "1"
+
+[features]
+default = []
+# Liga geração IDL + runtime CycloneDDS (build C via cmake).
+dds = ["dep:cyclonedds"]

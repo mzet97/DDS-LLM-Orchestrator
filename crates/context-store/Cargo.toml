@@ -1,0 +1,34 @@
+[package]
+name = "context-store"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Context Store: persiste contexto conversacional (Context.Snapshot/Context.Update). Substitui context_store/ (Python)."
+
+[dependencies]
+dds-contract = { path = "../dds-contract" }
+dds-dataspace = { path = "../dds-dataspace" }
+orch-common = { path = "../orch-common" }
+cyclonedds = { workspace = true, optional = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dashmap = { workspace = true }
+ahash = { workspace = true }
+# StreamExt para consumir as streams por evento do DataSpace no serviço DDS.
+futures = { workspace = true }
+# Apenas o binário (subscriber de logs, paridade com logging.basicConfig do Python).
+tracing-subscriber = { workspace = true }
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+
+[[bin]]
+name = "context-store"
+path = "src/main.rs"
+required-features = ["dds"]

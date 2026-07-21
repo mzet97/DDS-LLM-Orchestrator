@@ -1,0 +1,31 @@
+[package]
+name = "policy-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Motor de políticas de segurança: avaliação de regras (policies.json), cache local com TTL e distribuição de snapshots/deltas via DDS. Substitui policy_engine/ Python."
+
+[dependencies]
+dds-contract = { path = "../dds-contract" }
+dds-dataspace = { path = "../dds-dataspace" }
+orch-common = { path = "../orch-common" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dashmap = { workspace = true }
+ahash = { workspace = true }
+futures = { workspace = true }
+cyclonedds = { workspace = true, optional = true }
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+
+[[bin]]
+name = "policy-engine"
+path = "src/main.rs"

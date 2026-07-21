@@ -1,0 +1,22 @@
+[package]
+name = "llm-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Gateway LLM: roteia requisições a provedores (local C++ / cloud), multi-worker real. Substitui llm_gateway/."
+
+[dependencies]
+dds-dataspace = { path = "../dds-dataspace" }
+dds-contract = { path = "../dds-contract" }
+orch-common = { path = "../orch-common" }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+async-trait = "0.1"
+dashmap = { workspace = true }
+ahash = { workspace = true }
+
+[features]
+default = []
+dds = ["dds-dataspace/dds", "dds-contract/dds"]

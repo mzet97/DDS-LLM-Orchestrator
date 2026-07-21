@@ -1,0 +1,2 @@
+[target.x86_64-unknown-linux-gnu]
+rustflags = ["-C", "linker=cc", "-C", "link-arg=-fuse-ld=bfd", "-C", "link-arg=-L/run/host/var/mnt/HD1TB/tese/third_party/cyclonedds-rust/cyclonedds-rust/vendor/cyclonedds/build/lib", "-C", "link-arg=-Wl,--whole-archive", "-C", "link-arg=-l:libddsc.a", "-C", "link-arg=-Wl,--no-whole-archive", "-C", "link-arg=-ldl", "-C", "link-arg=-lpthread", "-C", "link-arg=-lrt", "-C", "link-arg=-lm", "-C", "link-arg=-Wl,--allow-multiple-definition"]

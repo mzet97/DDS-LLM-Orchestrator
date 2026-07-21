@@ -1,0 +1,31 @@
+[package]
+name = "mcp-gateway"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "MCP Gateway: expõe ferramentas (filesystem/github/web/database/ci-cd) via ToolCall.Request com governança por política. Substitui mcp_gateway/."
+
+[dependencies]
+dds-contract = { path = "../dds-contract" }
+dds-dataspace = { path = "../dds-dataspace" }
+orch-common = { path = "../orch-common" }
+cyclonedds = { workspace = true, optional = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dashmap = { workspace = true }
+# Stream trait (poll_next) para consumir DataSpaceApi::subscribe_* sem futures-util.
+futures-core = "0.3"
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+
+[[bin]]
+name = "mcp-gateway"
+path = "src/main.rs"
+required-features = ["dds"]
