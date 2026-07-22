@@ -117,3 +117,57 @@ async fn t403_agente_morto_reatribui_tasks() {
         "reaper não reatribuiu a task do agente morto para PENDING"
     );
 }
+
+/// Regressão (Rodada 5, 2026-07-22): achado em produção real — um agente
+/// travado (heartbeat parado, processo ainda vivo) ficou re-detectado como
+/// morto pelo reaper A CADA CICLO (a cada `check_every`) por MAIS DE 2 HORAS
+/// contínuas, porque `reap_dead_agents` nunca removia o agente de
+/// `last_seen` — o mesmo timestamp obsoleto continuava batendo no filtro
+/// `duration_since(...) > stale_after` para sempre. Efeito observável:
+/// `QoS.Violation("liveliness_lost")` republicado (e o warn de log) em todo
+/// ciclo, não só uma vez. Este teste prova que, com o fix (`last_seen.remove`
+/// após reap), o agente morto gera EXATAMENTE 1 violação, não N.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t403b_agente_morto_nao_republica_violacao_a_cada_ciclo() {
+    const DOMAIN_B: u32 = 106; // distinto de DOMAIN=101 acima, mesmo arquivo de teste
+    let orch =
+        Arc::new(OrchestratorDds::new(DOMAIN_B, Arc::new(qos_nfcm::Nfcm::qos_default())).unwrap());
+    let _feeders = orch.spawn_cache_feeders();
+    // Ciclos rápidos (stale_after=1s, check a cada 300ms) para observar
+    // várias oportunidades de re-detecção dentro de poucos segundos de
+    // teste — sem isto, levaria minutos para provar "não repete".
+    let _mon = orch.spawn_registry_monitor(Duration::from_secs(1), Duration::from_millis(300));
+
+    let mut violations = Box::pin(orch.dataspace().stream_qos_violations());
+
+    let ds_agent = DataSpace::new(DOMAIN_B, DataSpace::STRENGTH_AGENT).unwrap();
+    ds_agent
+        .write_agent_state(make_agent("agent-repeticao"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    std::mem::forget(ds_agent); // heartbeat para
+
+    // stale_after=1s + ~4s de observação ⇒ ~13 ciclos de reap (300ms) depois
+    // que o agente vira "morto" — sem o fix, esperaríamos ~10+ violações
+    // republicadas; com o fix, exatamente 1.
+    let mut count = 0u32;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, violations.next()).await {
+            Ok(Some(v)) if v.affected_entity == "agent-repeticao" => count += 1,
+            Ok(Some(_)) => continue,
+            _ => break,
+        }
+    }
+
+    assert_eq!(
+        count, 1,
+        "esperava exatamente 1 QoS.Violation(liveliness_lost) para o agente morto, \
+         não {count} — reaper voltou a republicar a cada ciclo (regressão do fix de last_seen)"
+    );
+}

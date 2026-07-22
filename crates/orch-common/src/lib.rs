@@ -10,14 +10,299 @@
 //!   C3 (RTTTracker/ErrorTracker sem lock, corrompendo latência) desaparece: em
 //!   Rust as métricas são `AtomicU64`/`Mutex` sem GIL, corretas por construção.
 
-/// Estados de tarefa (espelha `TaskStatus` do IDL/Python).
+/// Erro de conversão de um `i32` cru do wire para um enum tipado — o valor
+/// não corresponde a nenhuma variante conhecida.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("valor i32 desconhecido para {enum_name}: {value}")]
+pub struct UnknownEnumValue {
+    pub enum_name: &'static str,
+    pub value: i32,
+}
+
+/// Estados de tarefa (espelha `TaskStatus` do IDL — `Task.status`, campo cru
+/// `long` no wire; ver `OrchestratorV4.idl`). Discriminantes explícitos para
+/// que `as i32` continue produzindo exatamente o valor que já trafega hoje —
+/// esta é uma view tipada por cima do campo cru, não uma mudança de wire
+/// format (P3 do `OPTIMIZATION_PLAN.md`: consumidores que comparam o `i32`
+/// cru continuam funcionando sem alteração).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
 pub enum TaskStatus {
-    Pending,
-    Assigned,
-    Running,
-    Done,
-    Failed,
+    Pending = 0,
+    Assigned = 1,
+    Running = 2,
+    Done = 3,
+    Failed = 4,
+}
+
+impl TryFrom<i32> for TaskStatus {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Pending),
+            1 => Ok(Self::Assigned),
+            2 => Ok(Self::Running),
+            3 => Ok(Self::Done),
+            4 => Ok(Self::Failed),
+            _ => Err(UnknownEnumValue {
+                enum_name: "TaskStatus",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<TaskStatus> for i32 {
+    fn from(v: TaskStatus) -> i32 {
+        v as i32
+    }
+}
+
+/// Prioridade de tarefa (`Task.priority`). **Os valores NÃO são a numeração
+/// sequencial 0/1/2 que `OrchestratorV4.idl`'s `enum TaskPriority` implicaria
+/// por ordem de declaração** — são 1/5/10, os valores realmente usados em
+/// todo o código (ver `benchmarks::driver::{PRIORITY_LOW,PRIORITY_NORMAL,
+/// PRIORITY_HIGH}` e o campo `priority` de `Task` em toda a base). O IDL
+/// declara o enum só como documentação; o campo do wire é `long` cru.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum TaskPriority {
+    Low = 1,
+    Normal = 5,
+    High = 10,
+}
+
+impl TryFrom<i32> for TaskPriority {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            1 => Ok(Self::Low),
+            5 => Ok(Self::Normal),
+            10 => Ok(Self::High),
+            _ => Err(UnknownEnumValue {
+                enum_name: "TaskPriority",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<TaskPriority> for i32 {
+    fn from(v: TaskPriority) -> i32 {
+        v as i32
+    }
+}
+
+/// Especialização de modelo (`Task.model_required`). **4 variantes, não as
+/// 3 que `OrchestratorV4.idl`'s `enum ModelSpecialization` declara**
+/// (falta `Transcription`) — espelha `agent::claim::Specialization`, que já
+/// usa `Transcription = 3` (`is_eligible`/`Specialization::matches`); o IDL
+/// está incompleto em relação ao que o código realmente usa.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ModelSpecialization {
+    Text = 0,
+    Vision = 1,
+    Embedding = 2,
+    Transcription = 3,
+}
+
+impl TryFrom<i32> for ModelSpecialization {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Text),
+            1 => Ok(Self::Vision),
+            2 => Ok(Self::Embedding),
+            3 => Ok(Self::Transcription),
+            _ => Err(UnknownEnumValue {
+                enum_name: "ModelSpecialization",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<ModelSpecialization> for i32 {
+    fn from(v: ModelSpecialization) -> i32 {
+        v as i32
+    }
+}
+
+/// Saúde do agente (`AgentState.health`) — bate com a ordem declarada em
+/// `OrchestratorV4.idl`'s `enum AgentHealth` (`AH_OFFLINE=0, AH_DEGRADED=1,
+/// AH_HEALTHY=2`), já usada assim em `heartbeat.rs`/testes desta sessão.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum AgentHealth {
+    Offline = 0,
+    Degraded = 1,
+    Healthy = 2,
+}
+
+impl TryFrom<i32> for AgentHealth {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Offline),
+            1 => Ok(Self::Degraded),
+            2 => Ok(Self::Healthy),
+            _ => Err(UnknownEnumValue {
+                enum_name: "AgentHealth",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<AgentHealth> for i32 {
+    fn from(v: AgentHealth) -> i32 {
+        v as i32
+    }
+}
+
+/// Motivo de finalização (`TaskOutput.finish_reason`/`Task.finish_reason`
+/// nos pontos que usam o campo int32 unificado — ver `dds_types.h` no lado
+/// C++, e o comentário "campo unificado e int32" em `agent/src/dds.rs`).
+/// Bate com `OrchestratorV4.idl`'s `enum FinishReason` por ordem de
+/// declaração (`FR_NONE=0, FR_COMPLETION=1, FR_LENGTH=2, FR_TIMEOUT=3,
+/// FR_ERROR=4`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum FinishReason {
+    None = 0,
+    Completion = 1,
+    Length = 2,
+    Timeout = 3,
+    Error = 4,
+}
+
+impl TryFrom<i32> for FinishReason {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, UnknownEnumValue> {
+        match v {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Completion),
+            2 => Ok(Self::Length),
+            3 => Ok(Self::Timeout),
+            4 => Ok(FinishReason::Error),
+            _ => Err(UnknownEnumValue {
+                enum_name: "FinishReason",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<FinishReason> for i32 {
+    fn from(v: FinishReason) -> i32 {
+        v as i32
+    }
+}
+
+/// Componente do sistema (`SystemMetric.component_type`) — bate com
+/// `OrchestratorV4.idl`'s `enum ComponentType` por ordem de declaração
+/// (`CT_ORCHESTRATOR=0, CT_AGENT=1, CT_LLAMA_SERVER=2, CT_CLIENT=3`). Sem
+/// evidência direta de uso divergente encontrada nesta sessão — ao
+/// contrário de `TaskPriority`/`ModelSpecialization` acima, cuja numeração
+/// real diverge do IDL.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ComponentType {
+    Orchestrator = 0,
+    Agent = 1,
+    LlamaServer = 2,
+    Client = 3,
+}
+
+impl TryFrom<i32> for ComponentType {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Orchestrator),
+            1 => Ok(Self::Agent),
+            2 => Ok(Self::LlamaServer),
+            3 => Ok(Self::Client),
+            _ => Err(UnknownEnumValue {
+                enum_name: "ComponentType",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<ComponentType> for i32 {
+    fn from(v: ComponentType) -> i32 {
+        v as i32
+    }
+}
+
+/// Nível de segurança (`ContextSnapshot.security_level`/
+/// `ToolCallRequest.security_level`/`LLMInferenceRequest.security_level`) —
+/// mapeado pelo comentário já presente no IDL/C++
+/// (`dds/idl/OrchestratorDDS.idl`: "SecurityLevel enum (0=PUBLIC,
+/// 1=INTERNAL, etc.)"). Só 2 níveis confirmados por comentário direto; os
+/// demais ("etc.") não têm evidência de valor exato nesta sessão — usar
+/// `TryFrom` (não um `From` infalível) reflete essa incerteza honestamente.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum SecurityLevel {
+    Public = 0,
+    Internal = 1,
+}
+
+impl TryFrom<i32> for SecurityLevel {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Public),
+            1 => Ok(Self::Internal),
+            _ => Err(UnknownEnumValue {
+                enum_name: "SecurityLevel",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<SecurityLevel> for i32 {
+    fn from(v: SecurityLevel) -> i32 {
+        v as i32
+    }
+}
+
+/// Status de uma chamada de ferramenta (`ToolCallRequest.status`). Sem
+/// enum declarado no IDL e sem evidência de valores usados nesta sessão —
+/// modelado com o padrão mínimo óbvio (pendente/concluído/falhou) até haver
+/// confirmação de um consumidor real; **valores especulativos, revisar
+/// antes de depender deles**.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum ToolCallStatus {
+    Pending = 0,
+    Completed = 1,
+    Failed = 2,
+}
+
+impl TryFrom<i32> for ToolCallStatus {
+    type Error = UnknownEnumValue;
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Pending),
+            1 => Ok(Self::Completed),
+            2 => Ok(Self::Failed),
+            _ => Err(UnknownEnumValue {
+                enum_name: "ToolCallStatus",
+                value: v,
+            }),
+        }
+    }
+}
+
+impl From<ToolCallStatus> for i32 {
+    fn from(v: ToolCallStatus) -> i32 {
+        v as i32
+    }
 }
 
 /// Vetor de métricas de estado do sistema (as 8 entradas do NFCM).

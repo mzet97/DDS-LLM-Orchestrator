@@ -201,16 +201,19 @@ todos os `main.rs`, o que ficou fora do orçamento de tempo desta sessão.
   atual É um MPMC genuíno (múltiplos produtores via canal, múltiplos workers), só que o
   paralelismo de escrita real depende de `DataWriter::write` ser lock-free/thread-safe no lado C
   (não verificado com profiling nesta sessão).
-- ℹ️ **Streams por tópico usam um `WaitSet` dedicado por chamada** (`dds-dataspace/src/lib.rs`,
-  17 blocos `take_aiter()` em `stream_tasks`/`stream_agent_states`/.../`stream_discovery_events`).
-  O `ACTION_PLAN_DDS_IMPLEMENTATION.md` (T-617) propôs um `WaitSet` compartilhado com
-  `ReadCondition` por tópico para evitar 1 thread de blocking-pool por stream; **isso NÃO foi
-  implementado** — `PLANO_EXECUCAO.md` (WF-4/WF-8) não menciona T-617 como concluída. Com 18
-  tópicos e potencialmente múltiplos assinantes (agent+orchestrator+context-store+mcp-gateway+
-  observability+policy-engine), o número de streams simultâneos ativos em produção pode
-  aproximar-se de 1 WaitSet/thread por consumidor-tópico — não medido, risco a confirmar sob
-  carga real com vários processos ativos ao mesmo tempo (spike-interop roda com poucos
-  streams por vez, não estressa este eixo).
+- ✅ **CORRIGIDO (2026-07-20, 3ª sessão): WaitSet compartilhado implementado.** Achado
+  original: cada `stream_*()` criava seu próprio `WaitSet` (16 blocos `take_aiter()`), 1 thread
+  de blocking-pool por stream ativa. T-617 (`ACTION_PLAN_DDS_IMPLEMENTATION.md`) implementado
+  via `dds-dataspace/src/dispatch.rs` (`SharedWaitSet`): 1 `WaitSet` por `DataSpace`, cada
+  stream anexa seu reader dinamicamente (cookie único, `dds_waitset_attach`) e espera uma
+  notificação local (`tokio::sync::Notify`) em vez de bloquear sua própria thread. Preserva a
+  semântica de N assinantes independentes por tópico (cada stream mantém seu próprio reader —
+  não virou fan-out/broadcast, o que arriscaria gaps). Validado com teste de aceite dedicado:
+  40 streams concorrentes (padrão real do `client` — 2 streams por `submit()`) compartilhando
+  1 `SharedWaitSet` (40 registros de pico, confirmados via `registration_count()`), cada uma
+  recebendo todos os dados esperados, 0 vazamento ao encerrar. Ver `OPTIMIZATION_PLAN.md`
+  Fase 5 para o racional completo da escolha de design (WaitSet compartilhado + reader por
+  stream, não fan-out).
 
 ### 2.2 Memória e alocações
 
@@ -223,16 +226,21 @@ todos os `main.rs`, o que ficou fora do orçamento de tempo desta sessão.
   (potencialmente grande, é o prompt) e `model_name`. **Confirma parcialmente o achado do
   `MIGRATION_GAP_ANALYSIS.md`** ("Task clonada em vez de `Arc<Task>`") — o tipo `Arc<Task>`
   existe e é usado internamente no cache, mas o desenho da API do trait não o expõe.
-- ⚠️ **Zero-copy loans (`write_loan`/`request_loan`/`take_loan`) NÃO são usados em nenhum
-  writer do workspace.** `grep -rn "write_loan\|take_loan\|request_loan"` só encontra uma
-  menção em comentário de documentação (`dds-dataspace/src/lib.rs:11`, tabela "antes/depois"
-  descrevendo a intenção) — **nenhuma chamada real**. Todos os 18 escritores usam `.write(&x)`
-  (cópia), incluindo o hot path de streaming (`TaskOutput`, potencialmente milhares de chunks
-  por sessão de inferência). **Confirma o achado do `MIGRATION_GAP_ANALYSIS.md`/`ACTION_PLAN`
-  (T-616) — não implementado**, apesar de `PLANO_EXECUCAO.md` (WF-4) declarar a camada DDS
-  "completa". O ganho medido de 88,7k tasks/s já supera os orçamentos por larga margem, então
-  a urgência é baixa, mas é o item de maior ROI teórico ainda em aberto para o streaming de
-  chunks (que é per-token, potencialmente o maior volume de samples do sistema).
+- ✅ **CORRIGIDO (2026-07-20, sessão seguinte): Zero-copy loans agora usados no hot path de
+  streaming de `TaskOutput`.** Achado original: nenhum writer do workspace usava
+  `write_loan`/`request_loan` (`.write(&x)` — cópia — em todos os 18 escritores). Ao
+  investigar a implementação, a causa raiz de não terem sido usados era um bug de segurança
+  real na crate `cyclonedds` (`request_loan()` zerava/interpretava o buffer emprestado com o
+  tamanho do struct ERGONÔMICO, `size_of::<T>()`, quando `dds_request_loan` na verdade aloca
+  `T::descriptor_size()` bytes — o tamanho do struct NATIVO wire-compatible, menor para
+  tipos com `String`/`Vec` — um estouro de buffer real em todo loan de tipo não-POD, não só
+  um risco teórico de bit-pattern zerado). Corrigido na crate (novo associated type
+  `DdsType::Native`, ver `OPTIMIZATION_PLAN.md` Fase 4) e implementado em
+  `dds-dataspace::writer_pool::write_output_loan()` para `TaskOutput` — validado com 106
+  testes de integração da própria crate `cyclonedds` (0 regressão) + teste de aceite
+  dedicado (1000 chunks reais via DDS, 0 gaps, campos `String` íntegros). Item que era
+  "ROI teórico em aberto" no `MIGRATION_GAP_ANALYSIS.md`/`ACTION_PLAN` (T-616) está
+  **fechado**.
 - ⚠️ **`ahash` é dependência declarada mas não usada.** `ahash` está em
   `[workspace.dependencies]` (`Cargo.toml:48`) e no `Cargo.toml` de `orch-common`, mas
   `grep -rn "ahash\|AHasher"` não encontra nenhum uso em código — todos os ~20 sites de
@@ -278,7 +286,7 @@ todos os `main.rs`, o que ficou fora do orçamento de tempo desta sessão.
 - **`latency_budget` não é mutável em runtime** neste CycloneDDS (achado de WF-6,
   `dds_set_qos` → `OUT_OF_MEMORY`) — limitação de infraestrutura, não de código Rust; já
   documentada e contornada (o knob fica fora do "hot set", herdado do perfil de criação).
-- **`WaitSet` por stream** — ver §2.1 (não resolvido, T-617 pendente).
+- ~~`WaitSet` por stream~~ — **corrigido, ver §2.1** (T-617 implementado, 2026-07-20 3ª sessão).
 - Nenhuma evidência de `ContentFilteredTopic`/CFT sendo usado (a crate suporta CFT
   writer-side; `specs/010-interop-spike/REPORT.md` já registrava isso como "avaliar depois" —
   ainda não avaliado).
@@ -339,9 +347,9 @@ todos os `main.rs`, o que ficou fora do orçamento de tempo desta sessão.
 
 | Item do gap analysis | Status verificado agora | Evidência |
 |---|---|---|
-| Zero-copy loans disponíveis mas não usados | **CONFIRMADO — ainda não implementado** | 0 chamadas a `write_loan`/`take_loan`/`request_loan`; todos os writers usam `.write(&x)` |
+| Zero-copy loans disponíveis mas não usados | **CORRIGIDO E IMPLEMENTADO (2026-07-20, sessão seguinte)** | `write_output_loan()` em `dds-dataspace/src/writer_pool.rs` usa `request_loan`/`WriteLoan` para `TaskOutput`; causa raiz de nunca ter sido usado era um bug de segurança real na crate `cyclonedds`, corrigido (`DdsType::Native`) — ver `OPTIMIZATION_PLAN.md` Fase 4 |
 | `Task` clonado em vez de `Arc<Task>` | **PARCIALMENTE CONFIRMADO** | Cache usa `Arc<Task>` internamente (`cache.rs:20`), mas a API pública do trait desreferencia e clona (`lib.rs:1023,1037,1085`); `agent` clona o `Task` mais 3–4× no processamento |
-| `take_aiter()` cria WaitSet dedicado por stream (T-617 não feito) | **CONFIRMADO — ainda não implementado** | 17 blocos `take_aiter()` independentes em `dds-dataspace/src/lib.rs`; nenhuma menção a `WaitSet` compartilhado no código ou nos REPORTs de WF-4/WF-8 |
+| `take_aiter()` cria WaitSet dedicado por stream (T-617 não feito) | **CORRIGIDO E IMPLEMENTADO (2026-07-20, 3ª sessão)** | `dispatch::SharedWaitSet` — 1 WaitSet por `DataSpace`, todos os 16 `stream_*()` migrados; teste de aceite com 40 streams concorrentes confirma 40 registros num único WaitSet |
 | `DashMap` não usa `ahash` | **CONFIRMADO — ainda não implementado** | 0 usos de `ahash`/`AHasher`; dependência declarada mas morta |
 | `WriterPool` não é MPMC real (writer dedicado por worker) | **REFUTADO — foi corrigido** | `writer_pool.rs` usa canal `crossbeam` + N workers escrevendo no mesmo `DataWriter` compartilhado por tipo — é MPMC genuíno, não um writer por worker |
 | `orch-common` "mínimo" (51 LOC) | **DESATUALIZADO — cresceu** | Hoje 247 linhas; conteúdo exato não reauditado linha-a-linha nesta sessão |
@@ -350,9 +358,11 @@ todos os `main.rs`, o que ficou fora do orçamento de tempo desta sessão.
 
 ## 5. Oportunidades descartadas nesta rodada (e por quê)
 
-- **Reescrever o `WriterPool` para usar `write_loan`:** de alto valor teórico, mas sem medição
-  de alocação real (nenhum profiler de memória rodou nesta sessão — `heaptrack`/`DHAT` não
-  foram executados por orçamento de tempo). Fica como P1 no plano, não implementado agora.
+- ~~Reescrever o `WriterPool` para usar `write_loan`~~ — **implementado na sessão seguinte**
+  (ver `OPTIMIZATION_PLAN.md` Fase 4). Ainda sem medição de magnitude de alocação real
+  (nenhum profiler de memória rodou — `heaptrack`/`DHAT` não foram executados), só de
+  corretude (teste de aceite de 1000 chunks, 0 gaps) — item de medição de magnitude
+  permanece em aberto.
 - **Trocar hasher do `DashMap` para `ahash`:** baixo risco, mas também sem medição de
   throughput antes/depois — vai para o plano como P2, não implementado agora (a etapa 6 do
   processo exige medição antes/depois antes de aceitar).

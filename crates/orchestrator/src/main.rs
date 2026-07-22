@@ -117,6 +117,104 @@ mod app {
         }))
     }
 
+    /// POST /api/v1/chat/completions/sync — publica Task e aguarda resultado.
+    async fn submit_task_sync(
+        State(state): State<AppState>,
+        Json(req): Json<ChatRequest>,
+    ) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let now_ns = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos() as u64;
+
+        let messages_json = serde_json::to_string(&req.messages).unwrap_or_default();
+
+        let task = Task {
+            task_id: task_id.clone(),
+            client_id: "http-client".into(),
+            assigned_agent: String::new(),
+            target_agent: String::new(),
+            model_required: 0,
+            model_name: req.model,
+            messages_json,
+            temperature: req.temperature.unwrap_or(0.7),
+            max_tokens: req.max_tokens.unwrap_or(256),
+            stream: req.stream.unwrap_or(false),
+            status: 0,
+            priority: 5,
+            created_at_ns: now_ns,
+            assigned_at_ns: 0,
+            started_at_ns: 0,
+            completed_at_ns: 0,
+            deadline_ns: now_ns + 120_000_000_000,
+            retry_count: 0,
+            finish_reason: String::new(),
+            t_serialization_ns: 0,
+            t_transport_send_ns: 0,
+            t_agent_queue_ns: 0,
+            t_inference_ns: 0,
+            t_transport_return_ns: 0,
+            t_deserialization_ns: 0,
+        };
+
+        state.orch.publish_task(task).await.map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+
+        // Aguarda resultado via polling do DataSpace
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        loop {
+            if std::time::Instant::now() > deadline {
+                return Ok(Json(serde_json::json!({
+                    "task_id": task_id,
+                    "status": "timeout",
+                    "error": " inference timeout after 120s"
+                })));
+            }
+
+            // Lê task do cache (upsert monotônico, sem cap de leitura — ver
+            // o comentário em `agent::dds::attempt_claim_and_process` sobre
+            // por que `read_task_mesh` satura em ~65 tasks processadas).
+            if let Some(current) = state.orch.dataspace().caches().read_task(&task_id) {
+                match current.status {
+                    3 => {
+                        // DONE
+                        let latency_ns = current
+                            .completed_at_ns
+                            .saturating_sub(current.created_at_ns);
+                        let latency_ms = latency_ns / 1_000_000;
+                        return Ok(Json(serde_json::json!({
+                            "task_id": task_id,
+                            "status": "completed",
+                            "latency_ms": latency_ms,
+                            "finish_reason": current.finish_reason,
+                            "assigned_agent": current.assigned_agent,
+                            "tokens_prompt": 0,
+                            "tokens_completion": 0,
+                        })));
+                    }
+                    4 => {
+                        // FAILED
+                        return Ok(Json(serde_json::json!({
+                            "task_id": task_id,
+                            "status": "failed",
+                            "error": current.finish_reason,
+                        })));
+                    }
+                    _ => {}
+                }
+            }
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
     /// GET /health — health check.
     async fn health() -> Json<serde_json::Value> {
         Json(serde_json::json!({
@@ -222,6 +320,7 @@ mod app {
         let app = Router::new()
             .route("/health", get(health))
             .route("/api/v1/chat/completions", post(submit_task))
+            .route("/api/v1/chat/completions/sync", post(submit_task_sync))
             .route("/api/v1/agents", get(list_agents))
             .with_state(state);
 

@@ -7,7 +7,7 @@
 //! ## Como Rust remove os gargalos que mapeei no relatório
 //! | Gargalo Python | Solução Rust nesta crate |
 //! |---|---|
-//! | Poll loop 20ms + churn por amostra | **WaitSet + async streams** (`take_aiter`) da crate cyclonedds: acorda por evento, zero polling |
+//! | Poll loop 20ms + churn por amostra | **WaitSet compartilhado** (`dispatch::SharedWaitSet`, Fase 5/T-617) + streams assíncronas: acorda por evento, zero polling, 1 thread de espera por `DataSpace` em vez de 1 por stream |
 //! | Alocação por amostra (`dds_to_task`) | **Zero-copy loans** (`take_loan`) — sample sem cópia no hot path |
 //! | Thread ÚNICA de escrita (serialização) | **N writers + `crossbeam-channel` MPMC**; sem GIL, escrita realmente paralela |
 //! | Caches (dict + RLock global) | **`dashmap`** (sharded, lock-free) — leituras de agente não serializam com escrita de task |
@@ -18,6 +18,8 @@
 
 pub mod api;
 pub mod cache;
+#[cfg(feature = "dds")]
+pub mod dispatch;
 pub mod in_memory;
 pub mod qos;
 
@@ -54,7 +56,9 @@ pub struct DataSpace {
     // Ordem de drop: filhos (writers/readers) antes dos pais (topics/pub/sub/participant).
 
     // Tópicos originais (3)
-    tasks_writer: DataWriter<Task>,
+    // Pool de writers de `Tasks` (ver `task_writer_for` para o porquê de mais
+    // de um).
+    tasks_writers: Vec<DataWriter<Task>>,
     agents_writer: DataWriter<AgentState>,
     outputs_writer: DataWriter<TaskOutput>,
     // `tasks_reader` é usado por `read_task_mesh`/confirmação de ownership
@@ -114,6 +118,99 @@ pub struct DataSpace {
     participant: DomainParticipant,
     ownership_strength: i32,
     caches: Arc<TopicCaches>,
+    /// WaitSet único compartilhado por todos os `stream_*()` (Fase 5/T-617) —
+    /// ver `dispatch.rs`. `Arc` porque cada stream clona uma referência para
+    /// se registrar e ficar viva independente do lifetime de `&self`.
+    shared_waitset: Arc<dispatch::SharedWaitSet>,
+}
+
+/// Constrói o pool de writers de `Tasks` para um `ownership_strength` dado —
+/// compartilhado por `DataSpace::new()` e `DataSpace::new_writer_pool()` para
+/// que os DOIS caminhos de escrita de `Tasks` apliquem a mesma correção de
+/// fairness (ver o comentário em `task_writer_for`). Antes desta função
+/// existir, `new_writer_pool()` criava seu PRÓPRIO writer único de força
+/// fixa — hoje sem chamador em produção (`WriteRequest::Task` só é exercido
+/// pelos testes da própria `writer_pool`), mas era uma bomba-relógio: um
+/// refactor futuro que roteasse o claim loop por ali reintroduziria o bug de
+/// 99,7%-para-um-agente-só, sem nenhum teste pra pegar.
+#[cfg(feature = "dds")]
+fn build_tasks_writer_pool(
+    publisher: &Publisher,
+    tasks_topic: &Topic<Task>,
+    ownership_strength: i32,
+) -> Result<Vec<DataWriter<Task>>, api::DataSpaceError> {
+    // Só o papel AGENTE recebe mais de um writer (ver `task_writer_for` para
+    // a motivação — corrige um desbalanceamento de carga real e reproduzido
+    // entre agentes, medido em 94,8%/99,7% das tasks indo sempre para o
+    // mesmo agente, documentado na dissertação §OP1/OP2 e confirmado
+    // empiricamente nesta sessão com dois agentes mock: toda
+    // `Ownership::Exclusive` empatada em strength cai num desempate
+    // determinístico por GUID do writer — o MESMO agente vence toda disputa
+    // pelo tempo de vida da conexão, não é acaso por task). Cliente/
+    // orquestrador continuam com um único writer (comportamento inalterado —
+    // não competem entre si pela mesma task).
+    let pool_size = if ownership_strength == DataSpace::STRENGTH_AGENT {
+        DataSpace::AGENT_TASKS_WRITER_POOL
+    } else {
+        1
+    };
+    // Seed por PROCESSO (não por task): precisa ser diferente entre agentes
+    // para que a ordenação de força varie de agente para agente no mesmo
+    // slot — um DefaultHasher (chave fixa) daria a MESMA seed pra todo
+    // mundo, reproduzindo o bug original. Usa `RandomState` (chaves
+    // aleatórias por processo, semeadas pelo SO — o mesmo mecanismo por trás
+    // do `HashMap` default) em vez de misturar PID + horário manualmente: a
+    // primeira tentativa (XOR de nanos com PID) não tinha entropia
+    // suficiente nos bits baixos usados pelo `% K` quando os agentes eram
+    // iniciados quase ao mesmo tempo (medido: 3 agentes concorrentes ainda
+    // ficavam em ~22/28/50%, não ~33/33/33).
+    let proc_seed: u64 = {
+        use std::collections::hash_map::RandomState;
+        use std::hash::{BuildHasher, Hasher};
+        let mut h = RandomState::new().build_hasher();
+        h.write_u32(std::process::id());
+        h.finish()
+    };
+    let mut writers = Vec::with_capacity(pool_size);
+    for slot in 0..pool_size {
+        let strength = if pool_size > 1 {
+            // Mistura (seed, slot) com SipHash (boa difusão de bits, ao
+            // contrário de um XOR+multiply cru) antes do `% K` — o que
+            // importa é variar por slot E por agente, não o valor absoluto.
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            proc_seed.hash(&mut h);
+            slot.hash(&mut h);
+            let mixed = h.finish();
+            ownership_strength + (mixed % 64) as i32
+        } else {
+            ownership_strength
+        };
+        let q_slot = qos::profiles::tasks(Some(strength)).map_err(err)?;
+        let w = DataWriter::with_qos(publisher.entity(), tasks_topic.entity(), Some(&q_slot))
+            .map_err(err)?;
+        writers.push(w);
+    }
+    Ok(writers)
+}
+
+/// Escolhe, para um `task_id`, qual índice do pool de writers de `Tasks`
+/// usar — compartilhado por `DataSpace::task_writer_for` e por
+/// `writer_pool::make_write_fn` (o caminho `WriteRequest::Task`), para que os
+/// DOIS pontos de escrita roteiem a MESMA task para o MESMO slot. Ver o
+/// comentário em `task_writer_for` para por que o hash usa chave FIXA
+/// (precisa ser igual em todos os processos).
+#[cfg(feature = "dds")]
+pub(crate) fn select_task_writer_slot(task_id: &str, pool_len: usize) -> usize {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+    if pool_len <= 1 {
+        return 0;
+    }
+    let mut hasher = DefaultHasher::new();
+    task_id.hash(&mut hasher);
+    (hasher.finish() as usize) % pool_len
 }
 
 #[cfg(feature = "dds")]
@@ -122,6 +219,15 @@ impl DataSpace {
     pub const STRENGTH_CLIENT: i32 = 10;
     pub const STRENGTH_AGENT: i32 = 100;
     pub const STRENGTH_ORCHESTRATOR: i32 = 200;
+
+    /// Nº de writers de `Tasks` no pool de um DataSpace com papel de AGENTE
+    /// (ver `task_writer_for`). Irrelevante para os demais papéis (pool de 1).
+    ///
+    /// Quanto maior, menor a variância de quantos slots cada agente "vence"
+    /// por sorte (lei dos grandes números) — medido empiricamente: com 16,
+    /// 3 agentes concorrentes ainda mostravam desbalanceamento visível
+    /// (~22%/28%/50% em vez de ~33% cada).
+    const AGENT_TASKS_WRITER_POOL: usize = 64;
 
     /// Sobe o DataSpace no domínio: participant + todos os tópicos canônicos + writers/readers.
     pub fn new(domain_id: u32, ownership_strength: i32) -> Result<Self, api::DataSpaceError> {
@@ -246,9 +352,7 @@ impl DataSpace {
         .map_err(err)?;
 
         // ── Writers ──────────────────────────────────────────────────────
-        let tasks_writer =
-            DataWriter::with_qos(publisher.entity(), tasks_topic.entity(), Some(&q_tasks))
-                .map_err(err)?;
+        let tasks_writers = build_tasks_writer_pool(&publisher, &tasks_topic, ownership_strength)?;
         let agents_writer =
             DataWriter::with_qos(publisher.entity(), agents_topic.entity(), Some(&q_agents))
                 .map_err(err)?;
@@ -337,13 +441,15 @@ impl DataSpace {
             DataReader::with_qos(subscriber.entity(), tasks_topic.entity(), Some(&q_tasks))
                 .map_err(err)?;
 
+        let shared_waitset = dispatch::SharedWaitSet::new(&participant).map_err(err)?;
+
         tracing::info!(
             domain_id,
             ownership_strength,
             "DataSpace iniciado com 17 tópicos"
         );
         Ok(Self {
-            tasks_writer,
+            tasks_writers,
             agents_writer,
             outputs_writer,
             tasks_reader,
@@ -387,7 +493,26 @@ impl DataSpace {
             participant,
             ownership_strength,
             caches: Arc::new(TopicCaches::new()),
+            shared_waitset,
         })
+    }
+
+    /// Escolhe, para um `task_id`, QUAL writer do pool usar (ver o comentário
+    /// em `new()` sobre por que existe mais de um para o papel AGENTE).
+    ///
+    /// A escolha precisa ser a MESMA em todos os processos (todo agente tem
+    /// que rotear o mesmo `task_id` para o slot de mesmo índice — só assim a
+    /// arbitragem de `Ownership::Exclusive` fica bem definida: cada agente
+    /// usa SEU writer daquele índice, cujas forças foram sorteadas
+    /// independentemente por processo, então o vencedor varia de task para
+    /// task em vez de ser sempre o mesmo agente. Por isso o hash usa
+    /// `DefaultHasher::new()` (chaves fixas, reprodutível entre processos) e
+    /// NÃO `RandomState`/`HashMap` (aleatorizado por processo, daria índices
+    /// diferentes em cada agente e quebraria a garantia de exclusividade —
+    /// dois agentes escrevendo em writers de força igual para o MESMO
+    /// task_id sem nenhum deles saber do outro).
+    fn task_writer_for(&self, task_id: &str) -> &DataWriter<Task> {
+        &self.tasks_writers[select_task_writer_slot(task_id, self.tasks_writers.len())]
     }
 
     /// Lê o estado ARBITRADO do mesh para uma task (RHC do reader, não o cache).
@@ -405,13 +530,20 @@ impl DataSpace {
 
     /// Aplica os knobs online do decisor de QoS no writer de `Tasks` (REQ-405).
     /// TransportPriority/LatencyBudget/OwnershipStrength são mutáveis em runtime.
+    ///
+    /// Só chamado hoje pelo papel ORQUESTRADOR (pool de 1 writer — ver
+    /// `new()`); aplica em todos os writers do pool por generalidade, sem
+    /// mudar o comportamento existente para pool de tamanho 1.
     pub fn apply_tasks_knobs(
         &self,
         knobs: &dds_contract::qos::OnlineKnobs,
     ) -> Result<(), api::DataSpaceError> {
         let qos =
             qos::profiles::tasks_with_knobs(Some(self.ownership_strength), knobs).map_err(err)?;
-        self.tasks_writer.set_qos(&qos).map_err(err)
+        for w in &self.tasks_writers {
+            w.set_qos(&qos).map_err(err)?;
+        }
+        Ok(())
     }
 
     pub fn ownership_strength(&self) -> i32 {
@@ -428,7 +560,7 @@ impl DataSpace {
     // ── helpers síncronos mínimos (smoke T-302; a API async completa vem em T-303+) ──
 
     pub fn write_task_sync(&self, task: &Task) -> Result<(), api::DataSpaceError> {
-        self.tasks_writer.write(task).map_err(err)
+        self.task_writer_for(&task.task_id).write(task).map_err(err)
     }
 
     pub fn take_tasks_sync(&self) -> Result<Vec<Task>, api::DataSpaceError> {
@@ -456,26 +588,46 @@ impl DataSpace {
         Arc::clone(&self.caches)
     }
 
-    /// Stream de `Task` acordada por amostra (WaitSet via `take_aiter`, sem polling).
-    /// Cada chamada cria um reader dedicado ('static, sem corrida de take entre
-    /// assinantes). Cada amostra alimenta o cache (upsert monotônico).
+    /// Handle do WaitSet compartilhado (Fase 5/T-617) — para
+    /// observabilidade/testes de aceite (ver `tests/shared_waitset.rs`).
+    pub fn shared_waitset(&self) -> Arc<dispatch::SharedWaitSet> {
+        Arc::clone(&self.shared_waitset)
+    }
+
+    /// Stream de `Task` acordada por amostra (WaitSet compartilhado — Fase 5/T-617,
+    /// ver `dispatch.rs` — sem polling). Cada chamada cria um reader dedicado
+    /// ('static, sem corrida de take entre assinantes), anexado ao WaitSet
+    /// único do `DataSpace`. Cada amostra alimenta o cache (upsert monotônico).
     pub fn stream_tasks(&self) -> impl Stream<Item = cache::ArcTask> {
         let caches = self.caches();
-        let reader =
-            DataReader::with_qos(self.subscriber.entity(), self.tasks_topic.entity(), None)
-                .expect("reader Tasks");
+        let sub = self.subscriber.entity();
+        let topic = self.tasks_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(Tasks) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(Tasks) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(tasks) => {
                         for t in tasks {
                             yield caches.upsert_task(t);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(Tasks) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(Tasks) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -486,21 +638,34 @@ impl DataSpace {
     /// Stream de `AgentState` acordada por amostra (heartbeat dos agentes).
     pub fn stream_agent_states(&self) -> impl Stream<Item = cache::ArcAgentState> {
         let caches = self.caches();
-        let reader =
-            DataReader::with_qos(self.subscriber.entity(), self.agents_topic.entity(), None)
-                .expect("reader AgentRegistry");
+        let sub = self.subscriber.entity();
+        let topic = self.agents_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(AgentRegistry) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(AgentRegistry) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(states) => {
                         for s in states {
                             yield caches.upsert_agent(s);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(AgentRegistry) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(AgentRegistry) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -511,21 +676,34 @@ impl DataSpace {
     /// Stream de `TaskOutput` acordada por amostra (chunks de inferência).
     pub fn stream_task_outputs(&self) -> impl Stream<Item = cache::ArcTaskOutput> {
         let caches = self.caches();
-        let reader =
-            DataReader::with_qos(self.subscriber.entity(), self.outputs_topic.entity(), None)
-                .expect("reader TaskOutput");
+        let sub = self.subscriber.entity();
+        let topic = self.outputs_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(TaskOutput) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(TaskOutput) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(outs) => {
                         for o in outs {
                             yield caches.push_output(o);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(TaskOutput) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(TaskOutput) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -536,24 +714,34 @@ impl DataSpace {
     /// Stream de `LLMInferenceRequest` acordada por amostra.
     pub fn stream_llm_requests(&self) -> impl Stream<Item = cache::ArcLLMRequest> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.llm_request_topic.entity(),
-            None,
-        )
-        .expect("reader LLMInferenceRequest");
+        let sub = self.subscriber.entity();
+        let topic = self.llm_request_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(LLMRequest) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(LLMRequest) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(reqs) => {
                         for r in reqs {
                             yield caches.upsert_llm_request(r);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(LLMRequest) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(LLMRequest) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -564,24 +752,34 @@ impl DataSpace {
     /// Stream de `LLMInferenceResult` acordada por amostra.
     pub fn stream_llm_results(&self) -> impl Stream<Item = cache::ArcLLMResult> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.llm_result_topic.entity(),
-            None,
-        )
-        .expect("reader LLMInferenceResult");
+        let sub = self.subscriber.entity();
+        let topic = self.llm_result_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(LLMResult) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(LLMResult) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(results) => {
                         for r in results {
                             yield caches.push_llm_result(r);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(LLMResult) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(LLMResult) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -592,24 +790,34 @@ impl DataSpace {
     /// Stream de `LLMInferenceError` acordada por amostra.
     pub fn stream_llm_errors(&self) -> impl Stream<Item = cache::ArcLLMError> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.llm_error_topic.entity(),
-            None,
-        )
-        .expect("reader LLMInferenceError");
+        let sub = self.subscriber.entity();
+        let topic = self.llm_error_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(LLMError) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(LLMError) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(errors) => {
                         for e in errors {
                             yield caches.upsert_llm_error(e);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(LLMError) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(LLMError) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -620,24 +828,34 @@ impl DataSpace {
     /// Stream de `ContextSnapshot` acordada por amostra.
     pub fn stream_context_snapshots(&self) -> impl Stream<Item = cache::ArcContextSnapshot> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.context_snapshot_topic.entity(),
-            None,
-        )
-        .expect("reader ContextSnapshot");
+        let sub = self.subscriber.entity();
+        let topic = self.context_snapshot_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(ContextSnapshot) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(ContextSnapshot) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(snaps) => {
                         for s in snaps {
                             yield caches.upsert_context_snapshot(s);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(ContextSnapshot) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(ContextSnapshot) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -648,24 +866,34 @@ impl DataSpace {
     /// Stream de `ContextUpdate` acordada por amostra.
     pub fn stream_context_updates(&self) -> impl Stream<Item = cache::ArcContextUpdate> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.context_update_topic.entity(),
-            None,
-        )
-        .expect("reader ContextUpdate");
+        let sub = self.subscriber.entity();
+        let topic = self.context_update_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(ContextUpdate) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(ContextUpdate) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(updates) => {
                         for u in updates {
                             yield caches.push_context_update(u);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(ContextUpdate) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(ContextUpdate) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -676,24 +904,34 @@ impl DataSpace {
     /// Stream de `ToolCallRequest` acordada por amostra.
     pub fn stream_tool_calls(&self) -> impl Stream<Item = cache::ArcToolCallRequest> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.tool_call_topic.entity(),
-            None,
-        )
-        .expect("reader ToolCallRequest");
+        let sub = self.subscriber.entity();
+        let topic = self.tool_call_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(ToolCall) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(ToolCall) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(calls) => {
                         for c in calls {
                             yield caches.upsert_tool_call(c);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(ToolCall) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(ToolCall) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -704,24 +942,34 @@ impl DataSpace {
     /// Stream de `ExecutionTraceEvent` acordada por amostra.
     pub fn stream_execution_traces(&self) -> impl Stream<Item = cache::ArcExecutionTraceEvent> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.execution_trace_topic.entity(),
-            None,
-        )
-        .expect("reader ExecutionTraceEvent");
+        let sub = self.subscriber.entity();
+        let topic = self.execution_trace_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(ExecutionTrace) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(ExecutionTrace) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(events) => {
                         for e in events {
                             yield caches.push_execution_trace(e);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(ExecutionTrace) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(ExecutionTrace) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -734,24 +982,34 @@ impl DataSpace {
         &self,
     ) -> impl Stream<Item = cache::ArcSecurityPolicySnapshot> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.security_snapshot_topic.entity(),
-            None,
-        )
-        .expect("reader SecurityPolicySnapshot");
+        let sub = self.subscriber.entity();
+        let topic = self.security_snapshot_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(SecuritySnapshot) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(SecuritySnapshot) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(snaps) => {
                         for s in snaps {
                             yield caches.upsert_security_snapshot(s);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(SecuritySnapshot) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(SecuritySnapshot) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -762,24 +1020,34 @@ impl DataSpace {
     /// Stream de `SecurityPolicyUpdate` acordada por amostra.
     pub fn stream_security_updates(&self) -> impl Stream<Item = cache::ArcSecurityPolicyUpdate> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.security_update_topic.entity(),
-            None,
-        )
-        .expect("reader SecurityPolicyUpdate");
+        let sub = self.subscriber.entity();
+        let topic = self.security_update_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(SecurityUpdate) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(SecurityUpdate) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(updates) => {
                         for u in updates {
                             yield caches.push_security_update(u);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(SecurityUpdate) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(SecurityUpdate) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -790,24 +1058,34 @@ impl DataSpace {
     /// Stream de `QoSRoutingProfile` acordada por amostra.
     pub fn stream_qos_routing(&self) -> impl Stream<Item = cache::ArcQoSRoutingProfile> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.qos_routing_topic.entity(),
-            None,
-        )
-        .expect("reader QoSRoutingProfile");
+        let sub = self.subscriber.entity();
+        let topic = self.qos_routing_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(QoSRouting) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(QoSRouting) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(profiles) => {
                         for p in profiles {
                             yield caches.upsert_qos_routing(p);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(QoSRouting) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(QoSRouting) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -818,24 +1096,34 @@ impl DataSpace {
     /// Stream de `QoSMetric` acordada por amostra.
     pub fn stream_qos_metrics(&self) -> impl Stream<Item = cache::ArcQoSMetric> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.qos_metric_topic.entity(),
-            None,
-        )
-        .expect("reader QoSMetric");
+        let sub = self.subscriber.entity();
+        let topic = self.qos_metric_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(QoSMetric) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(QoSMetric) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(metrics) => {
                         for m in metrics {
                             yield caches.upsert_qos_metric(m);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(QoSMetric) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(QoSMetric) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -846,24 +1134,34 @@ impl DataSpace {
     /// Stream de `QoSViolation` acordada por amostra.
     pub fn stream_qos_violations(&self) -> impl Stream<Item = cache::ArcQoSViolation> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.qos_violation_topic.entity(),
-            None,
-        )
-        .expect("reader QoSViolation");
+        let sub = self.subscriber.entity();
+        let topic = self.qos_violation_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(QoSViolation) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(QoSViolation) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(violations) => {
                         for v in violations {
                             yield caches.upsert_qos_violation(v);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(QoSViolation) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(QoSViolation) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -874,24 +1172,34 @@ impl DataSpace {
     /// Stream de `DiscoveryEvent` acordada por amostra.
     pub fn stream_discovery_events(&self) -> impl Stream<Item = cache::ArcDiscoveryEvent> {
         let caches = self.caches();
-        let reader = DataReader::with_qos(
-            self.subscriber.entity(),
-            self.discovery_event_topic.entity(),
-            None,
-        )
-        .expect("reader DiscoveryEvent");
+        let sub = self.subscriber.entity();
+        let topic = self.discovery_event_topic.entity();
+        let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            use futures::StreamExt;
-            let mut aiter = Box::pin(reader.take_aiter());
-            while let Some(batch) = aiter.next().await {
-                match batch {
+            let reader = match DataReader::with_qos(sub, topic, None) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "DataReader::with_qos(DiscoveryEvent) falhou; stream encerrado");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(r) => r,
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(DiscoveryEvent) falhou; stream encerrado");
+                    return;
+                }
+            };
+            loop {
+                registration.notified().await;
+                match reader.take_async().await {
                     Ok(events) => {
                         for e in events {
                             yield caches.upsert_discovery_event(e);
                         }
                     }
                     Err(e) => {
-                        tracing::warn!(error = %e, "take_aiter(DiscoveryEvent) falhou; retry");
+                        tracing::warn!(error = %e, "take_async(DiscoveryEvent) falhou; retry");
                         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     }
                 }
@@ -924,7 +1232,7 @@ impl DataSpace {
             Some(qos),
             Some(listener),
         )
-        .expect("reader AgentRegistry com listener")
+        .expect("reader AgentRegistry com listener — erro fatal na inicialização do monitor")
     }
 
     /// Reader de `TaskOutput` com QoS e listener custom (monitor/T-306).
@@ -979,16 +1287,16 @@ impl DataSpace {
     /// Pool de escrita com writers dedicados (mesmos perfis/strength do DataSpace).
     pub fn new_writer_pool(&self, n_workers: usize, capacity: usize) -> writer_pool::WriterPool {
         let s = self.ownership_strength;
-        let q_tasks = qos::profiles::tasks(Some(s)).expect("qos tasks");
         let q_agents = qos::profiles::agent_registry().expect("qos agents");
         let q_outputs = qos::profiles::task_output(Some(s)).expect("qos outputs");
 
-        let tw = DataWriter::with_qos(
-            self.publisher.entity(),
-            self.tasks_topic.entity(),
-            Some(&q_tasks),
-        )
-        .expect("writer Tasks do pool");
+        // Mesmo pool com força variada por slot que `DataSpace::new()` usa —
+        // ver `build_tasks_writer_pool`. Sem isso, `WriteRequest::Task`
+        // (hoje só exercido pelos testes de `writer_pool`) reintroduziria o
+        // desbalanceamento de carga entre agentes corrigido nesta sessão,
+        // caso algum refactor futuro passe a rotear o claim loop por aqui.
+        let tw = build_tasks_writer_pool(&self.publisher, &self.tasks_topic, s)
+            .expect("writers Tasks do pool");
         let aw = DataWriter::with_qos(
             self.publisher.entity(),
             self.agents_topic.entity(),
@@ -1016,7 +1324,16 @@ impl api::DataSpaceApi for DataSpace {
         // mesh). Write-through tornaria o readback de claim inútil — o 2º a clamar
         // sempre se auto-confirmaria (execução dupla). read-after-write é
         // eventualmente consistente (~ms, entregue pela stream).
-        self.tasks_writer.write(&task).map_err(err)
+        //
+        // Roteado por `task_writer_for`: todas as escritas do ciclo de vida
+        // desta task (PENDING do cliente, ASSIGNED/RUNNING/DONE do agente
+        // vencedor) precisam sair pelo MESMO writer (mesmo slot), senão a
+        // arbitragem de Exclusive Ownership vê um writer novo/desconhecido
+        // para a instância e rejeita — ver `task_writer_for` e o comentário
+        // em `new()` sobre o pool de writers do papel AGENTE.
+        self.task_writer_for(&task.task_id)
+            .write(&task)
+            .map_err(err)
     }
 
     async fn read_task(&self, task_id: &str) -> Result<Option<Arc<Task>>, api::DataSpaceError> {

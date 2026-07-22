@@ -27,9 +27,6 @@ fn now_ns() -> u64 {
 
 /// Engine DDS real: llama-server (ou gateway compatível com `orchestrator::LLM*`).
 pub struct DdsEngine {
-    // Nunca lido diretamente: mantido só para manter o participant (e toda a
-    // árvore de entidades DDS abaixo — publisher/subscriber/topics) vivo pelo
-    // lifetime do engine, por RAII.
     #[allow(dead_code)]
     participant: DomainParticipant,
     publisher: Publisher,

@@ -4,16 +4,23 @@
 //! real + agente(s) real(is) já rodando, e reporta p50/p95/p99 de latência.
 //! Ver `tese/src/rust/OPTIMIZATION_REPORT.md` §"Comparação real E2E".
 //!
-//! Uso: `CYCLONEDDS_STATIC=1 cargo run -p client --features dds --bin e2e-bench -- <domain> <n>`
+//! Uso (sequencial): `... --bin e2e-bench -- <domain> <n>`
+//! Uso (concorrente, Fase R6): `... --bin e2e-bench -- <domain> <n> --concurrent`
+//! — as N tasks são submetidas TODAS AO MESMO TEMPO (`tokio::spawn`), no MESMO
+//! `DdsClientDds` compartilhado (mesmo padrão de `client::submit()` em produção
+//! — cada submissão já cria seus próprios streams `stream_tasks`/
+//! `stream_task_outputs`, ver Fase 5/`dispatch::SharedWaitSet`).
 
 use client::dds_impl::DdsClientDds;
 use client::{ClientConfig, DdsClient};
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     let domain: u32 = args.get(1).map(|s| s.parse().unwrap()).unwrap_or(77);
     let n: usize = args.get(2).map(|s| s.parse().unwrap()).unwrap_or(20);
+    let concurrent = args.iter().any(|a| a == "--concurrent");
 
     let config = ClientConfig {
         client_id: "e2e-bench-rust".to_string(),
@@ -21,7 +28,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         timeout_ms: 60_000,
     };
     let helper = DdsClient::new(config.clone());
-    let client = DdsClientDds::new(config)?;
+    let client = Arc::new(DdsClientDds::new(config)?);
 
     let messages_json = serde_json::json!([
         {"role": "user", "content": "What is 2+2? Answer with just the number."}
@@ -31,21 +38,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut latencies_ms: Vec<u64> = Vec::with_capacity(n);
     let mut failures = 0usize;
 
-    for i in 0..n {
-        let task = helper.create_task("qwen3.5-0.8b", &messages_json, 5, false);
-        match client.submit(task).await {
-            Ok(result) => {
-                eprintln!(
-                    "[{i}] ok latency_ms={} tokens_completion={} content={:?}",
-                    result.latency_ms,
-                    result.tokens_completion,
-                    result.content.chars().take(40).collect::<String>()
-                );
-                latencies_ms.push(result.latency_ms);
+    if concurrent {
+        let mut handles = Vec::with_capacity(n);
+        for i in 0..n {
+            let task = helper.create_task("qwen3.5-0.8b", &messages_json, 5, false);
+            let client = Arc::clone(&client);
+            handles.push(tokio::spawn(async move {
+                let r = client.submit(task).await;
+                (i, r)
+            }));
+        }
+        for h in handles {
+            let (i, r) = h.await?;
+            match r {
+                Ok(result) => {
+                    eprintln!(
+                        "[{i}] ok latency_ms={} tokens_completion={} content={:?}",
+                        result.latency_ms,
+                        result.tokens_completion,
+                        result.content.chars().take(40).collect::<String>()
+                    );
+                    latencies_ms.push(result.latency_ms);
+                }
+                Err(e) => {
+                    eprintln!("[{i}] FAIL: {e}");
+                    failures += 1;
+                }
             }
-            Err(e) => {
-                eprintln!("[{i}] FAIL: {e}");
-                failures += 1;
+        }
+    } else {
+        for i in 0..n {
+            let task = helper.create_task("qwen3.5-0.8b", &messages_json, 5, false);
+            match client.submit(task).await {
+                Ok(result) => {
+                    eprintln!(
+                        "[{i}] ok latency_ms={} tokens_completion={} content={:?}",
+                        result.latency_ms,
+                        result.tokens_completion,
+                        result.content.chars().take(40).collect::<String>()
+                    );
+                    latencies_ms.push(result.latency_ms);
+                }
+                Err(e) => {
+                    eprintln!("[{i}] FAIL: {e}");
+                    failures += 1;
+                }
             }
         }
     }

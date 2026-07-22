@@ -21,6 +21,9 @@ futures-core = "0.3"
 futures-util = "0.3"
 clap = { version = "4", features = ["derive"] }
 hostname = "0.4"
+reqwest = { version = "0.12", features = ["json", "stream"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = []

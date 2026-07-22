@@ -17,7 +17,7 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 [build-dependencies]
-cyclonedds-build = { path = "../../../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds-build" }
+cyclonedds-build = "2.0.0"
 regex = "1"
 
 [features]

@@ -12,7 +12,7 @@
 
 use crate::api::DataSpaceError;
 use crossbeam_channel::{Receiver, Sender, TrySendError};
-use cyclonedds::DataWriter;
+use cyclonedds::{DataWriter, DdsResult, DdsString, WriteLoan};
 use dds_contract::generated::dds_llm_orchestrator::{AgentState, Task, TaskOutput};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -111,19 +111,63 @@ impl WriterPool {
 
 /// Constrói a closure de escrita sobre os DataWriters do DataSpace
 /// (DataWriter é handle copiável/thread-safe para write concorrente).
+///
+/// `tasks_writers` é um POOL (não um único writer): ver
+/// `crate::select_task_writer_slot`/`crate::build_tasks_writer_pool` — o
+/// mesmo mecanismo de força variada por slot usado no caminho de claim
+/// principal (`DataSpace::write_task`), para que `WriteRequest::Task` nunca
+/// reintroduza o desbalanceamento de carga entre agentes corrigido nesta
+/// sessão, caso algum dia passe a ter um chamador em produção.
 pub fn make_write_fn(
-    tasks_writer: DataWriter<Task>,
+    tasks_writers: Vec<DataWriter<Task>>,
     agents_writer: DataWriter<AgentState>,
     outputs_writer: DataWriter<TaskOutput>,
 ) -> WriteFn {
     Arc::new(move |req| {
         let result = match &req {
-            WriteRequest::Task(t) => tasks_writer.write(t),
+            WriteRequest::Task(t) => {
+                let idx = crate::select_task_writer_slot(&t.task_id, tasks_writers.len());
+                tasks_writers[idx].write(t)
+            }
             WriteRequest::Agent(a) => agents_writer.write(a),
-            WriteRequest::Output(o) => outputs_writer.write(o),
+            // Zero-copy: TaskOutput é o tópico de maior volume de samples (um
+            // por chunk de streaming de inferência) — T-616. Ver
+            // `write_output_loan` para o porquê do loan em vez de `.write()`.
+            WriteRequest::Output(o) => write_output_loan(&outputs_writer, o),
         };
         if let Err(e) = result {
             tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
         }
     })
+}
+
+/// Escreve um `TaskOutput` via loan zero-copy em vez de `.write()` (que
+/// serializa para uma representação intermediária via `WriteArena` a cada
+/// chamada). `TaskOutput` é o tópico de maior volume por sessão de inferência
+/// (um sample por chunk de streaming) — o alvo certo para essa otimização.
+///
+/// Usa `DataWriter::request_loan`/`WriteLoan`, corrigido nesta sessão na
+/// crate `cyclonedds` (ver `DdsType::Native` e o histórico no doc comment de
+/// `request_loan` em `third_party/cyclonedds-rust/.../writer.rs`): antes da
+/// correção, o loan zerava/interpretava o buffer como o tipo Rust ergonômico
+/// (`TaskOutput`, com `String`), quando CycloneDDS na verdade aloca
+/// `size_of::<TaskOutput::Native>()` bytes (menor, com `DdsString` de 8
+/// bytes) — um estouro de buffer real, não só um risco teórico. Populamos os
+/// 3 campos `String` como `DdsString` no tipo nativo; os demais campos são
+/// primitivos e são copiados diretamente.
+/// `pub` (não só de uso interno do `WriterPool`) para permitir o microbenchmark
+/// `criterion` em `benches/write_loan.rs` (Fase R3) comparar diretamente contra
+/// `DataWriter::write`.
+pub fn write_output_loan(writer: &DataWriter<TaskOutput>, o: &TaskOutput) -> DdsResult<()> {
+    let mut loan = writer.request_loan()?;
+    let native = loan.get_mut();
+    native.task_id = DdsString::new(&o.task_id)?;
+    native.seq_num = o.seq_num;
+    native.content = DdsString::new(&o.content)?;
+    native.is_final = o.is_final;
+    native.finish_reason = o.finish_reason;
+    native.agent_id = DdsString::new(&o.agent_id)?;
+    native.token_count = o.token_count;
+    native.emitted_at_ns = o.emitted_at_ns;
+    WriteLoan::write(loan)
 }

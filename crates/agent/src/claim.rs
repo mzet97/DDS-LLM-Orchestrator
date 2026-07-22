@@ -49,6 +49,15 @@ pub fn is_eligible(task: &Task, config: &ClaimConfig, claimed: &HashSet<String>)
         return false;
     }
 
+    // Ignorar tarefas antigas (> 10 segundos)
+    let now_ns = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    if task.created_at_ns > 0 && now_ns.saturating_sub(task.created_at_ns) > 10_000_000_000 {
+        return false;
+    }
+
     // Especialização compatível?
     if !config.specialization.matches(task.model_required) {
         return false;

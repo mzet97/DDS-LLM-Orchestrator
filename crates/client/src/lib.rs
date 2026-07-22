@@ -196,6 +196,19 @@ pub mod dds_impl {
             let mut outputs_stream = Box::pin(self.dataspace.stream_task_outputs());
 
             let mut chunks: Vec<TaskOutput> = Vec::new();
+            // `status_stream` (Task DONE) e `outputs_stream` (TaskOutput chunks) são
+            // tópicos DIFERENTES, lidos por readers independentes — não há garantia
+            // de ordem de entrega ENTRE eles, mesmo que o agente escreva o último
+            // chunk antes do DONE. Retornar assim que status==DONE chega é uma
+            // condição de corrida real: o reader de status pode entregar antes do
+            // reader de outputs ter recebido o(s) chunk(s) final(is), produzindo
+            // `content` vazio ou truncado (reproduzido de forma determinística ao
+            // rotear os writers de `Tasks` do agente por um pool — a mudança de
+            // timing relativo entre os dois tópicos bastou para expor a corrida
+            // pré-existente). Fix: só finaliza quando as DUAS condições forem
+            // verdadeiras — status==DONE recebido E um chunk com `is_final` já
+            // coletado — não importa em qual ordem os dois sinais chegam.
+            let mut done = false;
             loop {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 if remaining.is_zero() {
@@ -213,26 +226,26 @@ pub mod dds_impl {
                         if let Some(t) = st {
                             if t.task_id != task_id { continue; }
                             if t.status == 3 {
-                                // DONE
-                                chunks.sort_by_key(|o| o.seq_num);
-                                let content: String =
-                                    chunks.iter().map(|o| o.content.clone()).collect();
-                                let tokens_completion =
-                                    chunks.last().map(|o| o.token_count).unwrap_or(0);
-                                return Ok(TaskResult {
-                                    task_id,
-                                    content,
-                                    success: true,
-                                    latency_ms: start.elapsed().as_millis() as u64,
-                                    tokens_prompt: 0,
-                                    tokens_completion,
-                                });
+                                done = true;
                             } else if t.status == 4 {
                                 // FAILED
                                 return Err(ClientError::TaskFailed(t.finish_reason.clone()));
                             }
                         }
                     }
+                }
+                if done && chunks.iter().any(|c| c.is_final) {
+                    chunks.sort_by_key(|c| c.seq_num);
+                    let content: String = chunks.iter().map(|c| c.content.clone()).collect();
+                    let tokens_completion = chunks.last().map(|c| c.token_count).unwrap_or(0);
+                    return Ok(TaskResult {
+                        task_id,
+                        content,
+                        success: true,
+                        latency_ms: start.elapsed().as_millis() as u64,
+                        tokens_prompt: 0,
+                        tokens_completion,
+                    });
                 }
             }
         }

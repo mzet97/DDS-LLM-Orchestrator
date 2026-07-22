@@ -22,6 +22,18 @@ crossbeam-channel = { workspace = true }
 parking_lot = { workspace = true }
 tracing = { workspace = true }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 [features]
 default = []
 dds = ["dep:cyclonedds", "dds-contract/dds"]
+
+[[bench]]
+name = "write_loan"
+harness = false
+required-features = ["dds"]
+
+[[bench]]
+name = "cache_hasher"
+harness = false

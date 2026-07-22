@@ -11,6 +11,7 @@
 
 pub mod claim;
 pub mod engine;
+pub mod engine_http;
 pub mod heartbeat;
 
 #[cfg(feature = "dds")]
@@ -82,8 +83,23 @@ impl Agent {
     }
 
     /// Marca uma task como claimed por este agente.
+    ///
+    /// Chamado no momento em que a tentativa de claim é disparada (antes do
+    /// write de ASSIGNED), não só após a confirmação — isso é o que impede
+    /// uma reentrega da mesma task no stream de disparar uma segunda
+    /// tentativa concorrente enquanto a primeira ainda está na janela de
+    /// confirmação (`CONFIRM_DELAY`). Se a tentativa falhar ou perder a
+    /// arbitragem, o chamador deve desfazer com [`Agent::unmark_claimed`].
     pub async fn mark_claimed(&self, task_id: String) {
         self.claimed.write().await.insert(task_id);
+    }
+
+    /// Desfaz uma reserva de [`Agent::mark_claimed`] quando a tentativa de
+    /// claim falha (erro de escrita) ou perde a arbitragem (outro agente
+    /// venceu) — sem isso a task ficaria presa como "claimed" para sempre
+    /// neste agente e nunca mais seria elegível de novo.
+    pub async fn unmark_claimed(&self, task_id: &str) {
+        self.claimed.write().await.remove(task_id);
     }
 
     /// Processa uma task claimed.

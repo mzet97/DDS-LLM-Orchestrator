@@ -44,9 +44,13 @@ struct Args {
     #[arg(long, default_value = "text")]
     specialization: String,
 
-    /// Engine: dds (llama-server via LLM.*) ou mock (teste)
+    /// Engine: dds (llama-server via LLM.*), http (llama-server via HTTP), ou mock (teste)
     #[arg(long, default_value = "dds")]
     engine: String,
+
+    /// llama-server HTTP URL (for http engine)
+    #[arg(long, default_value = "http://localhost:8082")]
+    llama_url: String,
 }
 
 fn parse_specialization(s: &str) -> Specialization {
@@ -100,6 +104,10 @@ async fn main() -> Result<()> {
 
     if args.engine == "mock" {
         let engine = Arc::new(MockEngine::new("chunk", 5, 50));
+        runtime.run(engine).await?;
+    } else if args.engine == "http" {
+        use agent::engine_http::HttpEngine;
+        let engine = Arc::new(HttpEngine::new(&args.llama_url));
         runtime.run(engine).await?;
     } else {
         let engine = Arc::new(DdsEngine::new(args.dds_domain, args.agent_id)?);

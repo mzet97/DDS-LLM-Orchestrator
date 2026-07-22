@@ -206,7 +206,9 @@ impl OrchestratorDds {
     /// `last_seen`, então a violação usa a MESMA detecção, não uma segunda.
     async fn reap_dead_agents(&self, stale_after: Duration) {
         let now = std::time::Instant::now();
-        let dead: Vec<String> = self
+        // `HashSet`, não `Vec`: o `.contains()` abaixo roda por task em
+        // `caches.all_tasks()` — O(1) por checagem em vez de O(agentes mortos).
+        let dead: std::collections::HashSet<String> = self
             .last_seen
             .iter()
             .filter(|e| now.duration_since(*e.value()) > stale_after)
@@ -229,6 +231,16 @@ impl OrchestratorDds {
                 }),
             )
             .await;
+            // Remove de `last_seen` — sem isto, o mesmo agente já morto
+            // continua batendo no filtro `duration_since(...) > stale_after`
+            // em TODO ciclo seguinte (a cada `check_every`, tipicamente 2s),
+            // republicando QoS.Violation("liveliness_lost") e o warn acima
+            // indefinidamente até o agente reconectar (achado real: rodando
+            // em produção por >2h contínuas contra um agente travado, ver
+            // OPTIMIZATION_REPORT.md). Reconexão continua funcionando: a
+            // linha 185 (`last_seen.insert(...)`) reinsere com timestamp
+            // fresco assim que um novo `AgentRegistry` chegar na stream.
+            self.last_seen.remove(agent_id);
         }
 
         let tasks = self.dataspace.caches().all_tasks();
