@@ -23,7 +23,7 @@ use anyhow::Result;
 use claim::{ClaimConfig, Specialization};
 use engine::{Engine, InferRequest};
 use futures_util::StreamExt;
-use heartbeat::AgentStatus;
+use heartbeat::{AgentStatus, SlotGuard};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -108,10 +108,9 @@ impl Agent {
         task: &dds_contract::generated::dds_llm_orchestrator::Task,
         engine: &E,
     ) -> Result<()> {
-        // Reservar slot
-        if !self.status.acquire_slot() {
-            anyhow::bail!("sem slots disponíveis");
-        }
+        // Reservar slot (guard RAII: qualquer saída libera slots_busy — RUST-SLOT-007)
+        let _slot =
+            SlotGuard::acquire(None, Arc::clone(&self.status)).map_err(|e| anyhow::anyhow!(e))?;
 
         let start = std::time::Instant::now();
 
