@@ -231,12 +231,26 @@ impl DataSpace {
 
     /// Sobe o DataSpace no domínio: participant + todos os tópicos canônicos + writers/readers.
     pub fn new(domain_id: u32, ownership_strength: i32) -> Result<Self, api::DataSpaceError> {
+        Self::new_with_profile(domain_id, ownership_strength, None)
+    }
+
+    /// Sobe o DataSpace com QoS configurável por perfil (para campanha experimental).
+    /// `profile_name`: Some("QoS_Balanced") para perfil específico, None para default.
+    pub fn new_with_profile(
+        domain_id: u32,
+        ownership_strength: i32,
+        profile_name: Option<&str>,
+    ) -> Result<Self, api::DataSpaceError> {
         let participant = DomainParticipant::new(domain_id).map_err(err)?;
         let publisher = Publisher::new(participant.entity()).map_err(err)?;
         let subscriber = Subscriber::new(participant.entity()).map_err(err)?;
 
         // ── QoS profiles ────────────────────────────────────────────────
-        let q_tasks = qos::profiles::tasks(Some(ownership_strength)).map_err(err)?;
+        let q_tasks = if let Some(profile) = profile_name {
+            qos::profiles::tasks_with_profile(profile, Some(ownership_strength)).map_err(err)?
+        } else {
+            qos::profiles::tasks(Some(ownership_strength)).map_err(err)?
+        };
         let q_agents = qos::profiles::agent_registry().map_err(err)?;
         let q_outputs = qos::profiles::task_output(Some(ownership_strength)).map_err(err)?;
         let q_llm = qos::profiles::llm().map_err(err)?;
@@ -623,7 +637,11 @@ impl DataSpace {
                 match reader.take_async().await {
                     Ok(tasks) => {
                         for t in tasks {
-                            yield caches.upsert_task(t);
+                            // RUST-CACHE-006: só entrega ao consumidor o que
+                            // está de fato no cache (legível via read_task).
+                            if let cache::TaskUpsert::Accepted(t) = caches.upsert_task(t) {
+                                yield t;
+                            }
                         }
                     }
                     Err(e) => {

@@ -84,6 +84,32 @@ fn outputs_dedup_por_seq_num() {
     assert_eq!(outs[0].emitted_at_ns, 30);
 }
 
+#[test]
+fn outputs_limitam_chunks_e_chaves_distintas() {
+    let caches = TopicCaches::new();
+    let output =
+        |task_id: String, seq_num: u32| dds_contract::generated::dds_llm_orchestrator::TaskOutput {
+            task_id,
+            seq_num,
+            content: String::new(),
+            is_final: false,
+            finish_reason: 0,
+            agent_id: "a".into(),
+            token_count: 0,
+            emitted_at_ns: seq_num as u64,
+        };
+
+    for seq_num in 0..300 {
+        caches.push_output(output("uma-task".into(), seq_num));
+    }
+    assert_eq!(caches.outputs_of("uma-task").len(), 256);
+
+    for task_num in 0..2050 {
+        caches.push_output(output(format!("task-{task_num}"), 0));
+    }
+    assert!(caches.outputs.len() <= 2048);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 16)]
 async fn stress_concorrencia_sem_corrupcao() {
     let caches = Arc::new(TopicCaches::new());
@@ -134,16 +160,99 @@ async fn stress_concorrencia_sem_corrupcao() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]
 async fn disputa_mesmo_id_sem_regressao() {
-    for round in 0..200 {
+    // Regressão de RUST-CACHE-006B: duas primeiras-inserções concorrentes do
+    // mesmo task_id, em ordens inversas de status/timestamp por rodada.
+    // 10.000 disputas (aceite da Fase 2.1 do plano de correção).
+    for round in 0..10_000 {
         let caches = Arc::new(TopicCaches::new());
         let c1 = Arc::clone(&caches);
         let c2 = Arc::clone(&caches);
         let id = format!("race-{round}");
         let id2 = id.clone();
-        let h1 = tokio::spawn(async move { c1.upsert_task(make_task(&id, 1, 100)) });
-        let h2 = tokio::spawn(async move { c2.upsert_task(make_task(&id2, 2, 50)) });
+        // Alterna quem dispara primeiro entre a versão fraca e a forte.
+        let (h1, h2) = if round % 2 == 0 {
+            (
+                tokio::spawn(async move { c1.upsert_task(make_task(&id, 1, 100)) }),
+                tokio::spawn(async move { c2.upsert_task(make_task(&id2, 2, 50)) }),
+            )
+        } else {
+            (
+                tokio::spawn(async move { c1.upsert_task(make_task(&id, 2, 50)) }),
+                tokio::spawn(async move { c2.upsert_task(make_task(&id2, 1, 100)) }),
+            )
+        };
         let _ = tokio::join!(h1, h2);
         let final_ = caches.read_task(&format!("race-{round}")).unwrap();
         assert_eq!(final_.status, 2, "versão mais fraca venceu a disputa");
     }
+}
+
+#[test]
+fn primeira_insercao_deterministica_ambas_as_ordens() {
+    // Versão sequencial (determinística) da disputa: cobre as duas ordens
+    // sem depender de scheduling.
+    for (s1, s2) in [(1, 2), (2, 1)] {
+        let caches = TopicCaches::new();
+        caches.upsert_task(make_task("det", s1, 100));
+        let out = caches.upsert_task(make_task("det", s2, 50));
+        assert!(out.is_accepted());
+        assert_eq!(
+            caches.read_task("det").unwrap().status,
+            2,
+            "ordem ({s1} -> {s2}) regrediu o status"
+        );
+    }
+}
+
+#[test]
+fn cache_saturado_rejeita_sem_entregar_e_recupera_apos_eviction() {
+    // RUST-CACHE-006: toda amostra Accepted é imediatamente legível; após o
+    // cap, eviction de terminais volta a aceitar tasks novas.
+    let caches = TopicCaches::new();
+    for i in 0..2048 {
+        let r = caches.upsert_task(make_task(&format!("fill-{i}"), 0, 100 + i as u64));
+        assert!(r.is_accepted(), "inserção {i} deveria ser aceita");
+    }
+
+    // Saturado: task nova é rejeitada e NÃO pode ser lida de volta.
+    let rejected = caches.upsert_task(make_task("overflow-1", 0, 9999));
+    assert!(
+        !rejected.is_accepted(),
+        "task nova deveria ser rejeitada no cap"
+    );
+    assert!(
+        caches.read_task("overflow-1").is_none(),
+        "amostra rejeitada não pode estar no cache"
+    );
+    let stats = caches.task_cache_stats();
+    assert_eq!(stats.tasks_rejected, 1);
+    assert_eq!(stats.tasks_len, 2048);
+
+    // Tasks existentes continuam atualizáveis mesmo no cap (Occupied path).
+    assert!(caches
+        .upsert_task(make_task("fill-0", 1, 200))
+        .is_accepted());
+
+    // Marca uma task como terminal antiga → o próximo upsert de id novo
+    // dispara eviction sob pressão e passa a ser aceito.
+    let mut terminal = make_task("fill-1", 3, 50);
+    terminal.completed_at_ns = 53; // ns epoch → muito mais velho que o TTL
+    assert!(caches.upsert_task(terminal).is_accepted());
+
+    let accepted = caches.upsert_task(make_task("overflow-2", 0, 8888));
+    assert!(
+        accepted.is_accepted(),
+        "após eviction de terminais o cache deve aceitar novas tasks"
+    );
+    assert!(
+        caches.read_task("overflow-2").is_some(),
+        "toda amostra Accepted deve ser legível via read_task"
+    );
+    assert!(
+        caches.read_task("fill-1").is_none(),
+        "terminal antiga deveria ter sido evictada sob pressão"
+    );
+    let stats = caches.task_cache_stats();
+    assert!(stats.tasks_evicted >= 1);
+    assert_eq!(stats.tasks_rejected, 1);
 }
