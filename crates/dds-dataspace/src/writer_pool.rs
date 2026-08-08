@@ -16,12 +16,17 @@ use cyclonedds::{DataWriter, DdsResult, DdsString, WriteLoan};
 use dds_contract::generated::dds_llm_orchestrator::{AgentState, Task, TaskOutput};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use tokio::sync::oneshot;
 
 /// Pedido de escrita genérico.
 pub enum WriteRequest {
     Task(Task),
     Agent(AgentState),
     Output(TaskOutput),
+    /// Chunk final de um stream: o worker confirma o resultado real do
+    /// `dds_write` pelo canal (RUST-PROTO-005 — o agente só publica DONE
+    /// depois desse ack; falha/timeout vira FAILED com causa observável).
+    OutputAck(TaskOutput, oneshot::Sender<Result<(), DataSpaceError>>),
 }
 
 type WriteFn = Arc<dyn Fn(WriteRequest) + Send + Sync>;
@@ -88,6 +93,22 @@ impl WriterPool {
         })
     }
 
+    /// Enfileira o write FINAL de um stream e devolve o canal de confirmação
+    /// (RUST-PROTO-005). O ack carrega o resultado real do `dds_write` feito
+    /// pelo worker — enqueue com sucesso NÃO conta como entrega.
+    ///
+    /// Shutdown: `drain_and_shutdown` drena o canal antes de encerrar os
+    /// workers, então todo ack enfileirado é respondido; se o pool for
+    /// dropado sem drain, o receiver observa canal fechado (falha explícita).
+    pub fn submit_with_ack(
+        &self,
+        output: TaskOutput,
+    ) -> Result<oneshot::Receiver<Result<(), DataSpaceError>>, DataSpaceError> {
+        let (tx, rx) = oneshot::channel();
+        self.submit(WriteRequest::OutputAck(output, tx))?;
+        Ok(rx)
+    }
+
     pub fn submitted(&self) -> u64 {
         self.submitted.load(Ordering::Relaxed)
     }
@@ -124,6 +145,18 @@ pub fn make_write_fn(
     outputs_writer: DataWriter<TaskOutput>,
 ) -> WriteFn {
     Arc::new(move |req| {
+        // Variante com confirmação: o resultado REAL do dds_write vai para o
+        // canal de ack (RUST-PROTO-005). Se o receiver já desistiu (timeout/
+        // cancelamento), o send falha sem custo — o erro continua logado.
+        if let WriteRequest::OutputAck(o, ack) = req {
+            let result = write_output_loan(&outputs_writer, &o)
+                .map_err(|e| DataSpaceError::WriteFailed(e.to_string()));
+            if let Err(e) = &result {
+                tracing::error!(error = %e, "writer_pool: falha no write FINAL do DDS");
+            }
+            let _ = ack.send(result);
+            return;
+        }
         let result = match &req {
             WriteRequest::Task(t) => {
                 let idx = crate::select_task_writer_slot(&t.task_id, tasks_writers.len());
@@ -134,6 +167,7 @@ pub fn make_write_fn(
             // por chunk de streaming de inferência) — T-616. Ver
             // `write_output_loan` para o porquê do loan em vez de `.write()`.
             WriteRequest::Output(o) => write_output_loan(&outputs_writer, o),
+            WriteRequest::OutputAck(..) => unreachable!("tratado acima"),
         };
         if let Err(e) = result {
             tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
