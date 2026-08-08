@@ -65,8 +65,17 @@ pub struct OrchestratorDds {
 impl OrchestratorDds {
     /// Sobe o runtime (orquestrador = papel strength 200 para reaper/failover).
     /// O decisor de QoS vem do `--qos-manager` (T-504).
-    pub fn new(domain_id: u32, decider: Arc<dyn QosDecider>) -> Result<Self> {
-        let dataspace = Arc::new(DataSpace::new(domain_id, DataSpace::STRENGTH_ORCHESTRATOR)?);
+    /// `qos_profile`: perfil QoS estrutural para a campanha experimental (None = default).
+    pub fn new(
+        domain_id: u32,
+        decider: Arc<dyn QosDecider>,
+        qos_profile: Option<&str>,
+    ) -> Result<Self> {
+        let dataspace = Arc::new(DataSpace::new_with_profile(
+            domain_id,
+            DataSpace::STRENGTH_ORCHESTRATOR,
+            qos_profile,
+        )?);
         let api_qos = dds_dataspace::qos::profiles::tasks(Some(DataSpace::STRENGTH_CLIENT))?;
         let api_tasks_writer = dataspace.tasks_writer_with(&api_qos);
         Ok(Self {
@@ -116,6 +125,100 @@ impl OrchestratorDds {
         f(&mut m);
     }
 
+    /// Porte fiel de `_collect_fuzzy_metrics` (Python `orchestrator/main.py`):
+    /// coleta as 8 métricas de entrada dos decisores a partir dos caches do
+    /// mesh (AgentRegistry + Tasks) e grava em `self.metrics`. Antes desta
+    /// fiação (Rodada 8), `set_metrics` não tinha NENHUM chamador em produção
+    /// e todo decisor adaptativo via `FuzzyMetrics::default()` (zeros
+    /// constantes) em todo ciclo — degenerando em braço estático e
+    /// invalidando qualquer comparação de braços (`--qos-manager`).
+    ///
+    /// Semântica idêntica ao Python, incluindo os defaults (0.5 em tudo,
+    /// error_rate 0.1) quando não há dados:
+    /// - `agent_load`   = slots ocupados / slots totais;
+    /// - `recent_latency` = média das `ema_latency_ms` > 0, normalizada /1000, cap 1.0;
+    /// - `error_rate`/`historical_confidence` = falhas/completadas sobre o total de ops;
+    /// - `urgency`      = tasks ativas (PENDING|RUNNING) / total;
+    /// - `streaming_need`/`estimated_complexity` = fração streaming e tamanho
+    ///   médio de `messages_json` (/4000, cap 1.0) sobre as ATIVAS;
+    /// - `deadline_pressure` = ativas com deadline estourado / total.
+    pub fn refresh_metrics_from_mesh(&self) {
+        let caches = self.dataspace.caches();
+        let agents = caches.all_agents();
+        let tasks = caches.all_tasks();
+
+        let mut m = FuzzyMetrics {
+            urgency: 0.5,
+            deadline_pressure: 0.5,
+            recent_latency: 0.5,
+            agent_load: 0.5,
+            error_rate: 0.1,
+            historical_confidence: 0.5,
+            estimated_complexity: 0.5,
+            streaming_need: 0.5,
+        };
+
+        if !agents.is_empty() {
+            let total_slots: u32 = agents.iter().map(|a| a.slots_total).sum();
+            let busy_slots: u32 = agents.iter().map(|a| a.slots_busy).sum();
+            m.agent_load = if total_slots > 0 {
+                f64::from(busy_slots) / f64::from(total_slots)
+            } else {
+                0.0
+            };
+
+            let latencies: Vec<f64> = agents
+                .iter()
+                .map(|a| f64::from(a.ema_latency_ms))
+                .filter(|&l| l > 0.0)
+                .collect();
+            if !latencies.is_empty() {
+                let avg = latencies.iter().sum::<f64>() / latencies.len() as f64;
+                m.recent_latency = (avg / 1000.0).min(1.0);
+            }
+
+            let completed: u64 = agents.iter().map(|a| u64::from(a.completed_total)).sum();
+            let failed: u64 = agents.iter().map(|a| u64::from(a.failed_total)).sum();
+            let ops = completed + failed;
+            if ops > 0 {
+                m.error_rate = failed as f64 / ops as f64;
+                m.historical_confidence = completed as f64 / ops as f64;
+            }
+        }
+
+        if !tasks.is_empty() {
+            let now = now_ns();
+            let total = tasks.len();
+            let (mut active, mut overdue, mut streaming) = (0usize, 0usize, 0usize);
+            let mut total_len = 0usize;
+
+            for t in &tasks {
+                // Igual ao Python: só PENDING (0) e RUNNING (2) são "ativas" —
+                // ASSIGNED (1) fica de fora deliberadamente (paridade).
+                if t.status == 0 || t.status == 2 {
+                    active += 1;
+                    if t.stream {
+                        streaming += 1;
+                    }
+                    total_len += t.messages_json.len();
+                    if t.deadline_ns > 0 && now > t.deadline_ns {
+                        overdue += 1;
+                    }
+                }
+            }
+
+            m.urgency = (active as f64 / total as f64).min(1.0);
+            if active > 0 {
+                m.streaming_need = streaming as f64 / active as f64;
+                let avg_len = total_len as f64 / active as f64;
+                m.estimated_complexity = (avg_len / 4000.0).min(1.0);
+            }
+            m.deadline_pressure = (overdue as f64 / total as f64).min(1.0);
+        }
+
+        *self.metrics.write() = m;
+    }
+
     /// Decide uma vez com as métricas correntes (expõe p/ testes e para o loop).
     pub fn decide_once(&self) -> QoSDecision {
         let m = *self.metrics.read();
@@ -134,8 +237,17 @@ impl OrchestratorDds {
     /// T-401: publica uma task no tópico `Tasks` com strength de CLIENTE (10) —
     /// os agentes (100) vencem a arbitragem ao clamar. (Se a API escrevesse com
     /// 200, nenhum agente conseguiria tomar a task.)
+    ///
+    /// Não alimenta `self.scheduler` aqui: nenhum caminho de produção chama
+    /// `scheduler().pop()` (confirmado por busca — só o teste unitário do
+    /// próprio `Scheduler` o exercita, construindo sua própria instância).
+    /// Alimentá-lo custava um `RwLock::write().await` (serializando
+    /// `publish_task` concorrentes entre si à toa) + um `task.clone()` em
+    /// TODA requisição, sem nenhum consumidor real — achado de performance
+    /// da Rodada 7. A struct/tipo `Scheduler` continua existindo (não é
+    /// dead code do ponto de vista do tipo, só deste call site) caso um
+    /// consumidor real apareça no futuro.
     pub async fn publish_task(&self, task: Task) -> Result<()> {
-        self.scheduler.write().await.push(task.clone());
         self.api_tasks_writer
             .write(&task)
             .map_err(|e| dds_dataspace::api::DataSpaceError::Dds(e.to_string()))?;
@@ -151,8 +263,18 @@ impl OrchestratorDds {
             let mut o = Box::pin(ds.stream_task_outputs());
             loop {
                 tokio::select! {
-                    _ = t.next() => {}
-                    _ = o.next() => {}
+                    msg = t.next() => {
+                        if msg.is_none() {
+                            tracing::error!("stream_tasks ended — cache feeder stopping");
+                            break;
+                        }
+                    }
+                    msg = o.next() => {
+                        if msg.is_none() {
+                            tracing::warn!("stream_task_outputs ended — output feeder stopping");
+                            break;
+                        }
+                    }
                 }
             }
         })
@@ -260,20 +382,39 @@ impl OrchestratorDds {
     }
 
     /// T-405/T-504: loop de controle com o decisor de QoS (`--qos-manager`).
-    /// A cada `period`: decide o perfil com as métricas correntes, aplica os
-    /// knobs online no writer de Tasks e traceja a decisão (`qos_decision`).
+    /// A cada `period`: coleta as métricas do mesh, decide o perfil, passa a
+    /// decisão bruta pelo `StabilityController` (histerese/persistência/
+    /// cooldown/fallback — §4.3/§4.6 do artigo, antes existente na crate mas
+    /// nunca fiado aqui) e só então aplica os knobs online no writer de Tasks;
+    /// cada decisão é tracejada (`qos_decision`, com perfil bruto E efetivo).
+    ///
+    /// Política de não convergência (fallback do artigo): se o decisor
+    /// iterativo (FCM/NFCM) não convergiu (`!result.converged`), o ciclo
+    /// mantém o perfil efetivo anterior — não aplica a decisão bruta.
     pub fn spawn_control_loop(self: &Arc<Self>, period: Duration) -> tokio::task::JoinHandle<()> {
         let this = Arc::clone(self);
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(period);
+            let mut stability = qos_nfcm::stability::StabilityController::new(Default::default());
             loop {
                 interval.tick().await;
+                this.refresh_metrics_from_mesh();
                 let result = this.decide_once();
-                let profile_name = profile_name_of(&result.profile);
+                let raw_name = profile_name_of(&result.profile);
                 let decision_n = this
                     .decisions
                     .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
                     + 1;
+
+                let effective_idx = if result.converged {
+                    stability.update(result.profile.index(), result.confidence, result.runner_up)
+                } else {
+                    // Não convergiu: mantém o efetivo atual (ou o fallback
+                    // Balanced se ainda não houve nenhuma decisão efetiva).
+                    stability.current().unwrap_or(4)
+                };
+                let effective = qos_nfcm::QoSProfile::from_index(effective_idx);
+                let profile_name = profile_name_of(&effective);
 
                 match dds_contract::qos_profile(profile_name) {
                     Ok((_structural, knobs)) => {
@@ -289,7 +430,9 @@ impl OrchestratorDds {
                 tracing::info!(
                     decision = decision_n,
                     profile = profile_name,
-                    confidence = result.confidence,
+                    raw_profile = raw_name,
+                    score = result.confidence,
+                    converged = result.converged,
                     explanation = %result.explanation,
                     "qos_decision"
                 );
@@ -389,6 +532,8 @@ impl OrchestratorDds {
             }
             // TERMINAL_STATES do Python: DONE(3)/FAILED(4).
             if t.status == 3 || t.status == 4 {
+                // Remove from reported_deadlines — task is done, no need to track.
+                self.reported_deadlines.remove(&task_id);
                 continue;
             }
             if t.created_at_ns == 0 || t.deadline_ns == 0 {
@@ -400,7 +545,34 @@ impl OrchestratorDds {
 
                 self.reported_deadlines.insert(task_id.clone());
                 if self.reported_deadlines.len() > REPORTED_DEADLINES_MAX {
-                    self.reported_deadlines.clear();
+                    // Evict entries for terminal tasks instead of clearing all.
+                    let terminal: Vec<String> = self
+                        .reported_deadlines
+                        .iter()
+                        .filter(|id| {
+                            self.dataspace
+                                .caches()
+                                .read_task(id)
+                                .is_none_or(|t| t.status == 3 || t.status == 4)
+                        })
+                        .map(|id| id.clone())
+                        .collect();
+                    for id in terminal {
+                        self.reported_deadlines.remove(&id);
+                    }
+                    // If still over max after terminal eviction, clear half.
+                    if self.reported_deadlines.len() > REPORTED_DEADLINES_MAX {
+                        let half = self.reported_deadlines.len() / 2;
+                        let keys: Vec<String> = self
+                            .reported_deadlines
+                            .iter()
+                            .take(half)
+                            .map(|e| e.clone())
+                            .collect();
+                        for k in keys {
+                            self.reported_deadlines.remove(&k);
+                        }
+                    }
                 }
                 new_count += 1;
 
@@ -456,6 +628,12 @@ impl OrchestratorDds {
                 interval.tick().await;
                 this.check_task_deadlines().await;
                 this.publish_qos_metrics().await;
+
+                // Evict terminal tasks every cycle (30s max age) to bound memory.
+                // Under sustained load (10K+ requests), caches grow fast.
+                this.dataspace
+                    .caches()
+                    .evict_terminal_tasks(std::time::Duration::from_secs(30));
             }
         })
     }

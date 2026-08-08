@@ -20,6 +20,7 @@ async fn fuzzy_routing_publica_qos_routing_profile_na_troca_de_perfil() {
             Arc::new(qos_nfcm::decider::StaticDecider::new(
                 qos_nfcm::QoSProfile::Failover,
             )),
+            None,
         )
         .unwrap()
         .with_fuzzy_routing(true),
@@ -72,6 +73,7 @@ async fn sem_fuzzy_routing_nao_publica_nada() {
             Arc::new(qos_nfcm::decider::StaticDecider::new(
                 qos_nfcm::QoSProfile::Balanced,
             )),
+            None,
         )
         .unwrap(), // with_fuzzy_routing não chamado — default OFF
     );

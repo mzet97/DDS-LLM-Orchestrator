@@ -22,8 +22,9 @@
 
 use cyclonedds::{DdsEntity, DdsResult, WaitSet};
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::Notify;
 
 /// WaitSet único por `DataSpace`, compartilhado por todos os `stream_*()`.
@@ -38,6 +39,11 @@ pub struct SharedWaitSet {
     next_cookie: AtomicI64,
     notifiers: Arc<DashMap<i64, Arc<Notify>>>,
     driver: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Nº de vezes que o driver se recuperou de um erro transitório em
+    /// `wait_async` (ex.: `PRECONDITION_NOT_MET` quando o waitset fica
+    /// momentaneamente sem entidades anexadas, sob corrida de attach/detach
+    /// concorrente) — observabilidade/testes. Ver [`SharedWaitSet::driver_restarts`].
+    driver_restarts: Arc<AtomicU64>,
 }
 
 impl SharedWaitSet {
@@ -46,13 +52,35 @@ impl SharedWaitSet {
     pub fn new(participant: &impl DdsEntity) -> DdsResult<Arc<Self>> {
         let waitset = Arc::new(WaitSet::new(participant.entity())?);
         let notifiers: Arc<DashMap<i64, Arc<Notify>>> = Arc::new(DashMap::new());
+        let driver_restarts = Arc::new(AtomicU64::new(0));
 
         let driver_waitset = Arc::clone(&waitset);
         let driver_notifiers = Arc::clone(&notifiers);
+        let driver_restarts_task = Arc::clone(&driver_restarts);
         let driver = tokio::spawn(async move {
+            // Um `Err` de `wait_async` NÃO implica shutdown intencional: se o
+            // WaitSet foi realmente deletado (`Drop for SharedWaitSet`), o
+            // `abort()` já teria cancelado esta future no próximo ponto de
+            // suspensão, sem chance de cair neste `match`. Na prática, o `Err`
+            // mais provável aqui é `PRECONDITION_NOT_MET` do CycloneDDS quando
+            // o waitset fica momentaneamente com ZERO entidades anexadas —
+            // uma corrida real sob carga: todos os `Registration`s ativos
+            // podem ser dropados no mesmo instante em que um novo `register()`
+            // ainda não anexou o seu. Antes, esse `Err` matava o driver
+            // silenciosamente para sempre (só `debug!`), o que parava TODO o
+            // fan-out de notificação do processo — o sintoma observado era
+            // caches (`stream_tasks`/`stream_task_outputs`) que "às vezes
+            // param de atualizar" e o endpoint `/sync` "travando"
+            // intermitentemente sob carga concorrente. Agora: nunca desiste
+            // sozinho, só espera um pouco (backoff) e tenta de novo — a única
+            // forma de parar esta task é `abort()` externo, em `Drop`.
+            let base_backoff = Duration::from_millis(5);
+            let max_backoff = Duration::from_millis(500);
+            let mut backoff = base_backoff;
             loop {
                 match driver_waitset.wait_async(i64::MAX).await {
                     Ok(cookies) => {
+                        backoff = base_backoff; // reseta após qualquer sucesso
                         for cookie in cookies {
                             if let Some(n) = driver_notifiers.get(&cookie) {
                                 n.notify_one();
@@ -60,10 +88,16 @@ impl SharedWaitSet {
                         }
                     }
                     Err(e) => {
-                        // WaitSet provavelmente deletado (DataSpace::shutdown/drop) —
-                        // encerra o driver em vez de girar em erro.
-                        tracing::debug!(error = %e, "SharedWaitSet: driver encerrando");
-                        break;
+                        driver_restarts_task.fetch_add(1, Ordering::Relaxed);
+                        tracing::warn!(
+                            error = %e,
+                            backoff_ms = backoff.as_millis(),
+                            "SharedWaitSet: wait_async falhou (provável corrida de \
+                             attach/detach com o waitset momentaneamente vazio); \
+                             retomando após backoff, driver NÃO encerra"
+                        );
+                        tokio::time::sleep(backoff).await;
+                        backoff = (backoff * 2).min(max_backoff);
                     }
                 }
             }
@@ -74,7 +108,18 @@ impl SharedWaitSet {
             next_cookie: AtomicI64::new(1),
             notifiers,
             driver: Mutex::new(Some(driver)),
+            driver_restarts,
         }))
+    }
+
+    /// Nº de vezes que o driver se recuperou de um erro transitório em
+    /// `wait_async` desde a criação deste `SharedWaitSet`. Deveria ser 0 em
+    /// operação normal; um valor crescente durante uma campanha experimental
+    /// indica a corrida de attach/detach descrita em `new()` — útil para
+    /// confirmar (ou descartar) essa causa em produção sem precisar
+    /// reproduzir localmente.
+    pub fn driver_restarts(&self) -> u64 {
+        self.driver_restarts.load(Ordering::Relaxed)
     }
 
     /// Anexa `reader` ao WaitSet compartilhado. O [`Registration`] devolvido

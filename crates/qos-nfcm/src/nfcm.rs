@@ -153,6 +153,9 @@ pub struct NfcmResult {
     pub adjusted: Vec<(usize, usize, usize, f64)>,
     pub drives: [f64; N_NODES],
     pub h_final: [f64; N_NODES],
+    /// Trajetória completa de `h` por iteração (inclui `h^(0) = 0`), para
+    /// figuras/inspeção de convergência; não usada pela decisão em si.
+    pub h_history: Vec<[f64; N_NODES]>,
     pub iterations: usize,
     pub converged: bool,
     pub scores: [f64; N_PROFILES],
@@ -200,6 +203,8 @@ impl Nfcm {
         }
         // 3. dinâmica: itera h (realimentação real) até atrator
         let mut h = [0.0f64; N_NODES];
+        let mut h_history = Vec::with_capacity(8);
+        h_history.push(h);
         let mut iterations = 0;
         let mut converged = false;
         for it in 1..=100 {
@@ -217,6 +222,7 @@ impl Nfcm {
                 .map(|n| (nxt[n] - h[n]).abs())
                 .fold(0.0, f64::max);
             h = nxt;
+            h_history.push(h);
             iterations = it;
             if delta < 1e-4 {
                 converged = true;
@@ -263,6 +269,7 @@ impl Nfcm {
             adjusted,
             drives,
             h_final: h,
+            h_history,
             iterations,
             converged,
             scores,
@@ -299,6 +306,9 @@ impl crate::decider::QosDecider for Nfcm {
             profile,
             confidence: r.scores[r.winner],
             explanation: crate::explain_text(&r),
+            converged: r.converged,
+            // margin = scores[winner] - segundo colocado (ver infer()), logo:
+            runner_up: r.scores[r.winner] - r.margin,
         }
     }
 

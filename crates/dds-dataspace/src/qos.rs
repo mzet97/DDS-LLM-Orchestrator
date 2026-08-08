@@ -17,6 +17,7 @@ pub mod profiles {
     const FIVE_S: i64 = 5_000_000_000;
     const THIRTY_S: i64 = 30_000_000_000;
     const LATENCY_50MS: i64 = 50_000_000;
+    const LLM_HISTORY_DEPTH: i32 = 10;
 
     /// `Tasks`: Reliable(10s), TransientLocal, KeepLast(50), Exclusive,
     /// liveliness automático lease 10 s, latency 50 ms, tprio 8.
@@ -34,6 +35,23 @@ pub mod profiles {
             b = b.ownership_strength(s);
         }
         b.build()
+    }
+
+    /// `Tasks` com QoS configurável por perfil (para campanha experimental).
+    /// Aplica políticas estruturais do perfil + strength do papel.
+    pub fn tasks_with_profile(profile_name: &str, strength: Option<i32>) -> DdsResult<Qos> {
+        use dds_contract::qos::qos_profile;
+
+        let (structural, _knobs) =
+            qos_profile(profile_name).map_err(|_| cyclonedds::DdsError::from(-1i32))?;
+
+        let mut builder = cyclonedds::QosBuilder::new();
+        builder = structural.apply_to(builder);
+        builder = builder.latency_budget(LATENCY_50MS).transport_priority(8);
+        if let Some(s) = strength {
+            builder = builder.ownership_strength(s);
+        }
+        builder.build()
     }
 
     /// `TaskOutput`: Reliable(10s), TransientLocal, KeepLast(64), Exclusive,
@@ -150,12 +168,13 @@ pub mod profiles {
     }
 
     /// Tópicos `LLM.*` (orchestrator::, keyless): Reliable(10s), TransientLocal,
-    /// KeepLast(10), Shared.
+    /// KeepLast(10), Shared e ResourceLimits(10, 1, 10).
     pub fn llm() -> DdsResult<Qos> {
         QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
             .durability(Durability::TransientLocal)
-            .history(History::KeepLast(10))
+            .history(History::KeepLast(LLM_HISTORY_DEPTH))
+            .resource_limits(LLM_HISTORY_DEPTH, 1, LLM_HISTORY_DEPTH)
             .build()
     }
 
@@ -217,5 +236,36 @@ pub mod profiles {
             .history(History::KeepLast(1))
             .transport_priority(9)
             .build()
+    }
+}
+
+#[cfg(all(test, feature = "dds"))]
+mod tests {
+    use super::profiles;
+    use cyclonedds::{Durability, History, Reliability};
+
+    #[test]
+    fn llm_profile_bounds_the_single_keyless_instance() {
+        let qos = profiles::llm().expect("LLM QoS should build");
+
+        assert_eq!(
+            qos.reliability().expect("reliability").expect("configured"),
+            (Reliability::Reliable, 10_000_000_000)
+        );
+        assert_eq!(
+            qos.durability().expect("durability").expect("configured"),
+            Durability::TransientLocal
+        );
+        assert_eq!(
+            qos.history().expect("history").expect("configured"),
+            History::KeepLast(10)
+        );
+        let limits = qos
+            .resource_limits()
+            .expect("resource limits")
+            .expect("configured");
+        assert_eq!(limits.max_samples, 10);
+        assert_eq!(limits.max_instances, 1);
+        assert_eq!(limits.max_samples_per_instance, 10);
     }
 }

@@ -34,6 +34,32 @@ pub enum QoSProfile {
     Balanced,
 }
 
+impl QoSProfile {
+    /// Índice canônico — MESMA ordem de `PROFILES`/`NfcmResult::winner`
+    /// (0=Critical..4=Balanced) e do `StabilityConfig::fallback` (4=Balanced).
+    pub fn index(&self) -> usize {
+        match self {
+            QoSProfile::Critical => 0,
+            QoSProfile::Failover => 1,
+            QoSProfile::StreamLike => 2,
+            QoSProfile::LowCost => 3,
+            QoSProfile::Balanced => 4,
+        }
+    }
+
+    /// Inverso de [`QoSProfile::index`]; índices fora de 0..=4 caem em Balanced
+    /// (o fallback do `StabilityController`).
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => QoSProfile::Critical,
+            1 => QoSProfile::Failover,
+            2 => QoSProfile::StreamLike,
+            3 => QoSProfile::LowCost,
+            _ => QoSProfile::Balanced,
+        }
+    }
+}
+
 /// Explicação interpretável da decisão (trilha causal resumida).
 pub fn explain_text(r: &NfcmResult) -> String {
     // pertinência dominante por métrica
@@ -57,8 +83,11 @@ pub fn explain_text(r: &NfcmResult) -> String {
         .iter()
         .map(|(m, _t, n, w)| format!("{}→{} ajustado p/ {:.3}", METRICS[*m], NODES[*n], w))
         .collect();
+    // "score", não "confiança": o softmax produz probabilidade predita NÃO
+    // calibrada — o artigo (§ terminologia) bane deliberadamente a palavra
+    // "confiança" para não sugerir calibração que não existe.
     format!(
-        "{} selecionado (confiança {:.3}, margem {:.3}). Dominantes: {}. NFIS: {}.",
+        "{} selecionado (score {:.3}, margem {:.3}). Dominantes: {}. NFIS: {}.",
         r.winner_name(),
         r.scores[r.winner],
         r.margin,

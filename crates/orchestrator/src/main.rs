@@ -265,6 +265,7 @@ mod app {
         let mut port: u16 = 8080;
         let mut domain: u32 = 0;
         let mut qos_manager = "nfcm".to_string();
+        let mut qos_profile: Option<String> = None;
         let mut fuzzy_routing = false;
         let args: Vec<String> = std::env::args().collect();
         let mut i = 1;
@@ -282,6 +283,10 @@ mod app {
                     if let Some(v) = args.get(i + 1) {
                         qos_manager = v.clone();
                     }
+                    i += 2;
+                }
+                "--qos-profile" => {
+                    qos_profile = args.get(i + 1).cloned();
                     i += 2;
                 }
                 // Porte de `--fuzzy-routing` (main.py): flag booleana, sem valor.
@@ -305,10 +310,16 @@ mod app {
             _ => std::sync::Arc::new(qos_nfcm::Nfcm::qos_default()),
         };
 
-        tracing::info!(qos_manager = %qos_manager, "decisor de QoS selecionado");
+        tracing::info!(
+            qos_manager = %qos_manager,
+            qos_profile = ?qos_profile,
+            "decisor de QoS selecionado"
+        );
 
-        let orch =
-            Arc::new(OrchestratorDds::new(domain, decider)?.with_fuzzy_routing(fuzzy_routing));
+        let orch = Arc::new(
+            OrchestratorDds::new(domain, decider, qos_profile.as_deref())?
+                .with_fuzzy_routing(fuzzy_routing),
+        );
         let _feeders = orch.spawn_cache_feeders();
         let _registry_monitor =
             orch.spawn_registry_monitor(Duration::from_secs(15), Duration::from_secs(2));

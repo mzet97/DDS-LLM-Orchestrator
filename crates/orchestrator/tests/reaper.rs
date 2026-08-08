@@ -72,8 +72,9 @@ fn make_agent(id: &str) -> AgentState {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t403_agente_morto_reatribui_tasks() {
-    let orch =
-        Arc::new(OrchestratorDds::new(DOMAIN, Arc::new(qos_nfcm::Nfcm::qos_default())).unwrap());
+    let orch = Arc::new(
+        OrchestratorDds::new(DOMAIN, Arc::new(qos_nfcm::Nfcm::qos_default()), None).unwrap(),
+    );
     let _feeders = orch.spawn_cache_feeders();
     let _mon = orch.spawn_registry_monitor(Duration::from_secs(2), Duration::from_millis(500));
 
@@ -130,8 +131,9 @@ async fn t403_agente_morto_reatribui_tasks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn t403b_agente_morto_nao_republica_violacao_a_cada_ciclo() {
     const DOMAIN_B: u32 = 106; // distinto de DOMAIN=101 acima, mesmo arquivo de teste
-    let orch =
-        Arc::new(OrchestratorDds::new(DOMAIN_B, Arc::new(qos_nfcm::Nfcm::qos_default())).unwrap());
+    let orch = Arc::new(
+        OrchestratorDds::new(DOMAIN_B, Arc::new(qos_nfcm::Nfcm::qos_default()), None).unwrap(),
+    );
     let _feeders = orch.spawn_cache_feeders();
     // Ciclos rápidos (stale_after=1s, check a cada 300ms) para observar
     // várias oportunidades de re-detecção dentro de poucos segundos de

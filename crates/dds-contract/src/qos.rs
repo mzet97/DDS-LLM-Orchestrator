@@ -6,8 +6,9 @@
 //! - **online** (mutável em runtime no CycloneDDS avaliado): TransportPriority,
 //!   LatencyBudget, OwnershipStrength
 //!
-//! Deadline existe no mapeamento Python mas é *unsupported* em runtime — fica
-//! documentado no estrutural e **não** deve ser aplicado quente.
+//! Deadline é uma política estrutural: é aplicado ao criar a entidade e exige
+//! recriação para mudar. O valor `0` representa duração infinita e, portanto,
+//! não é enviado ao `QosBuilder`.
 
 use crate::profiles;
 
@@ -22,8 +23,8 @@ pub struct StructuralQos {
     pub liveliness: LivelinessKind,
     /// Lease de liveliness em segundos.
     pub liveliness_lease_s: f64,
-    /// Deadline em segundos (0 = infinito). **Unsupported** em runtime no
-    /// CycloneDDS avaliado — só informativo / para recriação.
+    /// Deadline em segundos (0 = infinito). É aplicado na criação da entidade;
+    /// mudanças exigem recriação.
     pub deadline_s: f64,
 }
 
@@ -185,8 +186,8 @@ pub fn all_profiles() -> Vec<(&'static str, StructuralQos, OnlineKnobs)> {
 impl StructuralQos {
     /// Constrói um `QosBuilder` com as políticas estruturais.
     ///
-    /// Deadline **não** é aplicado (unsupported em runtime). Ownership strength
-    /// e transport priority ficam nos knobs online.
+    /// Deadline é aplicado na criação quando finito. Ownership strength e
+    /// transport priority ficam nos knobs online.
     pub fn apply_to(&self, mut builder: cyclonedds::QosBuilder) -> cyclonedds::QosBuilder {
         use cyclonedds::{Durability, History, Liveliness, Ownership, Reliability};
 
@@ -216,6 +217,10 @@ impl StructuralQos {
                 builder.liveliness(Liveliness::ManualByTopic, lease_ns)
             }
         };
+        if self.deadline_s > 0.0 {
+            let deadline_ns = (self.deadline_s * 1_000_000_000.0) as i64;
+            builder = builder.deadline(deadline_ns);
+        }
         let _ = (
             Durability::Volatile,
             History::KeepAll,
@@ -288,5 +293,34 @@ mod tests {
         let _ = o.transport_priority;
         let _ = o.latency_budget_ms;
         let _ = o.ownership_strength;
+    }
+
+    #[cfg(feature = "dds")]
+    #[test]
+    fn finite_deadlines_are_applied_in_nanoseconds() {
+        for (name, expected_ns) in [
+            ("QoS_Balanced", 5_000_000_000),
+            ("QoS_Critical", 2_000_000_000),
+            ("QoS_Failover", 2_000_000_000),
+            ("QoS_StreamLike", 1_000_000_000),
+        ] {
+            let (structural, _) = qos_profile(name).unwrap();
+            let qos = structural
+                .apply_to(cyclonedds::QosBuilder::new())
+                .build()
+                .unwrap();
+            assert_eq!(qos.deadline().unwrap(), Some(expected_ns), "{name}");
+        }
+    }
+
+    #[cfg(feature = "dds")]
+    #[test]
+    fn infinite_deadline_is_left_unset() {
+        let (structural, _) = qos_profile("QoS_LowCost").unwrap();
+        let qos = structural
+            .apply_to(cyclonedds::QosBuilder::new())
+            .build()
+            .unwrap();
+        assert_eq!(qos.deadline().unwrap(), None);
     }
 }

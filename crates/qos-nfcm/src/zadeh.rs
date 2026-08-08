@@ -638,6 +638,8 @@ impl QosDecider for ZadehDecider {
                 "zadeh(ext): centroid={:.3}, α0.8=[{:.3},{:.3}]",
                 best.centroid, best.lower_08, best.upper_08
             ),
+            converged: true,
+            runner_up: 0.0,
         }
     }
 

@@ -103,6 +103,8 @@ impl QosDecider for FixedRulesDecider {
             confidence: 1.0,
             explanation: format!("fixed-rules: {} [{}]", profile_name(&profile), rule),
             profile,
+            converged: true,
+            runner_up: 0.0,
         }
     }
 
@@ -287,6 +289,8 @@ impl QosDecider for MamdaniDecider {
                         idx
                     ),
                     profile,
+                    converged: true,
+                    runner_up: 0.0,
                 }
             }
             None => {
@@ -306,6 +310,8 @@ impl QosDecider for MamdaniDecider {
                         metrics.urgency
                     ),
                     profile,
+                    converged: true,
+                    runner_up: 0.0,
                 }
             }
         }
@@ -392,6 +398,8 @@ impl QosDecider for Ucb1Decider {
                         "ucb1: explore arm {} (counts=0)",
                         profile_name(&ARM_PROFILES[i])
                     ),
+                    converged: true,
+                    runner_up: 0.0,
                 };
             }
         }
@@ -419,6 +427,8 @@ impl QosDecider for Ucb1Decider {
                 inner.counts[best],
                 inner.total
             ),
+            converged: true,
+            runner_up: 0.0,
         }
     }
 
@@ -505,6 +515,8 @@ impl QosDecider for SwUcbDecider {
                         "sw-ucb: explore arm {} (janela vazia)",
                         profile_name(&ARM_PROFILES[i])
                     ),
+                    converged: true,
+                    runner_up: 0.0,
                 };
             }
         }
@@ -527,6 +539,8 @@ impl QosDecider for SwUcbDecider {
         QoSDecision {
             profile: ARM_PROFILES[best].clone(),
             confidence: best_ucb,
+            converged: true,
+            runner_up: 0.0,
             explanation: format!(
                 "sw-ucb: {} (ucb={:.3}, n_w={}, total={})",
                 profile_name(&ARM_PROFILES[best]),

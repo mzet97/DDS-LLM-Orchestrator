@@ -44,7 +44,7 @@ async fn t504_cada_modo_roda_no_control_loop() {
     ];
 
     for (i, (mode, decider, expected)) in modes.into_iter().enumerate() {
-        let orch = Arc::new(OrchestratorDds::new(DOMAIN + i as u32, decider).unwrap());
+        let orch = Arc::new(OrchestratorDds::new(DOMAIN + i as u32, decider, None).unwrap());
         orch.set_metrics(|m| *m = degraded());
 
         let d = orch.decide_once();

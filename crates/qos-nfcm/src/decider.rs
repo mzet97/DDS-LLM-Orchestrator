@@ -43,6 +43,15 @@ pub struct QoSDecision {
     pub profile: QoSProfile,
     pub confidence: f64,
     pub explanation: String,
+    /// `false` apenas quando um decisor iterativo (FCM/NFCM) atingiu `T_max`
+    /// sem convergir — o control loop usa isto para a política de fallback do
+    /// artigo (§4.3: "mantém o perfil atual"). Decisores não-iterativos
+    /// (static/zadeh/regras/bandits) são trivialmente `true`.
+    pub converged: bool,
+    /// Score do segundo colocado (0.0 quando o decisor não produz ranking) —
+    /// insumo do `StabilityController` (histerese exige margem
+    /// `confidence - runner_up > m` antes de trocar de perfil).
+    pub runner_up: f64,
 }
 
 /// Trait comum para decisores de QoS.
@@ -71,6 +80,8 @@ impl QosDecider for StaticDecider {
             profile: self.profile.clone(),
             confidence: 1.0,
             explanation: format!("static: always {:?}", self.profile),
+            converged: true,
+            runner_up: 0.0,
         }
     }
 

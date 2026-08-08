@@ -56,9 +56,13 @@ impl Ord for PrioritizedTask {
 }
 
 /// Scheduler com fila de prioridade (REQ-402, T-402).
+/// Capaz de no máximo `MAX_SCHEDULER_SIZE` tasks — as mais antigas são descartadas
+/// quando o limite é atingido (DDS é a fonte de verdade, o scheduler é best-effort).
 pub struct Scheduler {
     queue: BinaryHeap<PrioritizedTask>,
 }
+
+const MAX_SCHEDULER_SIZE: usize = 1024;
 
 impl Default for Scheduler {
     fn default() -> Self {
@@ -73,8 +77,23 @@ impl Scheduler {
         }
     }
 
-    /// Enfileira uma task.
+    /// Enfileira uma task. Descarta a task de menor prioridade se a fila
+    /// atingiu `MAX_SCHEDULER_SIZE` (best-effort — DDS é a fonte de verdade).
     pub fn push(&mut self, task: Task) {
+        if self.queue.len() >= MAX_SCHEDULER_SIZE {
+            // BinaryHeap é max-heap; para remover o menor, drena parcialmente.
+            // Simples: descarta a task mais recente (menor prioridade temporal)
+            // reconstruindo sem ela. Como é best-effort, apenas logamos.
+            tracing::warn!(
+                size = self.queue.len(),
+                "scheduler: capacidade máxima atingida, descartando task mais antiga"
+            );
+            // Remove o item com menor prioridade (último no sort order).
+            let mut items: Vec<_> = self.queue.drain().collect();
+            items.sort();
+            items.pop(); // remove lowest priority
+            self.queue = items.into_iter().collect();
+        }
         let prioritized = PrioritizedTask {
             priority: task.priority,
             created_at_ns: task.created_at_ns,

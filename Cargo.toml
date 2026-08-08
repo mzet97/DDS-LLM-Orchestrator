@@ -30,8 +30,7 @@ authors = ["Matheus Zeitune <matheus.zeitune.developer@gmail.com>"]
 license = "MIT"
 
 [workspace.dependencies]
-# A sua crate DDS, publicada no crates.io. Mesmo contrato IDL do C++/Python.
-cyclonedds = "2.0.0"
+cyclonedds = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds" }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)

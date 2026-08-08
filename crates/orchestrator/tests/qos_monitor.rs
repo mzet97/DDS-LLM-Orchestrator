@@ -52,8 +52,9 @@ fn make_task(id: &str, status: i32, deadline_ns: u64) -> Task {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn task_com_deadline_expirado_publica_violation_e_metric() {
-    let orch =
-        Arc::new(OrchestratorDds::new(DOMAIN, Arc::new(qos_nfcm::Nfcm::qos_default())).unwrap());
+    let orch = Arc::new(
+        OrchestratorDds::new(DOMAIN, Arc::new(qos_nfcm::Nfcm::qos_default()), None).unwrap(),
+    );
     let _feeders = orch.spawn_cache_feeders();
 
     let observer = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).unwrap();
@@ -109,7 +110,7 @@ async fn task_com_deadline_expirado_publica_violation_e_metric() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn agente_morto_publica_liveliness_lost_violation() {
     let orch = Arc::new(
-        OrchestratorDds::new(DOMAIN + 1, Arc::new(qos_nfcm::Nfcm::qos_default())).unwrap(),
+        OrchestratorDds::new(DOMAIN + 1, Arc::new(qos_nfcm::Nfcm::qos_default()), None).unwrap(),
     );
     let _feeders = orch.spawn_cache_feeders();
     let _mon = orch.spawn_registry_monitor(Duration::from_secs(1), Duration::from_millis(300));

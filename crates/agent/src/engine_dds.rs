@@ -26,6 +26,8 @@ fn now_ns() -> u64 {
 }
 
 /// Engine DDS real: llama-server (ou gateway compatível com `orchestrator::LLM*`).
+/// Writer é reusado entre chamadas para evitar leak de entidades DDS.
+/// Readers são criados por stream (take independente entre slots concorrentes).
 pub struct DdsEngine {
     #[allow(dead_code)]
     participant: DomainParticipant,

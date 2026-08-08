@@ -445,6 +445,8 @@ impl QosDecider for FcmDecider {
                 "fcm: {} (activation={:.3}, it={}, {:?})",
                 winner, score, r.iterations, r.kind
             ),
+            converged: r.converged,
+            runner_up: 0.0,
         }
     }
 
@@ -517,6 +519,8 @@ impl QosDecider for FcmDhlDecider {
                 "fcm-dhl: {} (activation={:.3}, it={}, passo t={})",
                 winner, score, r.iterations, inner.learner.t
             ),
+            converged: r.converged,
+            runner_up: 0.0,
         }
     }
 

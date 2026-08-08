@@ -905,6 +905,164 @@ regressão novos), 0 erros de clippy (2 warnings pré-existentes não relacionad
 todos fechados; 1 achado novo em aberto (por que o agente trava sob carga sustentada) listado
 abaixo.
 
+## Rodada 7 — auditoria de performance pós-fechamento (2026-07-22)
+
+Pergunta do usuário: "tem mais alguma questão de desempenho?" — duas investigações paralelas
+(Rust workspace; llama.cpp DDS C++ real, não o protótipo v4 morto), cada uma achando pelo
+menos um problema real e não trivial.
+
+### `evict_terminal_tasks` nunca removia de `self.tasks` — ✅ corrigido (contribuinte real da degradação da Rodada 6)
+
+`crates/dds-dataspace/src/cache.rs::evict_terminal_tasks` computa `terminal_ids` a partir de
+`self.tasks.iter()` (tasks DONE/FAILED há mais de `max_age`) e limpa `outputs`,
+`llm_results`/`llm_requests`/`llm_errors`, `context_updates`, `execution_traces`,
+`security_updates` para esses ids — mas **nunca removia de `self.tasks` em si**, o mapa
+principal de onde `terminal_ids` foi computado. Resultado: `self.tasks` só cresce pela vida
+inteira do processo. Isso é exatamente o que `reap_dead_agents` escaneia via `all_tasks()` a
+cada ~2s (já corrigido na Rodada 6 para não republicar violação para sempre, mas o SCAN em si
+continuava ficando mais caro a cada ciclo, ao longo de uma campanha de horas) — um SEGUNDO
+contribuinte real, ainda ativo, para a degradação progressiva encontrada nos hosts remotos.
+Fix: `self.tasks.remove(id)` adicionado ao loop de eviction, na frente dos demais.
+
+### `publish_task` pagava lock+clone por request para um `Scheduler` nunca consumido — ✅ corrigido
+
+`crates/orchestrator/src/dds.rs::publish_task` fazia `self.scheduler.write().await.push(task.
+clone())` em TODA submissão — um `RwLock::write()` exclusivo (serializando `publish_task`
+concorrentes entre si à toa) mais um `Task` clone completo. Busca confirmou:
+`scheduler().pop()` nunca é chamado em nenhum caminho de produção (`main.rs`/`dds.rs`), só o
+teste unitário do próprio `Scheduler` (`orchestrator/tests/scheduler.rs`), que constrói sua
+própria instância independente. Fix: removida a chamada do hot path; o tipo `Scheduler` e seu
+teste continuam existindo, só o call site morto foi removido.
+
+### Bridge C++ real (`dds_bridge.cpp`) não filtra requests por modelo — ✅ corrigido
+
+Achado mais sério da rodada: o caminho de produção real (`DDSTransport::read_loop` em
+`dds_transport.cpp` + `DDSBridge::handle_request` em `dds_bridge.cpp` — não o protótipo v4
+morto) entrega e enfileira **todo** request publicado no domain, sem `ContentFilteredTopic`
+nem checagem de `model_name` nenhuma; dedup é só por `request_id`. O isolamento entre
+instâncias de `llama-server` hoje é só CONVENÇÃO de deploy (`--dds-domain` distinto por
+servidor), não é garantido pelo código. Evidência ao vivo já coletada na Rodada 6: dois
+processos `llama-server` rodando simultaneamente no MESMO `--dds-domain 210` no host `.61` —
+sob o código antigo, ambos processariam TODO request desse domain em duplicado (trabalho de
+GPU desperdiçado, sem erro nem aviso).
+
+Fix em `DDSBridge::handle_request()` (`dds_bridge.cpp`): compara `request.model_name` contra
+`model_loaded_` (já rastreado via `set_model_info()`, só não era usado para filtrar) sob
+`status_mutex_`; se não bater e `model_loaded_` não estiver vazio (evita descartar requests
+durante a janela de inicialização antes do primeiro `set_model_info()`), descarta sem
+enfileirar e sem contar `pending`. Também corrigido um `fprintf` de debug (`#ifdef DDS_DEBUG`)
+que ainda referenciava o campo antigo `request.model` (pré-unificação) em vez de
+`request.model_name` — não compilava se `DDS_DEBUG` fosse definido; agora compila (testado
+diretamente com `-DDDS_DEBUG`). Sincronizado e verificado (md5) nas duas árvores;
+`llama-server` builda limpo de ponta a ponta na árvore canônica após o fix.
+
+Achado secundário, menor prioridade (não corrigido nesta rodada): `dds_transport.cpp` drena
+request/response/status com `dds_take(..., samples, infos, 1, 1)` — batch size 1 — em vez de
+um batch maior (o lado Rust já usa batches de dezenas após o fix do Bug 2). Overhead pequeno
+(1 syscall por amostra em vez de por lote), não é uma parede como o bug original do Rust —
+registrado como possível otimização futura, não urgente.
+
+### Gate de saída da Rodada 7
+
+✅ 221 testes Rust passando, clippy limpo, fmt limpo. `llama-dds`/`llama-server` compilam
+limpo com o filtro de modelo (testado inclusive com `-DDDS_DEBUG`, que antes não compilava).
+Ambos os fixes C++ sincronizados e md5-verificados nas duas árvores.
+
+## Rodada 8 — fiação das métricas fuzzy + build HIP local + Anexo (2026-07-22/23)
+
+Contexto: o cluster está ocupado com os experimentos do artigo de qualidade — TUDO desta
+rodada é local (RX 7900 XTX). Três frentes:
+
+### Fiação das métricas fuzzy no orchestrator — ✅ (destrava a avaliação do artigo NFCM)
+
+O bloqueante achado na revisão do artigo (decisores adaptativos viam `FuzzyMetrics::default()`
+— zeros constantes — em todo ciclo, degenerando em braço estático) foi corrigido:
+
+- `refresh_metrics_from_mesh()` (`orchestrator/src/dds.rs`): porte fiel de
+  `_collect_fuzzy_metrics` do Python (`orchestrator/main.py:414-480`), incluindo defaults
+  (0.5/0.1), semântica de "ativas" = PENDING|RUNNING (ASSIGNED fica fora, paridade), e as 8
+  métricas derivadas dos caches de AgentRegistry+Tasks. Chamado pelo control loop a cada
+  ciclo, antes de `decide_once()`.
+- `StabilityController` FIADO no control loop (existia correto na crate, nunca era chamado):
+  histerese/persistência/cooldown/fallback agora aplicam a decisão EFETIVA, não a bruta; log
+  `qos_decision` traceja perfil bruto E efetivo.
+- `QoSDecision` ganhou `converged: bool` e `runner_up: f64` (11 pontos de construção
+  atualizados; NFCM/FCM preenchem com valores reais — `converged` vinha sendo calculado e
+  descartado na fronteira da trait). Política de não convergência: mantém o perfil efetivo
+  anterior (fallback do artigo §4.3).
+- Terminologia: `explain_text` agora imprime "score", não "confiança" (o artigo bane a
+  palavra — softmax é probabilidade predita não calibrada).
+- Teste de regressão novo: `control_loop.rs::rodada8_refresh_metrics_le_o_mesh_nao_zeros`
+  (semeia caches, verifica as 8 métricas com valores exatos). 222 testes passando.
+
+Nota: durante esta rodada o usuário/uma sessão paralela alterou `OrchestratorDds::new` para
+aceitar `qos_profile: Option<&str>` (campanha do cluster) — as mudanças coexistem.
+
+### Build HIP da árvore canônica — ✅ (com um bug real de toolchain resolvido)
+
+Primeira tentativa (CC=hipcc global) falhou no link final: `libddsc.a` do CycloneDDS local
+contém objetos **GCC-LTO** ("plugin needed to handle lto object") — o `lld` do ROCm não lê
+GIMPLE do GCC. Solução (a mesma do build antigo `build-dds-hip`, verificada no CMakeCache):
+host compiler g++ default + `CMAKE_HIP_COMPILER=clang` do ROCm só para o código HIP.
+Build em `/tmp/llamacpp_dds_hip_build` (gfx1100, BUILD_SHARED_LIBS=OFF), binário de 77MB,
+GPU detectada (`ggml_cuda_init: found 1 ROCm devices: AMD Radeon RX 7900 XTX, gfx1100`).
+
+### Smoke test do filtro de modelo — pegou um bug real no MEU filtro da Rodada 7, corrigido e validado em GPU real
+
+Com o servidor rodando SEM `--alias`, `server.cpp` registrava o modelo como `"unknown"`
+(`params.model.name` só é preenchido em pulls docker/hf, fica vazio no caso comum de
+`--model arquivo.gguf`) — e o filtro da Rodada 7 dropava TODO request silenciosamente (o
+smoke local com nome correto deu timeout). Dois fixes, sincronizados nas duas árvores (md5):
+
+1. `dds_bridge.cpp::handle_request()`: o filtro só age numa divergência POSITIVA entre dois
+   nomes conhecidos (`loaded` não-vazio e != "unknown", `request.model_name` não-vazio, e
+   diferentes); caso contrário aceita. Drop logado sob `DDS_DEBUG`.
+2. `server.cpp` (3 pontos de `set_model_info`, DDS e gRPC): preferência
+   `--alias` > `params.model.name` > `"unknown"` — antes só usava `model.name`, que fica vazio
+   no caso comum, forçando todo deploy sem `--alias` para o wildcard "unknown" (funciona, mas
+   sem isolamento real por modelo).
+
+**Validado de ponta a ponta em hardware real** (RX 7900 XTX, build HIP local gfx1100, modelo
+`phi4-mini-q3_k_m.gguf` com `--alias phi4-mini`, binário com `DDS_DEBUG` para observar o
+dropping): request com `model_name="phi4-mini"` (nome certo) processado e respondido
+corretamente ("What is 2+2?" → "4"); request com `model_name="outro-modelo"` (nome errado)
+recebido e **descartado pelo filtro** (log: `[DDSBridge] request ... dropped: model=outro-modelo
+!= loaded=phi4-mini`), sem gastar ciclo de GPU. Build HIP: primeira tentativa com
+`CC=hipcc` global falhou no link (`libddsc.a` do CycloneDDS tem objetos GCC-LTO que o `lld` do
+ROCm não lê) — corrigido usando g++ como host compiler + `CMAKE_HIP_COMPILER=clang` do ROCm
+só para o código HIP (mesmo padrão do build antigo `build-dds-hip`, verificado no
+`CMakeCache.txt`). Lição: deployments que quiserem o isolamento por modelo DEVEM passar
+`--alias` — documentado no comentário do filtro e do `set_model_info`.
+
+### Anexo da migração Python→Rust — ✅ escrito e compilando
+
+`69a588a60776208777b2007b/anexo_migracao_rust.tex` (novo), incluído via `\input` antes de
+`\end{document}`: motivação (3 observações empíricas), método (migração incremental sobre o
+MESMO contrato IDL, tabela de paridade subsistema→crate), verificação (interop de fio,
+specs executáveis, paridade numérica NFCM, 222 testes) e consequências (50 submissões/1
+participante vs. deadlock em 20; 10×256-tokens 100% vs. 0%; ~11 req/s com GPU saturada),
+mais limitações honestas. `pdflatex` 2× ok (127 páginas, referências resolvidas; o ambiente
+`table` desta classe exige argumento de largura — `{\textwidth}`).
+
+### Achado menor: flake pré-existente em `write_loan.rs` (Fase 4, não relacionado a esta rodada)
+
+`dds-dataspace/tests/write_loan.rs::task_output_loan_roundtrip_1000_chunks_no_gaps` falha
+intermitentemente ("seq_num N recebido duas vezes") quando rodado logo em seguida de si mesmo
+ou de outros testes no mesmo domínio (83) — o `task_id` é uma constante fixa
+(`"write-loan-roundtrip-task"`) e o conteúdo de cada chunk é determinístico
+(`format!("chunk-{seq}")`), então amostras retidas (durability) de uma execução anterior no
+mesmo domínio ficam indistinguíveis das da execução nova. Passa limpo com um intervalo entre
+execuções (confirmado 2×). Pré-existente (Fase 4), não causado por nada desta rodada — fix
+sugerido para o futuro: `task_id` único por execução (UUID), não investido agora (fora do
+escopo pedido).
+
+### Gate de saída da Rodada 8
+
+✅ 222 testes Rust passando (exceto o flake pré-existente acima, que passa isoladamente ou com
+intervalo), clippy limpo, fmt limpo. Build HIP local (RX 7900 XTX) validado de ponta a ponta
+com requisição real de inferência. Anexo da migração escrito e compilando. Nenhuma ação
+tomada no cluster (conforme pedido).
+
 ## Itens pendentes
 
 - Se a fragilidade do backlog keyless dos tópicos `LLM.*` (Rodada 4) for endereçada no
@@ -954,3 +1112,9 @@ abaixo.
 - **Novo (Rodada 6)**: por que o agente trava sob carga sustentada (heartbeat para, mas o
   processo continua rodando e consumindo CPU) — achado real nos hosts remotos, causa ainda
   não determinada. Candidato a próxima investigação se o padrão se repetir.
+- **Novo (Rodada 7), baixa prioridade**: `dds_transport.cpp` drena request/response/status com
+  `dds_take(..., 1, 1)` (batch size 1) em vez de um lote maior — overhead pequeno (1 syscall
+  por amostra), não é um bug de parede, só uma otimização não urgente.
+- **Novo (Rodada 7), redeploy pendente**: o fix do filtro de modelo em `DDSBridge::
+  handle_request()` está no código mas não foi deployado nos hosts remotos (`.61`/`.62`) —
+  mesma situação do fix do reaper da Rodada 6, aguardando decisão de quando redeployar.

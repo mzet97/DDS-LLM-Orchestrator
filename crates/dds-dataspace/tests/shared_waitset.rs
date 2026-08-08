@@ -168,3 +168,72 @@ async fn n_concurrent_streams_share_one_waitset_and_still_see_everything() {
         .expect("DataSpace ainda tem outras referências Arc vivas");
     ds.shutdown().await.unwrap();
 }
+
+/// Regressão: o driver do `SharedWaitSet` não pode morrer quando o waitset
+/// fica momentaneamente sem nenhuma entidade anexada — o cenário real sob
+/// carga é várias streams sendo registradas e liberadas concorrentemente
+/// (ex.: várias requisições `/sync` terminando e outras começando ao mesmo
+/// tempo), o que pode fazer `wait_async` observar zero entidades por um
+/// instante e retornar `PRECONDITION_NOT_MET`. Antes da correção, isso
+/// matava o driver PARA SEMPRE (silenciosamente) e nenhum `stream_*()`
+/// futuro jamais recebia notificação de novo — exatamente os sintomas de
+/// "cache que às vezes para de atualizar" e "/sync que trava" observados em
+/// produção. Este teste marreta abre/fecha de streams concorrentes por um
+/// tempo e depois prova que o sistema ainda está vivo (uma nova stream
+/// publicada/consumida depois da martelada ainda funciona).
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn driver_sobrevive_a_registro_e_liberacao_concorrentes() {
+    const DOMAIN_STRESS: u32 = 87;
+    let ds = Arc::new(DataSpace::new(DOMAIN_STRESS, DataSpace::STRENGTH_ORCHESTRATOR).unwrap());
+
+    // Martela: abre e fecha (drop imediato) muitas streams concorrentes,
+    // repetidamente, tentando forçar o waitset a passar por momentos de
+    // zero entidades anexadas.
+    let hammer_rounds = 40;
+    for _ in 0..hammer_rounds {
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let ds = Arc::clone(&ds);
+            handles.push(tokio::spawn(async move {
+                let mut s = Box::pin(ds.stream_tasks());
+                // Consome no máximo por um instante e dropa — força
+                // register() + (logo depois) detach() concorrentes com as
+                // outras 9 tasks deste round e com o round seguinte.
+                let _ = tokio::time::timeout(Duration::from_millis(2), s.next()).await;
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+    }
+
+    let restarts = ds.shared_waitset().driver_restarts();
+    println!(
+        "[regressão] {hammer_rounds} rounds de 10 streams concorrentes; \
+         driver_restarts()={restarts} (>0 confirma que a corrida foi \
+         exercitada de verdade, não só teorizada)"
+    );
+
+    // A prova real: depois da martelada, o mecanismo de notificação ainda
+    // tem que funcionar — uma nova stream publicada/consumida normalmente.
+    let ds2 = Arc::clone(&ds);
+    let consumer = tokio::spawn(async move {
+        let mut s = Box::pin(ds2.stream_tasks());
+        tokio::time::timeout(Duration::from_secs(10), s.next())
+            .await
+            .expect("driver deveria continuar notificando após a martelada")
+            .expect("stream não deveria ter terminado")
+    });
+
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    ds.write_task_sync(&make_task("post-hammer"))
+        .expect("write_task_sync");
+
+    let received = consumer.await.expect("consumer não terminou");
+    assert_eq!(received.task_id, "post-hammer");
+
+    let ds = Arc::try_unwrap(ds)
+        .ok()
+        .expect("DataSpace ainda tem outras referências Arc vivas");
+    ds.shutdown().await.unwrap();
+}
