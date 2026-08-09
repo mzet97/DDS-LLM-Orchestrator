@@ -31,6 +31,7 @@ license = "MIT"
 
 [workspace.dependencies]
 cyclonedds = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds" }
+cyclonedds-rust-sys = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds-rust-sys" }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)

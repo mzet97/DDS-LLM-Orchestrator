@@ -154,6 +154,14 @@ impl SharedWaitSet {
 
 impl Drop for SharedWaitSet {
     fn drop(&mut self) {
+        // FFI-LIFE-011: acorda o wait nativo ANTES do abort. O driver pode
+        // estar bloqueado em `dds_waitset_wait` dentro de um spawn_blocking
+        // segurando um Arc<WaitSet> — sem o trigger, o wait só retorna no
+        // próximo ciclo (≤1 s após a Fase 4) e o abort não cancela a chamada
+        // C. O set_trigger faz o wait pendente retornar imediatamente, a
+        // closure termina, o Arc cai e o `dds_delete` (Drop de WaitSet)
+        // acontece sem vazar thread do blocking-pool.
+        let _ = self.waitset.set_trigger(true);
         // `abort()`, não só dropar o handle: um `JoinHandle` dropado sem abort
         // apenas desanexa (`detach`) a task — ela continuaria rodando para
         // sempre em background, seu clone de `Arc<WaitSet>` mantendo o
