@@ -5,7 +5,10 @@
 //! Rode com: `cargo test -p dds-dataspace --features dds --test qc_e2e -- --test-threads=1 --nocapture`
 #![cfg(feature = "dds")]
 
-use cyclonedds::{DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, QueryCondition, Subscriber, Topic};
+use cyclonedds::{
+    DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, QueryCondition, Subscriber,
+    Topic,
+};
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -162,7 +165,10 @@ fn query_condition_e2e_topico_producao() {
     // Decisão do plano (9.3): manter filtro por request_id NA APLICAÇÃO —
     // agora justificado por medição. QCs não são usadas em produção.
     assert_eq!(n_rc, 3, "ReadCondition simples deve entregar as 3 amostras");
-    assert_eq!(n_c, 0, "QC com filtro C: comportamento quebrado documentado");
+    assert_eq!(
+        n_c, 0,
+        "QC com filtro C: comportamento quebrado documentado"
+    );
     assert_eq!(n, 0, "QC com closure: comportamento quebrado documentado");
     println!("[qc_e2e] via QC(condition)={n} — QC-filtro quebrada na 11.0.1 (documentado)");
 }

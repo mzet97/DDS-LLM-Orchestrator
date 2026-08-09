@@ -5,7 +5,7 @@
 //! - `real_workload_driver.py` → open-loop Poisson ([`BenchmarkDriver::open_loop`]);
 //! - `run_op1_reduced.py`/E2 → closed-loop com N workers ([`closed_loop`]);
 //! - `E3_priority.py` → fundo NORMAL + injeções HIGH ([`priority_loop`]);
-//! - `run_e5_ttft.py` → streaming com TTFT/ITL ([`one_stream`]).
+//! - `run_e5_ttft.py` → streaming com TTFC/ICL ([`one_stream`]) — renomeado no Gate A.
 //!
 //! A análise estatística (Friedman/mixed models, índice de Jain) NÃO está
 //! aqui — permanece nos scripts Python (`benchmarks/qualificacao/analysis/`).
@@ -208,8 +208,8 @@ impl Shared {
             t_inference_ns: none_if_zero(t.t_inference_ns),
             t_transport_return_ns: none_if_zero(t.t_transport_return_ns),
             t_deserialization_ns: none_if_zero(t.t_deserialization_ns),
-            ttft_ms: None,
-            itl_mean_ms: None,
+            ttfc_ms: None,
+            icl_mean_ms: None,
             n_chunks: None,
         }
     }
@@ -365,7 +365,8 @@ impl BenchmarkDriver {
         self.shared.record(rec).await;
     }
 
-    /// Uma request em streaming (E5): mede TTFT/ITL até `is_final`.
+    /// Uma request em streaming (E5): mede TTFC/ICL (chunks visíveis) até `is_final` —
+    /// nomenclatura canônica: docs/tracking/DICIONARIO_METRICAS.md (Gate A).
     async fn one_stream(&self, gen: &mut crate::generator::WorkloadGenerator) {
         let prompt = gen.generate_prompt();
         let prompt_tokens = prompt.split_whitespace().count() as u32;
@@ -415,9 +416,9 @@ impl BenchmarkDriver {
         }
 
         rec.latency_ms = t0.elapsed().as_secs_f64() * 1000.0;
-        rec.ttft_ms = first_chunk.map(|t| (t - t0).as_secs_f64() * 1000.0);
+        rec.ttfc_ms = first_chunk.map(|t| (t - t0).as_secs_f64() * 1000.0);
         if n_chunks > 1 {
-            rec.itl_mean_ms = Some(itl_sum.as_secs_f64() * 1000.0 / (n_chunks - 1) as f64);
+            rec.icl_mean_ms = Some(itl_sum.as_secs_f64() * 1000.0 / (n_chunks - 1) as f64);
         }
         rec.n_chunks = Some(n_chunks);
         rec.status = failed.unwrap_or(RequestStatus::Ok);

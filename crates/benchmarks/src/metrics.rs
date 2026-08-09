@@ -65,10 +65,13 @@ pub struct RequestRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub t_deserialization_ns: Option<u64>,
     // ── Streaming (E5) ──
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ttft_ms: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub itl_mean_ms: Option<f64>,
+    // Gate A (ADR-001): a unidade observada é o CHUNK de conteúdo visível,
+    // não o token — ver docs/tracking/DICIONARIO_METRICAS.md. Aliases
+    // mantidos para leitura de raw data antiga.
+    #[serde(skip_serializing_if = "Option::is_none", alias = "ttft_ms")]
+    pub ttfc_ms: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none", alias = "itl_mean_ms")]
+    pub icl_mean_ms: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub n_chunks: Option<u32>,
 }
@@ -153,8 +156,8 @@ mod tests {
             t_inference_ns: Some(900),
             t_transport_return_ns: Some(20),
             t_deserialization_ns: Some(20),
-            ttft_ms: None,
-            itl_mean_ms: None,
+            ttfc_ms: None,
+            icl_mean_ms: None,
             n_chunks: None,
         }
     }
@@ -179,7 +182,7 @@ mod tests {
         assert_eq!(v["protocol"], "dds");
         assert_eq!(v["t_inference_ns"], 900);
         // Campos None são omitidos (não fabricados).
-        assert!(v.get("ttft_ms").is_none());
+        assert!(v.get("ttfc_ms").is_none());
         assert!(v.get("error_message").is_none());
     }
 }

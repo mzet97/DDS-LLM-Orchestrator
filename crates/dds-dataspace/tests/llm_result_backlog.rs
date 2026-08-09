@@ -414,9 +414,7 @@ fn probe_readcondition_em_topico_idlc() {
     let reader = DataReader::<Task>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))
         .expect("reader");
     let mask = 3u32 | 12 | 112; // ANY sample/view/instance
-    let rc = unsafe {
-        cyclonedds_rust_sys::dds_create_readcondition(reader.entity(), mask)
-    };
+    let rc = unsafe { cyclonedds_rust_sys::dds_create_readcondition(reader.entity(), mask) };
     println!("[probe] readcondition em tópico idlc (Tasks) = {rc}");
     assert!(rc > 0, "readcondition falhou em tópico idlc de produção");
 }
