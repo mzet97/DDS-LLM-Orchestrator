@@ -18,6 +18,10 @@ pub mod profiles {
     const THIRTY_S: i64 = 30_000_000_000;
     const LATENCY_50MS: i64 = 50_000_000;
     const LLM_HISTORY_DEPTH: i32 = 10;
+    /// Profundidade do histórico GLOBAL keyless de `LLM.InferenceResult`
+    /// (Gate C2, dimensionado pelo microteste da Fase 3 — ver doc de
+    /// [`profiles::llm_result`]).
+    const LLM_RESULT_HISTORY_DEPTH: i32 = 256;
 
     /// `Tasks`: Reliable(10s), TransientLocal, KeepLast(50), Exclusive,
     /// liveliness automático lease 10 s, latency 50 ms, tprio 8.
@@ -169,12 +173,47 @@ pub mod profiles {
 
     /// Tópicos `LLM.*` (orchestrator::, keyless): Reliable(10s), TransientLocal,
     /// KeepLast(10), Shared e ResourceLimits(10, 1, 10).
+    /// Usado para `LLM.InferenceRequest` e `LLM.InferenceError` (1 amostra por
+    /// request — 10 é folgado). Para `LLM.InferenceResult` ver [`llm_result`].
     pub fn llm() -> DdsResult<Qos> {
         QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
             .durability(Durability::TransientLocal)
             .history(History::KeepLast(LLM_HISTORY_DEPTH))
             .resource_limits(LLM_HISTORY_DEPTH, 1, LLM_HISTORY_DEPTH)
+            .build()
+    }
+
+    /// Tópico `LLM.InferenceResult` (keyless, streaming): Reliable(10s),
+    /// TransientLocal, KeepLast(256), Shared, ResourceLimits(256, 1, 256),
+    /// DurabilityService(KeepLast 256, 256/1/256).
+    ///
+    /// Perfil separado de Request/Error desde a Fase 3 (DDS-QOS-004, Gate C2):
+    /// o histórico é GLOBAL (instância keyless única) e compartilhado por
+    /// todos os chunks de todos os streams concorrentes. O microteste
+    /// `tests/llm_result_backlog.rs` mediu, com KeepLast(10), perda de
+    /// 108/128 amostras num stream único com reader rápido (overwrite no RHC
+    /// do reader antes do take drenar). 256 cobre a matriz mínima do plano
+    /// (4 streams × 64 chunks) com folga; o número final é revisado com os
+    /// dados da campanha da Fase 11. WHC/memória: ~256 amostras × ~1 KB por
+    /// entidade — desprezível frente ao risco de perda.
+    ///
+    /// O `durability_service` é obrigatório para late joiners: no CycloneDDS,
+    /// a retenção TransientLocal para entrega histórica usa a política
+    /// DurabilityService — default KeepLast(1), que entregava apenas a
+    /// amostra mais recente (medido: 1/64 no cenário D2/D3 do microteste).
+    pub fn llm_result() -> DdsResult<Qos> {
+        QosBuilder::new()
+            .reliability(Reliability::Reliable, TEN_S)
+            .durability(Durability::TransientLocal)
+            .history(History::KeepLast(LLM_RESULT_HISTORY_DEPTH))
+            .resource_limits(LLM_RESULT_HISTORY_DEPTH, 1, LLM_RESULT_HISTORY_DEPTH)
+            .durability_service(
+                History::KeepLast(LLM_RESULT_HISTORY_DEPTH),
+                LLM_RESULT_HISTORY_DEPTH,
+                1,
+                LLM_RESULT_HISTORY_DEPTH,
+            )
             .build()
     }
 
@@ -267,5 +306,47 @@ mod tests {
         assert_eq!(limits.max_samples, 10);
         assert_eq!(limits.max_instances, 1);
         assert_eq!(limits.max_samples_per_instance, 10);
+    }
+
+    #[test]
+    fn llm_result_profile_is_dimensioned_for_streaming() {
+        // DDS-QOS-004 / Gate C2: Result tem perfil próprio, mais profundo que
+        // Request/Error (KeepLast(10) global causava perda medida de 108/128
+        // num stream de 128 chunks — ver tests/llm_result_backlog.rs).
+        let result = profiles::llm_result().expect("LLM Result QoS should build");
+        let request = profiles::llm().expect("LLM Request QoS should build");
+
+        assert_eq!(
+            result
+                .durability()
+                .expect("durability")
+                .expect("configured"),
+            cyclonedds::Durability::TransientLocal
+        );
+        assert_eq!(
+            result
+                .reliability()
+                .expect("reliability")
+                .expect("configured"),
+            (Reliability::Reliable, 10_000_000_000)
+        );
+        let result_depth = match result.history().expect("history").expect("configured") {
+            History::KeepLast(d) => d,
+            other => panic!("Result deve ser KeepLast, não {other:?}"),
+        };
+        let request_depth = match request.history().expect("history").expect("configured") {
+            History::KeepLast(d) => d,
+            other => panic!("Request deve ser KeepLast, não {other:?}"),
+        };
+        assert!(
+            result_depth >= 8 * request_depth,
+            "Result ({result_depth}) deve ser muito mais profundo que Request ({request_depth})"
+        );
+        let limits = result
+            .resource_limits()
+            .expect("resource limits")
+            .expect("configured");
+        assert_eq!(limits.max_samples, result_depth);
+        assert_eq!(limits.max_samples_per_instance, result_depth);
     }
 }

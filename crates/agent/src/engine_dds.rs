@@ -100,6 +100,16 @@ impl Engine for DdsEngine {
                     return;
                 }
             };
+            // DDS-QOS-004 / Gate C2: o reader de Result usa o perfil profundo
+            // (KeepLast 256) — com o perfil genérico (10) o RHC sobrescrevia
+            // chunks antes do take drenar (perda medida: 108/128).
+            let qos_result = match profiles::llm_result() {
+                Ok(q) => q,
+                Err(e) => {
+                    yield Err(EngineError::DdsError(e.to_string()));
+                    return;
+                }
+            };
             let req_writer = match DataWriter::with_qos(publisher, req_topic, Some(&qos)) {
                 Ok(w) => w,
                 Err(e) => {
@@ -107,7 +117,7 @@ impl Engine for DdsEngine {
                     return;
                 }
             };
-            let res_reader = match DataReader::<LLMInferenceResult>::with_qos(subscriber, res_topic, Some(&qos)) {
+            let res_reader = match DataReader::<LLMInferenceResult>::with_qos(subscriber, res_topic, Some(&qos_result)) {
                 Ok(r) => r,
                 Err(e) => {
                     yield Err(EngineError::DdsError(e.to_string()));

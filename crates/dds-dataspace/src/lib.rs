@@ -254,6 +254,7 @@ impl DataSpace {
         let q_agents = qos::profiles::agent_registry().map_err(err)?;
         let q_outputs = qos::profiles::task_output(Some(ownership_strength)).map_err(err)?;
         let q_llm = qos::profiles::llm().map_err(err)?;
+        let q_llm_result = qos::profiles::llm_result().map_err(err)?;
         let q_ctx_snap = qos::profiles::context_snapshot().map_err(err)?;
         let q_ctx_upd = qos::profiles::context_update().map_err(err)?;
         let q_tool = qos::profiles::tool_call().map_err(err)?;
@@ -291,7 +292,7 @@ impl DataSpace {
         let llm_result_topic = Topic::<LLMInferenceResult>::with_qos(
             participant.entity(),
             topics::LLM_RESULT,
-            Some(&q_llm),
+            Some(&q_llm_result),
         )
         .map_err(err)?;
         let llm_error_topic = Topic::<LLMInferenceError>::with_qos(
@@ -377,9 +378,12 @@ impl DataSpace {
         let llm_request_writer =
             DataWriter::with_qos(publisher.entity(), llm_request_topic.entity(), Some(&q_llm))
                 .map_err(err)?;
-        let llm_result_writer =
-            DataWriter::with_qos(publisher.entity(), llm_result_topic.entity(), Some(&q_llm))
-                .map_err(err)?;
+        let llm_result_writer = DataWriter::with_qos(
+            publisher.entity(),
+            llm_result_topic.entity(),
+            Some(&q_llm_result),
+        )
+        .map_err(err)?;
         let llm_error_writer =
             DataWriter::with_qos(publisher.entity(), llm_error_topic.entity(), Some(&q_llm))
                 .map_err(err)?;
@@ -633,9 +637,12 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(tasks) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(tasks) if !tasks.is_empty() => {
                         for t in tasks {
                             // RUST-CACHE-006: só entrega ao consumidor o que
                             // está de fato no cache (legível via read_task).
@@ -644,11 +651,15 @@ impl DataSpace {
                             }
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(Tasks) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(Tasks) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -675,18 +686,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(states) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(states) if !states.is_empty() => {
                         for s in states {
                             yield caches.upsert_agent(s);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(AgentRegistry) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(AgentRegistry) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -713,18 +731,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(outs) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(outs) if !outs.is_empty() => {
                         for o in outs {
                             yield caches.push_output(o);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(TaskOutput) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(TaskOutput) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -751,18 +776,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(reqs) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(reqs) if !reqs.is_empty() => {
                         for r in reqs {
                             yield caches.upsert_llm_request(r);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(LLMRequest) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(LLMRequest) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -788,19 +820,32 @@ impl DataSpace {
                     return;
                 }
             };
+            // Padrão enable-antes-de-drenar (sem wakeup perdido): uma
+            // notificação level-triggered cobre TUDO o que está no RHC —
+            // drena até esvaziar. Notificações que chegarem durante o dreno
+            // ficam capturadas no `Notified` habilitado e disparam um novo
+            // ciclo de dreno. Antes (1 take por notificação), bursts
+            // perdiam amostras no meio do stream (medido: 27–30/128).
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(results) => {
-                        for r in results {
-                            yield caches.push_llm_result(r);
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(results) if !results.is_empty() => {
+                            for r in results {
+                                yield caches.push_llm_result(r);
+                            }
+                        }
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(LLMResult) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(LLMResult) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    }
                 }
+                n.await;
             }
         }
     }
@@ -827,18 +872,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(errors) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(errors) if !errors.is_empty() => {
                         for e in errors {
                             yield caches.upsert_llm_error(e);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(LLMError) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(LLMError) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -865,18 +917,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(snaps) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(snaps) if !snaps.is_empty() => {
                         for s in snaps {
                             yield caches.upsert_context_snapshot(s);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(ContextSnapshot) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(ContextSnapshot) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -903,18 +962,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(updates) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(updates) if !updates.is_empty() => {
                         for u in updates {
                             yield caches.push_context_update(u);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(ContextUpdate) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(ContextUpdate) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -941,18 +1007,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(calls) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(calls) if !calls.is_empty() => {
                         for c in calls {
                             yield caches.upsert_tool_call(c);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(ToolCall) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(ToolCall) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -979,18 +1052,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(events) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(events) if !events.is_empty() => {
                         for e in events {
                             yield caches.push_execution_trace(e);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(ExecutionTrace) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(ExecutionTrace) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -1019,18 +1099,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(snaps) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(snaps) if !snaps.is_empty() => {
                         for s in snaps {
                             yield caches.upsert_security_snapshot(s);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(SecuritySnapshot) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(SecuritySnapshot) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -1057,18 +1144,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(updates) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(updates) if !updates.is_empty() => {
                         for u in updates {
                             yield caches.push_security_update(u);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(SecurityUpdate) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(SecurityUpdate) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -1095,18 +1189,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(profiles) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(profiles) if !profiles.is_empty() => {
                         for p in profiles {
                             yield caches.upsert_qos_routing(p);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(QoSRouting) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(QoSRouting) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -1133,18 +1234,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(metrics) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(metrics) if !metrics.is_empty() => {
                         for m in metrics {
                             yield caches.upsert_qos_metric(m);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(QoSMetric) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(QoSMetric) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -1171,18 +1279,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(violations) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(violations) if !violations.is_empty() => {
                         for v in violations {
                             yield caches.upsert_qos_violation(v);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(QoSViolation) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(QoSViolation) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }
@@ -1209,18 +1324,25 @@ impl DataSpace {
                 }
             };
             loop {
-                registration.notified().await;
-                match reader.take_async().await {
-                    Ok(events) => {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(events) if !events.is_empty() => {
                         for e in events {
                             yield caches.upsert_discovery_event(e);
                         }
                     }
-                    Err(e) => {
-                        tracing::warn!(error = %e, "take_async(DiscoveryEvent) falhou; retry");
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(DiscoveryEvent) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
                     }
                 }
+                n.await;
             }
         }
     }

@@ -178,8 +178,21 @@ pub struct Registration {
 }
 
 impl Registration {
-    pub async fn notified(&self) {
-        self.notify.notified().await;
+    /// Future de notificação deste reader. Para loops de consumo, o padrão
+    /// correto (sem janela de wakeup perdido) é registrar interesse ANTES de
+    /// drenar e drenar até esvaziar:
+    ///
+    /// ```ignore
+    /// loop {
+    ///     let n = registration.notified();
+    ///     tokio::pin!(n);
+    ///     n.as_mut().enable();           // registra antes de drenar
+    ///     while take()?.not_empty { yield } // drena tudo (level-triggered)
+    ///     n.await;                       // notificações durante o dreno são capturadas
+    /// }
+    /// ```
+    pub fn notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.notify.notified()
     }
 }
 
