@@ -90,8 +90,8 @@ async fn writer_pool_throughput_5k() {
                     drop(ids);
                     counter2.fetch_add(1, Ordering::Relaxed);
                 }
-                Ok(None) => break,   // stream encerrado
-                Err(_) => {}         // timeout parcial: re-checa contadores
+                Ok(None) => break, // stream encerrado
+                Err(_) => {}       // timeout parcial: re-checa contadores
             }
         }
         counter2.load(Ordering::Relaxed)
