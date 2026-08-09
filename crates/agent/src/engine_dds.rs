@@ -47,6 +47,7 @@ impl DdsEngine {
         let subscriber = Subscriber::new(participant.entity()).map_err(err)?;
 
         let qos = profiles::llm().map_err(err)?;
+        let qos_result = profiles::llm_result().map_err(err)?;
         let req_topic = Topic::<LLMInferenceRequest>::with_qos(
             participant.entity(),
             topics::LLM_REQUEST,
@@ -56,7 +57,7 @@ impl DdsEngine {
         let res_topic = Topic::<LLMInferenceResult>::with_qos(
             participant.entity(),
             topics::LLM_RESULT,
-            Some(&qos),
+            Some(&qos_result),
         )
         .map_err(err)?;
         let err_topic = Topic::<LLMInferenceError>::with_qos(
