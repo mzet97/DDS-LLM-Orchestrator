@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 
 /// Status terminal da request (subconjunto do Python).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RequestStatus {
     Ok,
@@ -24,7 +24,7 @@ pub enum RequestStatus {
 }
 
 /// Registro de uma request (1 linha JSONL por trace_id).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
 pub struct RequestRecord {
     pub trace_id: String,
     pub experiment_id: String,
@@ -184,5 +184,24 @@ mod tests {
         // Campos None são omitidos (não fabricados).
         assert!(v.get("ttfc_ms").is_none());
         assert!(v.get("error_message").is_none());
+    }
+
+    #[test]
+    fn nomes_canonicos_e_alias_legado() {
+        // Gate A (ADR-001): serializa com os nomes canônicos...
+        let mut rec = sample();
+        rec.ttfc_ms = Some(150.0);
+        rec.icl_mean_ms = Some(25.0);
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("ttfc_ms"));
+        assert!(json.contains("icl_mean_ms"));
+        assert!(!json.contains("ttft_ms"));
+        assert!(!json.contains("itl_mean_ms"));
+
+        // ...mas lê raw data legada (alias).
+        let legado = json.replace("ttfc_ms", "ttft_ms").replace("icl_mean_ms", "itl_mean_ms");
+        let rec2: RequestRecord = serde_json::from_str(&legado).unwrap();
+        assert_eq!(rec2.ttfc_ms, Some(150.0));
+        assert_eq!(rec2.icl_mean_ms, Some(25.0));
     }
 }
