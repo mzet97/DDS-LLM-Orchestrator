@@ -19,6 +19,14 @@ pub enum ClientError {
     TaskFailed(String),
     #[error("DDS error: {0}")]
     DdsError(String),
+    #[error("canal de eventos {topic} perdeu {skipped} amostras")]
+    EventLagged { topic: &'static str, skipped: u64 },
+    #[error("canal de eventos {0} foi encerrado")]
+    EventChannelClosed(&'static str),
+    #[error("DdsClientDds requer um runtime Tokio ativo")]
+    RuntimeUnavailable,
+    #[error("falha ao inicializar o pump DDS do tópico {0}")]
+    EventPumpInit(&'static str),
 }
 
 /// Configuração do cliente.
@@ -159,22 +167,67 @@ pub mod dds_impl {
     use futures_core::Stream;
     use futures_util::StreamExt;
     use std::pin::Pin;
+    use std::sync::Arc;
     use std::time::{Duration, Instant};
+    use tokio::sync::broadcast;
+    use tokio::task::JoinHandle;
 
     /// Strength do papel cliente (Fase 2.2): 10 < agente(100) < orq(200).
     const STRENGTH_CLIENT: i32 = 10;
+    const EVENT_CHANNEL_CAPACITY: usize = 4096;
+    const TASKS_TOPIC: &str = "Tasks";
+    const TASK_OUTPUT_TOPIC: &str = "TaskOutput";
 
     pub struct DdsClientDds {
         config: ClientConfig,
-        dataspace: DataSpace,
+        dataspace: Arc<DataSpace>,
+        tasks_rx: broadcast::Receiver<dds_dataspace::cache::ArcTask>,
+        outputs_rx: broadcast::Receiver<dds_dataspace::cache::ArcTaskOutput>,
+        pump_handles: [JoinHandle<()>; 2],
     }
 
     impl DdsClientDds {
         /// Cria o cliente com UM participante no domínio.
         pub fn new(config: ClientConfig) -> Result<Self, ClientError> {
-            let dataspace = DataSpace::new(config.dds_domain, STRENGTH_CLIENT)
-                .map_err(|e| ClientError::DdsError(e.to_string()))?;
-            Ok(Self { config, dataspace })
+            let runtime = tokio::runtime::Handle::try_current()
+                .map_err(|_| ClientError::RuntimeUnavailable)?;
+            let dataspace = Arc::new(
+                DataSpace::new(config.dds_domain, STRENGTH_CLIENT)
+                    .map_err(|e| ClientError::DdsError(e.to_string()))?,
+            );
+            let (tasks_tx, tasks_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+            let (outputs_tx, outputs_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
+
+            let tasks_stream = dataspace.stream_tasks();
+            if dataspace.shared_waitset().registration_count() != 1 {
+                return Err(ClientError::EventPumpInit(TASKS_TOPIC));
+            }
+            let outputs_stream = dataspace.stream_task_outputs();
+            if dataspace.shared_waitset().registration_count() != 2 {
+                return Err(ClientError::EventPumpInit(TASK_OUTPUT_TOPIC));
+            }
+
+            let tasks_pump = runtime.spawn(async move {
+                let mut tasks = Box::pin(tasks_stream);
+                while let Some(task) = tasks.next().await {
+                    let _ = tasks_tx.send(task);
+                }
+            });
+
+            let outputs_pump = runtime.spawn(async move {
+                let mut outputs = Box::pin(outputs_stream);
+                while let Some(output) = outputs.next().await {
+                    let _ = outputs_tx.send(output);
+                }
+            });
+
+            Ok(Self {
+                config,
+                dataspace,
+                tasks_rx,
+                outputs_rx,
+                pump_handles: [tasks_pump, outputs_pump],
+            })
         }
 
         pub fn dataspace(&self) -> &DataSpace {
@@ -185,6 +238,8 @@ pub mod dds_impl {
         pub async fn submit(&self, task: Task) -> Result<TaskResult, ClientError> {
             let task_id = task.task_id.clone();
             let start = Instant::now();
+            let mut status_rx = self.tasks_rx.resubscribe();
+            let mut outputs_rx = self.outputs_rx.resubscribe();
             self.dataspace
                 .write_task(task)
                 .await
@@ -192,8 +247,6 @@ pub mod dds_impl {
 
             let timeout = Duration::from_millis(self.config.timeout_ms);
             let deadline = start + timeout;
-            let mut status_stream = Box::pin(self.dataspace.stream_tasks());
-            let mut outputs_stream = Box::pin(self.dataspace.stream_task_outputs());
 
             let mut chunks: Vec<TaskOutput> = Vec::new();
             // `status_stream` (Task DONE) e `outputs_stream` (TaskOutput chunks) são
@@ -215,23 +268,32 @@ pub mod dds_impl {
                     return Err(ClientError::Timeout(task_id));
                 }
                 tokio::select! {
-                    out = outputs_stream.next() => {
-                        if let Some(o) = out {
-                            if o.task_id == task_id {
-                                chunks.push((*o).clone());
+                    out = outputs_rx.recv() => {
+                        match out {
+                            Ok(o) if o.task_id == task_id => chunks.push((*o).clone()),
+                            Ok(_) => {}
+                            Err(error) => {
+                                return Err(channel_error(TASK_OUTPUT_TOPIC, error));
                             }
                         }
                     }
-                    st = status_stream.next() => {
-                        if let Some(t) = st {
-                            if t.task_id != task_id { continue; }
-                            if t.status == 3 {
-                                done = true;
-                            } else if t.status == 4 {
-                                // FAILED
-                                return Err(ClientError::TaskFailed(t.finish_reason.clone()));
+                    st = status_rx.recv() => {
+                        match st {
+                            Ok(t) if t.task_id == task_id => {
+                                if t.status == 3 {
+                                    done = true;
+                                } else if t.status == 4 {
+                                    return Err(ClientError::TaskFailed(t.finish_reason.clone()));
+                                }
+                            }
+                            Ok(_) => {}
+                            Err(error) => {
+                                return Err(channel_error(TASKS_TOPIC, error));
                             }
                         }
+                    }
+                    _ = tokio::time::sleep(remaining) => {
+                        return Err(ClientError::Timeout(task_id));
                     }
                 }
                 if done && chunks.iter().any(|c| c.is_final) {
@@ -250,12 +312,14 @@ pub mod dds_impl {
             }
         }
 
-        /// Submete e retorna um stream de chunks (`TaskOutput`) até `is_final`.
+        /// Submete e emite chunks até observar `is_final` e o estado `DONE`.
         pub fn submit_stream(
             &self,
             task: Task,
         ) -> Pin<Box<dyn Stream<Item = Result<TaskOutput, ClientError>> + Send + '_>> {
             let task_id = task.task_id.clone();
+            let mut outputs = self.outputs_rx.resubscribe();
+            let mut status = self.tasks_rx.resubscribe();
             Box::pin(stream! {
                 if let Err(e) = self.dataspace.write_task(task).await {
                     yield Err(ClientError::DdsError(e.to_string()));
@@ -264,8 +328,8 @@ pub mod dds_impl {
 
                 let timeout = Duration::from_millis(self.config.timeout_ms);
                 let deadline = Instant::now() + timeout;
-                let mut outputs = Box::pin(self.dataspace.stream_task_outputs());
-                let mut status = Box::pin(self.dataspace.stream_tasks());
+                let mut done = false;
+                let mut final_chunk_received = false;
 
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
@@ -274,21 +338,37 @@ pub mod dds_impl {
                         return;
                     }
                     tokio::select! {
-                        out = outputs.next() => {
+                        out = outputs.recv() => {
                             match out {
-                                Some(o) if o.task_id == task_id => {
+                                Ok(o) if o.task_id == task_id => {
                                     let is_final = o.is_final;
                                     yield Ok((*o).clone());
-                                    if is_final { return; }
+                                    if is_final {
+                                        final_chunk_received = true;
+                                        if done { return; }
+                                    }
                                 }
-                                Some(_) => continue,
-                                None => return,
+                                Ok(_) => continue,
+                                Err(error) => {
+                                    yield Err(channel_error(TASK_OUTPUT_TOPIC, error));
+                                    return;
+                                }
                             }
                         }
-                        st = status.next() => {
-                            if let Some(t) = st {
-                                if t.task_id == task_id && t.status == 4 {
-                                    yield Err(ClientError::TaskFailed(t.finish_reason.clone()));
+                        st = status.recv() => {
+                            match st {
+                                Ok(t) if t.task_id == task_id => {
+                                    if t.status == 3 {
+                                        done = true;
+                                        if final_chunk_received { return; }
+                                    } else if t.status == 4 {
+                                        yield Err(ClientError::TaskFailed(t.finish_reason.clone()));
+                                        return;
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(error) => {
+                                    yield Err(channel_error(TASKS_TOPIC, error));
                                     return;
                                 }
                             }
@@ -300,6 +380,47 @@ pub mod dds_impl {
                     }
                 }
             })
+        }
+    }
+
+    impl Drop for DdsClientDds {
+        fn drop(&mut self) {
+            for handle in &self.pump_handles {
+                handle.abort();
+            }
+        }
+    }
+
+    fn channel_error(topic: &'static str, error: broadcast::error::RecvError) -> ClientError {
+        match error {
+            broadcast::error::RecvError::Lagged(skipped) => {
+                ClientError::EventLagged { topic, skipped }
+            }
+            broadcast::error::RecvError::Closed => ClientError::EventChannelClosed(topic),
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[tokio::test]
+        async fn aborted_pump_closes_its_event_channel() {
+            let client = DdsClientDds::new(ClientConfig {
+                client_id: "pump-health".into(),
+                dds_domain: 111,
+                timeout_ms: 1_000,
+            })
+            .unwrap();
+            let mut receiver = client.tasks_rx.resubscribe();
+
+            client.pump_handles[0].abort();
+            tokio::task::yield_now().await;
+
+            assert!(matches!(
+                receiver.recv().await,
+                Err(broadcast::error::RecvError::Closed)
+            ));
         }
     }
 }

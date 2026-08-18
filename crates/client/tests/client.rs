@@ -11,11 +11,21 @@ use agent::dds::AgentDds;
 use agent::engine::MockEngine;
 use agent::AgentConfig;
 use client::dds_impl::DdsClientDds;
-use client::{ClientConfig, DdsClient};
+use client::{ClientConfig, ClientError, DdsClient};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const DOMAIN: u32 = 102;
+
+#[test]
+fn constructor_without_tokio_runtime_returns_error() {
+    let result = DdsClientDds::new(ClientConfig {
+        client_id: "no-runtime".into(),
+        dds_domain: DOMAIN,
+        timeout_ms: 1_000,
+    });
+    assert!(matches!(result, Err(ClientError::RuntimeUnavailable)));
+}
 
 async fn spawn_agent(id: &str) -> Arc<AgentDds> {
     let config = AgentConfig {
@@ -189,25 +199,12 @@ async fn r2_shared_waitset_sob_client_submit_concorrente() {
     assert!(failures.is_empty(), "falhas: {failures:?}");
     assert_eq!(ok, N);
 
-    // --- SharedWaitSet: N streams concorrentes, 1 WaitSet só ---
-    // Cada submit() abre 2 streams (stream_tasks + stream_task_outputs) —
-    // ver client/src/lib.rs::submit(). Com N=60 em voo, o pico ESPERADO sem
-    // regressão é bem menor que 2*N simultâneo (streams terminam e liberam
-    // o registro assim que a resposta final chega, não ficam todas abertas
-    // o tempo todo) — o que importa é que o pico observado seja consistente
-    // com streams COMPARTILHANDO 1 WaitSet, não crescendo sem limite.
     println!(
         "[R2] pico de registros no SharedWaitSet durante {N} submits concorrentes: {peak_registrations}"
     );
-    assert!(
-        peak_registrations > 0,
-        "esperava streams registradas no SharedWaitSet durante o burst"
-    );
-    assert!(
-        peak_registrations <= 2 * N,
-        "pico de registros ({peak_registrations}) não deveria exceder 2*N={} \
-         (2 streams por submit: stream_tasks + stream_task_outputs)",
-        2 * N
+    assert_eq!(
+        peak_registrations, 2,
+        "o cliente deve manter exatamente os pumps de Tasks e TaskOutput"
     );
 
     // --- Threads do processo: medido e reportado, mas NÃO é o sinal direto
