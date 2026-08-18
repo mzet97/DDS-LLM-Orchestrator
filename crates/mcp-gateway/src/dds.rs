@@ -2,7 +2,7 @@
 //!
 //! ## Nota sobre o tópico `ToolCall.Request` (desvio documentado da spec)
 //!
-//! `DataSpace::new(domain, strength)` já cria participant + os 17 tópicos
+//! `DataSpace::new(domain, strength)` já cria participant + 16 dos 18 tópicos
 //! canônicos, INCLUINDO `ToolCall.Request` com `qos::profiles::tool_call()`
 //! (Reliable 10s, TransientLocal, KeepLast 5, **Exclusive**) — perfil medido
 //! na malha Python via SEDP (2026-07-17). Por isso este módulo NÃO cria um
