@@ -11,8 +11,8 @@
 #![cfg(feature = "dds")]
 
 use cyclonedds::{
-    DataReader, DataWriter, DdsEntity, DomainParticipant, Durability, History, Ownership,
-    Publisher, QosBuilder, Subscriber, Topic,
+    DataReader, DataWriter, DomainParticipant, Durability, History, Ownership, Publisher,
+    QosBuilder, Subscriber, Topic,
 };
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use dds_contract::topics;
@@ -81,11 +81,11 @@ fn setup(
 ) {
     let dp = DomainParticipant::new(domain).unwrap();
     let q = qos();
-    let topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&q)).unwrap();
-    let publisher = Publisher::new(dp.entity()).unwrap();
-    let writer = DataWriter::with_qos(publisher.entity(), topic.entity(), Some(&q)).unwrap();
-    let subscriber = Subscriber::new(dp.entity()).unwrap();
-    let reader = DataReader::with_qos(subscriber.entity(), topic.entity(), Some(&q)).unwrap();
+    let topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&q)).unwrap();
+    let publisher = Publisher::new(&dp).unwrap();
+    let writer = DataWriter::with_qos(&publisher, &topic, Some(&q)).unwrap();
+    let subscriber = Subscriber::new(&dp).unwrap();
+    let reader = DataReader::with_qos(&subscriber, &topic, Some(&q)).unwrap();
     // Tópico/pub/sub precisam ficar vivos — dropá-los invalida writer/reader.
     (dp, topic, publisher, subscriber, writer, reader)
 }

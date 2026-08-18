@@ -194,7 +194,10 @@ pub fn make_write_fn(
 /// `DataWriter::write`.
 pub fn write_output_loan(writer: &DataWriter<TaskOutput>, o: &TaskOutput) -> DdsResult<()> {
     let mut loan = writer.request_loan()?;
-    let native = loan.get_mut();
+    // SAFETY: `request_loan` allocates the IDL-generated `TaskOutput::Native` layout;
+    // below we assign only scalar fields and `DdsString` values created by its checked
+    // constructor, so no raw pointer or invalid enum discriminant is introduced.
+    let native = unsafe { loan.get_mut() };
     native.task_id = DdsString::new(&o.task_id)?;
     native.seq_num = o.seq_num;
     native.content = DdsString::new(&o.content)?;

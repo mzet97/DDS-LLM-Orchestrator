@@ -3,7 +3,7 @@
 //! Uso: cargo run --bin pub-stream -- [--count N] [--domain ID]
 
 use anyhow::Result;
-use cyclonedds::{DataWriter, DdsEntity, DomainParticipant, Publisher, Topic};
+use cyclonedds::{DataWriter, DomainParticipant, Publisher, Topic};
 use dds_contract::generated::dds_llm_orchestrator::TaskOutput;
 use dds_contract::topics;
 use spike_interop::profiles;
@@ -37,20 +37,19 @@ fn main() -> Result<()> {
     let dp = DomainParticipant::new(domain_id)?;
     let qos = profiles::task_output(Some(200))?; // strength 200 > 100 do writer ocioso do stub Python
 
-    let topic = Topic::<TaskOutput>::with_qos(dp.entity(), topics::TASK_OUTPUT, Some(&qos))?;
-    let publisher = Publisher::new(dp.entity())?;
-    let writer = DataWriter::with_qos(publisher.entity(), topic.entity(), Some(&qos))?;
+    let topic = Topic::<TaskOutput>::with_qos(&dp, topics::TASK_OUTPUT, Some(&qos))?;
+    let publisher = Publisher::new(&dp)?;
+    let writer = DataWriter::with_qos(&publisher, &topic, Some(&qos))?;
 
     // O stub Python lê outputs via `all_tasks()` (tópico Tasks): publica a Task
     // dona do stream (como o agente de produção faz antes de streamar).
     let qos_tasks = spike_interop::profiles::tasks(Some(200))?;
     let tasks_topic = Topic::<dds_contract::generated::dds_llm_orchestrator::Task>::with_qos(
-        dp.entity(),
+        &dp,
         topics::TASKS,
         Some(&qos_tasks),
     )?;
-    let tasks_writer =
-        DataWriter::with_qos(publisher.entity(), tasks_topic.entity(), Some(&qos_tasks))?;
+    let tasks_writer = DataWriter::with_qos(&publisher, &tasks_topic, Some(&qos_tasks))?;
 
     // Aguarda discovery/SEDp casar com os readers (Volatile: chunks
     // escritos antes do match seriam descartados → gaps falsos).

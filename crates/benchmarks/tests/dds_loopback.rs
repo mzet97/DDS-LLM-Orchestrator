@@ -94,7 +94,14 @@ async fn driver_closed_loop_workers_concorrentes() {
     let summary = driver.run().await.unwrap();
 
     // 2 workers × 3 s: throughput do MockEngine é alto — esperamos dezenas.
-    assert!(summary.submitted >= 10, "submitted={}", summary.submitted);
+    assert!(
+        summary.submitted >= 10,
+        "submitted={} ok={} errors={} timeouts={}",
+        summary.submitted,
+        summary.ok,
+        summary.errors,
+        summary.timeouts
+    );
     assert!(summary.ok >= 10, "ok={}", summary.ok);
 }
 

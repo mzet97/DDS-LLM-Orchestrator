@@ -9,7 +9,7 @@
 //! e o codegen do cyclonedds-build precisa emiti-lo.
 
 use cyclonedds::DdsTypeDerive;
-use cyclonedds::{DataWriter, DdsEntity, DdsType, DomainParticipant, Publisher, Topic};
+use cyclonedds::{DataWriter, DdsType, DomainParticipant, Publisher, Topic};
 use std::io::Write as _;
 
 #[derive(Debug, Clone, DdsTypeDerive)]
@@ -80,9 +80,9 @@ fn make_task_fields() -> (String, String, String, String, String) {
 }
 
 fn write_one<T: DdsType>(dp: &DomainParticipant, topic_name: &str, v: &T) -> anyhow::Result<()> {
-    let topic = Topic::<T>::with_qos(dp.entity(), topic_name, None)?;
-    let publisher = Publisher::new(dp.entity())?;
-    let writer = DataWriter::new(publisher.entity(), topic.entity())?;
+    let topic = Topic::<T>::with_qos(dp, topic_name, None)?;
+    let publisher = Publisher::new(dp)?;
+    let writer = DataWriter::new(&publisher, &topic)?;
     writer.write(v)?;
     Ok(())
 }

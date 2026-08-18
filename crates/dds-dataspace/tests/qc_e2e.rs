@@ -77,22 +77,17 @@ const MASK: u32 = 3 | 12 | 112; // ANY sample/view/instance
 #[test]
 fn query_condition_e2e_topico_producao() {
     let participant = DomainParticipant::new(106).expect("participant");
-    let publisher = Publisher::new(participant.entity()).expect("publisher");
-    let subscriber = Subscriber::new(participant.entity()).expect("subscriber");
+    let publisher = Publisher::new(&participant).expect("publisher");
+    let subscriber = Subscriber::new(&participant).expect("subscriber");
     let writer_qos = dds_dataspace::qos::profiles::tasks(Some(100)).expect("writer qos");
     let reader_qos = dds_dataspace::qos::profiles::tasks(None).expect("reader qos");
-    let topic = Topic::<Task>::with_qos(
-        participant.entity(),
-        dds_contract::topics::TASKS,
-        Some(&reader_qos),
-    )
-    .expect("topic");
+    let topic =
+        Topic::<Task>::with_qos(&participant, dds_contract::topics::TASKS, Some(&reader_qos))
+            .expect("topic");
     let writer =
-        DataWriter::<Task>::with_qos(publisher.entity(), topic.entity(), Some(&writer_qos))
-            .expect("writer");
+        DataWriter::<Task>::with_qos(&publisher, &topic, Some(&writer_qos)).expect("writer");
     let reader =
-        DataReader::<Task>::with_qos(subscriber.entity(), topic.entity(), Some(&reader_qos))
-            .expect("reader");
+        DataReader::<Task>::with_qos(&subscriber, &topic, Some(&reader_qos)).expect("reader");
 
     for i in 0..3 {
         writer.write(&make_task(&format!("qc-{i}"))).expect("write");
@@ -102,13 +97,13 @@ fn query_condition_e2e_topico_producao() {
     // 1. Filtro accept-all COM guard: as 3 amostras chegam.
     let calls = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let calls2 = std::sync::Arc::clone(&calls);
-    let qc_all = QueryCondition::with_filter(reader.entity(), MASK, move |_| {
+    let qc_all = QueryCondition::with_filter(&reader, MASK, move |_| {
         calls2.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         true
     })
     .expect("qc all");
     // 1b. Caminho WAITSET (o uso primário de QC): attach + wait dispara?
-    let waitset = cyclonedds::WaitSet::new(participant.entity()).expect("waitset");
+    let waitset = cyclonedds::WaitSet::new(&participant).expect("waitset");
     waitset.attach(qc_all.entity(), 77).expect("attach");
     let triggered = {
         let _g = qc_all.activate();
@@ -120,7 +115,7 @@ fn query_condition_e2e_topico_producao() {
     );
     // 1c. ReadCondition simples (sem filtro) no mesmo reader: discrimina
     // "conditions quebradas em geral" vs "só querycondition com closure".
-    let rc_any = cyclonedds::ReadCondition::any(reader.entity()).expect("readcondition");
+    let rc_any = cyclonedds::ReadCondition::any(&reader).expect("readcondition");
     let n_rc = {
         let mut samples: Vec<*mut std::ffi::c_void> = vec![std::ptr::null_mut(); 8];
         let mut infos: Vec<cyclonedds_rust_sys::dds_sample_info> =
@@ -148,7 +143,7 @@ fn query_condition_e2e_topico_producao() {
     unsafe extern "C" fn accept_all_c(_s: *const std::ffi::c_void) -> bool {
         true
     }
-    let qc_c = QueryCondition::new(reader.entity(), MASK, accept_all_c).expect("qc c-filter");
+    let qc_c = QueryCondition::new(&reader, MASK, accept_all_c).expect("qc c-filter");
     let n_c = take_via_condition(&qc_c, 8);
     println!("[qc_e2e] take via QC com filtro C estático = {n_c}");
 

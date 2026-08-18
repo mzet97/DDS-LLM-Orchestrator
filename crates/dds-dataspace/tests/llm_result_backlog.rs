@@ -140,22 +140,21 @@ async fn backlog_a_stream_unico_reader_rapido() {
 /// de notificação (waitset/stream); perda aqui ⇒ camada DDS/QoS.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn backlog_a2_reader_direto_sem_waitset() {
-    use cyclonedds::{DataReader, DdsEntity, DomainParticipant, Subscriber, Topic};
+    use cyclonedds::{DataReader, DomainParticipant, Subscriber, Topic};
 
     let domain = 101;
     let ds_pub = DataSpace::new(domain, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
     let participant = DomainParticipant::new(domain).expect("participant");
-    let subscriber = Subscriber::new(participant.entity()).expect("subscriber");
+    let subscriber = Subscriber::new(&participant).expect("subscriber");
     let qos = dds_dataspace::qos::profiles::llm_result().expect("qos");
     let topic = Topic::<LLMInferenceResult>::with_qos(
-        participant.entity(),
+        &participant,
         dds_contract::topics::LLM_RESULT,
         Some(&qos),
     )
     .expect("topic");
-    let reader =
-        DataReader::<LLMInferenceResult>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))
-            .expect("reader");
+    let reader = DataReader::<LLMInferenceResult>::with_qos(&subscriber, &topic, Some(&qos))
+        .expect("reader");
 
     tokio::time::sleep(Duration::from_secs(2)).await; // settle/match
 
@@ -259,7 +258,7 @@ async fn backlog_c_4_streams_reader_rapido() {
 /// TransientLocal não está retendo/entregando histórico como esperado.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn backlog_d2_late_joiner_reader_direto() {
-    use cyclonedds::{DataReader, DdsEntity, DomainParticipant, Subscriber, Topic};
+    use cyclonedds::{DataReader, DomainParticipant, Subscriber, Topic};
 
     let domain = 102;
     let ds_pub = DataSpace::new(domain, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
@@ -270,17 +269,16 @@ async fn backlog_d2_late_joiner_reader_direto() {
 
     // Reader nasce depois de tudo publicado, direto na API cyclonedds.
     let participant = DomainParticipant::new(domain).expect("participant");
-    let subscriber = Subscriber::new(participant.entity()).expect("subscriber");
+    let subscriber = Subscriber::new(&participant).expect("subscriber");
     let qos = dds_dataspace::qos::profiles::llm_result().expect("qos");
     let topic = Topic::<LLMInferenceResult>::with_qos(
-        participant.entity(),
+        &participant,
         dds_contract::topics::LLM_RESULT,
         Some(&qos),
     )
     .expect("topic");
-    let reader =
-        DataReader::<LLMInferenceResult>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))
-            .expect("reader");
+    let reader = DataReader::<LLMInferenceResult>::with_qos(&subscriber, &topic, Some(&qos))
+        .expect("reader");
 
     let mut seen: Vec<u32> = Vec::new();
     let mut silence = Duration::ZERO;
@@ -312,24 +310,23 @@ async fn backlog_d2_late_joiner_reader_direto() {
 /// matched na escrita — e o problema do D2 é específico de "zero readers".
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn backlog_d3_retencao_com_reader_matched() {
-    use cyclonedds::{DataReader, DdsEntity, DomainParticipant, Subscriber, Topic};
+    use cyclonedds::{DataReader, DomainParticipant, Subscriber, Topic};
 
     let domain = 103;
     let ds_pub = DataSpace::new(domain, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
     let participant = DomainParticipant::new(domain).expect("participant");
-    let subscriber = Subscriber::new(participant.entity()).expect("subscriber");
+    let subscriber = Subscriber::new(&participant).expect("subscriber");
     let qos = dds_dataspace::qos::profiles::llm_result().expect("qos");
     let topic = Topic::<LLMInferenceResult>::with_qos(
-        participant.entity(),
+        &participant,
         dds_contract::topics::LLM_RESULT,
         Some(&qos),
     )
     .expect("topic");
 
     // reader1: matched ANTES da publicação.
-    let reader1 =
-        DataReader::<LLMInferenceResult>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))
-            .expect("reader1");
+    let reader1 = DataReader::<LLMInferenceResult>::with_qos(&subscriber, &topic, Some(&qos))
+        .expect("reader1");
     tokio::time::sleep(Duration::from_secs(2)).await; // settle/match
 
     let failures = publish_streams(&ds_pub, 1, 64, "d3").await;
@@ -351,9 +348,8 @@ async fn backlog_d3_retencao_com_reader_matched() {
     }
 
     // reader2: late joiner com a WHC "quente".
-    let reader2 =
-        DataReader::<LLMInferenceResult>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))
-            .expect("reader2");
+    let reader2 = DataReader::<LLMInferenceResult>::with_qos(&subscriber, &topic, Some(&qos))
+        .expect("reader2");
     let mut seen2 = 0usize;
     let mut silence2 = Duration::ZERO;
     while seen2 < 64 && silence2 < Duration::from_secs(10) {
@@ -403,16 +399,11 @@ fn probe_readcondition_em_topico_idlc() {
     use dds_contract::generated::dds_llm_orchestrator::Task;
 
     let participant = DomainParticipant::new(105).expect("participant");
-    let subscriber = Subscriber::new(participant.entity()).expect("subscriber");
+    let subscriber = Subscriber::new(&participant).expect("subscriber");
     let qos = dds_dataspace::qos::profiles::tasks(None).expect("qos");
-    let topic = Topic::<Task>::with_qos(
-        participant.entity(),
-        dds_contract::topics::TASKS,
-        Some(&qos),
-    )
-    .expect("topic");
-    let reader = DataReader::<Task>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))
-        .expect("reader");
+    let topic = Topic::<Task>::with_qos(&participant, dds_contract::topics::TASKS, Some(&qos))
+        .expect("topic");
+    let reader = DataReader::<Task>::with_qos(&subscriber, &topic, Some(&qos)).expect("reader");
     let mask = 3u32 | 12 | 112; // ANY sample/view/instance
     let rc = unsafe { cyclonedds_rust_sys::dds_create_readcondition(reader.entity(), mask) };
     println!("[probe] readcondition em tópico idlc (Tasks) = {rc}");

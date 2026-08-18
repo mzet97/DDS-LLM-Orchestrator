@@ -23,7 +23,7 @@ use client::dds_impl::DdsClientDds;
 use client::{ClientConfig, ClientError, DdsClient};
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use dds_dataspace::api::DataSpaceApi;
-use futures::StreamExt;
+use futures::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
 use crate::metrics::{JsonlWriter, RequestRecord, RequestStatus};
@@ -462,6 +462,7 @@ impl BenchmarkDriver {
             let seed = shared.cfg.seed.wrapping_add(u64::from(w) + 1);
             handles.push(tokio::spawn(async move {
                 let mut gen = crate::generator::WorkloadGenerator::new(crate::regimes::LEVE, seed);
+                let mut status_stream = Box::pin(shared.client.dataspace().stream_tasks());
                 while !shared.deadline_reached() {
                     shared.counters.submitted.fetch_add(1, Ordering::Relaxed);
                     let prompt = gen.generate_prompt();
@@ -469,7 +470,8 @@ impl BenchmarkDriver {
                     let task = shared.make_task(&prompt, PRIORITY_NORMAL, false, 50);
                     let started_ns = now_ns();
                     let t0 = Instant::now();
-                    let (outcome, terminal) = submit_observed_shared(&shared, task.clone()).await;
+                    let (outcome, terminal) =
+                        submit_observed_shared(&shared, task.clone(), &mut status_stream).await;
                     let mut rec =
                         shared.base_record(&task, terminal.as_ref(), started_ns, prompt_tokens);
                     BenchmarkDriver::finish_record(&mut rec, &outcome, t0);
@@ -492,6 +494,7 @@ impl BenchmarkDriver {
             let mut gen =
                 crate::generator::WorkloadGenerator::new(crate::regimes::LEVE, shared.cfg.seed);
             let mut rng = Rng::new(shared.cfg.seed ^ 0x0B6C_41A0);
+            let mut status_stream = Box::pin(shared.client.dataspace().stream_tasks());
             while !shared.deadline_reached() {
                 let ia = rng.exponential(background_rps);
                 tokio::time::sleep(Duration::from_secs_f64(ia)).await;
@@ -503,7 +506,8 @@ impl BenchmarkDriver {
                 let task = shared.make_task(&prompt, PRIORITY_NORMAL, false, 1);
                 let started_ns = now_ns();
                 let t0 = Instant::now();
-                let (outcome, terminal) = submit_observed_shared(&shared, task.clone()).await;
+                let (outcome, terminal) =
+                    submit_observed_shared(&shared, task.clone(), &mut status_stream).await;
                 let mut rec = shared.base_record(&task, terminal.as_ref(), started_ns, 0);
                 rec.load_level = "background_normal".into();
                 BenchmarkDriver::finish_record(&mut rec, &outcome, t0);
@@ -545,17 +549,20 @@ impl BenchmarkDriver {
 
 /// Versão free-function de `submit_observed` para uso em tasks spawned
 /// (onde não há `&self` do driver).
-async fn submit_observed_shared(
+async fn submit_observed_shared<S>(
     shared: &Shared,
     task: Task,
-) -> (Result<(), ClientError>, Option<Task>) {
+    status_stream: &mut S,
+) -> (Result<(), ClientError>, Option<Task>)
+where
+    S: Stream<Item = Arc<Task>> + Unpin,
+{
     let task_id = task.task_id.clone();
     let dataspace = shared.client.dataspace();
     if let Err(e) = dataspace.write_task(task).await {
         return (Err(ClientError::DdsError(e.to_string())), None);
     }
     let deadline = Instant::now() + Duration::from_millis(shared.cfg.timeout_ms);
-    let mut status_stream = Box::pin(dataspace.stream_tasks());
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {

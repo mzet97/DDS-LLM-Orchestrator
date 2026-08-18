@@ -199,7 +199,9 @@ mod tests {
         assert!(!json.contains("itl_mean_ms"));
 
         // ...mas lê raw data legada (alias).
-        let legado = json.replace("ttfc_ms", "ttft_ms").replace("icl_mean_ms", "itl_mean_ms");
+        let legado = json
+            .replace("ttfc_ms", "ttft_ms")
+            .replace("icl_mean_ms", "itl_mean_ms");
         let rec2: RequestRecord = serde_json::from_str(&legado).unwrap();
         assert_eq!(rec2.ttfc_ms, Some(150.0));
         assert_eq!(rec2.icl_mean_ms, Some(25.0));

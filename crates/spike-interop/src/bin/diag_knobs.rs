@@ -5,7 +5,7 @@ use dds_contract::topics;
 
 fn main() {
     let dp = DomainParticipant::new(110).unwrap();
-    let publisher = Publisher::new(dp.entity()).unwrap();
+    let publisher = Publisher::new(&dp).unwrap();
     let qos = QosBuilder::new()
         .reliability(Reliability::Reliable, 10_000_000_000)
         .durability(Durability::TransientLocal)
@@ -17,9 +17,8 @@ fn main() {
         .ownership_strength(200)
         .build()
         .unwrap();
-    let topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos)).unwrap();
-    let writer =
-        DataWriter::<Task>::with_qos(publisher.entity(), topic.entity(), Some(&qos)).unwrap();
+    let topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos)).unwrap();
+    let writer = DataWriter::<Task>::with_qos(&publisher, &topic, Some(&qos)).unwrap();
 
     // 1) set_qos com o MESMO QoS (delta zero)
     println!("1) mesmo QoS: {:?}", writer.set_qos(&qos));

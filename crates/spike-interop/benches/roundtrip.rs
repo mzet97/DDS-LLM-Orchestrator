@@ -6,9 +6,7 @@
 //! Rode com: `CYCLONEDDS_STATIC=1 cargo bench -p spike-interop --features dds`
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use cyclonedds::{
-    DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, Subscriber, Topic,
-};
+use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 use dds_contract::generated::dds_llm_orchestrator::{Task, TaskOutput};
 use dds_contract::topics;
 use spike_interop::profiles;
@@ -42,14 +40,12 @@ fn setup() -> Rtt {
         let dp = DomainParticipant::new(DOMAIN)?;
         let qos_t = profiles::tasks(None)?;
         let qos_o = profiles::task_output(Some(200))?;
-        let t_topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos_t))?;
-        let o_topic =
-            Topic::<TaskOutput>::with_qos(dp.entity(), topics::TASK_OUTPUT, Some(&qos_o))?;
-        let sub = Subscriber::new(dp.entity())?;
-        let reader = DataReader::<Task>::with_qos(sub.entity(), t_topic.entity(), Some(&qos_t))?;
-        let pub_ = Publisher::new(dp.entity())?;
-        let writer =
-            DataWriter::<TaskOutput>::with_qos(pub_.entity(), o_topic.entity(), Some(&qos_o))?;
+        let t_topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos_t))?;
+        let o_topic = Topic::<TaskOutput>::with_qos(&dp, topics::TASK_OUTPUT, Some(&qos_o))?;
+        let sub = Subscriber::new(&dp)?;
+        let reader = DataReader::<Task>::with_qos(&sub, &t_topic, Some(&qos_t))?;
+        let pub_ = Publisher::new(&dp)?;
+        let writer = DataWriter::<TaskOutput>::with_qos(&pub_, &o_topic, Some(&qos_o))?;
         let mut echoed: HashSet<String> = HashSet::new();
         loop {
             if let Ok(samples) = reader.take() {
@@ -77,15 +73,13 @@ fn setup() -> Rtt {
     let dp = DomainParticipant::new(DOMAIN).expect("participant");
     let qos_t = profiles::tasks(Some(200)).expect("qos");
     let qos_o = profiles::task_output(None).expect("qos");
-    let t_topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos_t)).expect("topic");
-    let o_topic = Topic::<TaskOutput>::with_qos(dp.entity(), topics::TASK_OUTPUT, Some(&qos_o))
-        .expect("topic");
-    let pub_ = Publisher::new(dp.entity()).expect("publisher");
-    let writer = DataWriter::<Task>::with_qos(pub_.entity(), t_topic.entity(), Some(&qos_t))
-        .expect("writer");
-    let sub = Subscriber::new(dp.entity()).expect("subscriber");
-    let reader = DataReader::<TaskOutput>::with_qos(sub.entity(), o_topic.entity(), Some(&qos_o))
-        .expect("reader");
+    let t_topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos_t)).expect("topic");
+    let o_topic =
+        Topic::<TaskOutput>::with_qos(&dp, topics::TASK_OUTPUT, Some(&qos_o)).expect("topic");
+    let pub_ = Publisher::new(&dp).expect("publisher");
+    let writer = DataWriter::<Task>::with_qos(&pub_, &t_topic, Some(&qos_t)).expect("writer");
+    let sub = Subscriber::new(&dp).expect("subscriber");
+    let reader = DataReader::<TaskOutput>::with_qos(&sub, &o_topic, Some(&qos_o)).expect("reader");
 
     // Settle: discovery + match do par
     std::thread::sleep(Duration::from_millis(3000));

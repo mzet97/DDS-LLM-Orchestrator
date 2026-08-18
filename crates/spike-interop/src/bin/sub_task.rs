@@ -3,7 +3,7 @@
 //! Uso: cargo run --bin sub-task [--domain ID] [--timeout SEC]
 
 use anyhow::Result;
-use cyclonedds::{DataReader, DdsEntity, DomainParticipant, Subscriber, Topic};
+use cyclonedds::{DataReader, DomainParticipant, Subscriber, Topic};
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use dds_contract::topics;
 use spike_interop::profiles;
@@ -37,9 +37,9 @@ fn main() -> Result<()> {
     let dp = DomainParticipant::new(domain_id)?;
     let qos = profiles::tasks(None)?;
 
-    let topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos))?;
-    let subscriber = Subscriber::new(dp.entity())?;
-    let reader = DataReader::<Task>::with_qos(subscriber.entity(), topic.entity(), Some(&qos))?;
+    let topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos))?;
+    let subscriber = Subscriber::new(&dp)?;
+    let reader = DataReader::<Task>::with_qos(&subscriber, &topic, Some(&qos))?;
 
     let start = Instant::now();
     let timeout = Duration::from_secs(timeout_secs);

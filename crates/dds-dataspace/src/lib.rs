@@ -30,9 +30,7 @@ use std::sync::Arc;
 pub type TopicCache<T> = Arc<DashMap<String, T>>;
 
 #[cfg(feature = "dds")]
-use cyclonedds::{
-    DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, Subscriber, Topic,
-};
+use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 #[cfg(feature = "dds")]
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
@@ -65,51 +63,51 @@ pub struct DataSpace {
     // (leitura pontual do RHC arbitrado) — distinto dos readers 'static
     // dedicados que cada `stream_*` cria por chamada (ver nota abaixo).
     tasks_reader: DataReader<Task>,
-    tasks_topic: Topic<Task>,
-    agents_topic: Topic<AgentState>,
-    outputs_topic: Topic<TaskOutput>,
+    tasks_topic: Arc<Topic<Task>>,
+    agents_topic: Arc<Topic<AgentState>>,
+    outputs_topic: Arc<Topic<TaskOutput>>,
 
     // Tópicos LLM (3)
     llm_request_writer: DataWriter<LLMInferenceRequest>,
     llm_result_writer: DataWriter<LLMInferenceResult>,
     llm_error_writer: DataWriter<LLMInferenceError>,
-    llm_request_topic: Topic<LLMInferenceRequest>,
-    llm_result_topic: Topic<LLMInferenceResult>,
-    llm_error_topic: Topic<LLMInferenceError>,
+    llm_request_topic: Arc<Topic<LLMInferenceRequest>>,
+    llm_result_topic: Arc<Topic<LLMInferenceResult>>,
+    llm_error_topic: Arc<Topic<LLMInferenceError>>,
 
     // Tópicos Context (2)
     context_snapshot_writer: DataWriter<ContextSnapshot>,
     context_update_writer: DataWriter<ContextUpdate>,
-    context_snapshot_topic: Topic<ContextSnapshot>,
-    context_update_topic: Topic<ContextUpdate>,
+    context_snapshot_topic: Arc<Topic<ContextSnapshot>>,
+    context_update_topic: Arc<Topic<ContextUpdate>>,
 
     // Tópicos ToolCall (1)
     tool_call_writer: DataWriter<ToolCallRequest>,
-    tool_call_topic: Topic<ToolCallRequest>,
+    tool_call_topic: Arc<Topic<ToolCallRequest>>,
 
     // Tópicos ExecutionTrace (1)
     execution_trace_writer: DataWriter<ExecutionTraceEvent>,
-    execution_trace_topic: Topic<ExecutionTraceEvent>,
+    execution_trace_topic: Arc<Topic<ExecutionTraceEvent>>,
 
     // Tópicos Security (2)
     security_snapshot_writer: DataWriter<SecurityPolicySnapshot>,
     security_update_writer: DataWriter<SecurityPolicyUpdate>,
-    security_snapshot_topic: Topic<SecurityPolicySnapshot>,
-    security_update_topic: Topic<SecurityPolicyUpdate>,
+    security_snapshot_topic: Arc<Topic<SecurityPolicySnapshot>>,
+    security_update_topic: Arc<Topic<SecurityPolicyUpdate>>,
 
     // Tópicos QoS (3)
     qos_routing_writer: DataWriter<QoSRoutingProfile>,
     qos_metric_writer: DataWriter<QoSMetric>,
     qos_violation_writer: DataWriter<QoSViolation>,
     discovery_event_writer: DataWriter<DiscoveryEvent>,
-    qos_routing_topic: Topic<QoSRoutingProfile>,
-    qos_metric_topic: Topic<QoSMetric>,
-    qos_violation_topic: Topic<QoSViolation>,
-    discovery_event_topic: Topic<DiscoveryEvent>,
+    qos_routing_topic: Arc<Topic<QoSRoutingProfile>>,
+    qos_metric_topic: Arc<Topic<QoSMetric>>,
+    qos_violation_topic: Arc<Topic<QoSViolation>>,
+    discovery_event_topic: Arc<Topic<DiscoveryEvent>>,
 
     // Infraestrutura compartilhada
-    publisher: Publisher,
-    subscriber: Subscriber,
+    publisher: Arc<Publisher>,
+    subscriber: Arc<Subscriber>,
     // Nunca lido diretamente: mantido apenas para manter o participant (e,
     // por RAII, toda a árvore de entidades DDS abaixo dele) vivo pelo
     // lifetime do DataSpace. Derrubá-lo cedo destruiria publisher/subscriber/
@@ -188,8 +186,7 @@ fn build_tasks_writer_pool(
             ownership_strength
         };
         let q_slot = qos::profiles::tasks(Some(strength)).map_err(err)?;
-        let w = DataWriter::with_qos(publisher.entity(), tasks_topic.entity(), Some(&q_slot))
-            .map_err(err)?;
+        let w = DataWriter::with_qos(publisher, tasks_topic, Some(&q_slot)).map_err(err)?;
         writers.push(w);
     }
     Ok(writers)
@@ -242,8 +239,8 @@ impl DataSpace {
         profile_name: Option<&str>,
     ) -> Result<Self, api::DataSpaceError> {
         let participant = DomainParticipant::new(domain_id).map_err(err)?;
-        let publisher = Publisher::new(participant.entity()).map_err(err)?;
-        let subscriber = Subscriber::new(participant.entity()).map_err(err)?;
+        let publisher = Publisher::new(&participant).map_err(err)?;
+        let subscriber = Subscriber::new(&participant).map_err(err)?;
 
         // ── QoS profiles ────────────────────────────────────────────────
         let q_tasks = if let Some(profile) = profile_name {
@@ -268,186 +265,128 @@ impl DataSpace {
 
         // ── Topics ───────────────────────────────────────────────────────
         let tasks_topic =
-            Topic::<Task>::with_qos(participant.entity(), topics::TASKS, Some(&q_tasks))
+            Topic::<Task>::with_qos(&participant, topics::TASKS, Some(&q_tasks)).map_err(err)?;
+        let agents_topic =
+            Topic::<AgentState>::with_qos(&participant, topics::AGENT_REGISTRY, Some(&q_agents))
                 .map_err(err)?;
-        let agents_topic = Topic::<AgentState>::with_qos(
-            participant.entity(),
-            topics::AGENT_REGISTRY,
-            Some(&q_agents),
-        )
-        .map_err(err)?;
-        let outputs_topic = Topic::<TaskOutput>::with_qos(
-            participant.entity(),
-            topics::TASK_OUTPUT,
-            Some(&q_outputs),
-        )
-        .map_err(err)?;
+        let outputs_topic =
+            Topic::<TaskOutput>::with_qos(&participant, topics::TASK_OUTPUT, Some(&q_outputs))
+                .map_err(err)?;
 
-        let llm_request_topic = Topic::<LLMInferenceRequest>::with_qos(
-            participant.entity(),
-            topics::LLM_REQUEST,
-            Some(&q_llm),
-        )
-        .map_err(err)?;
+        let llm_request_topic =
+            Topic::<LLMInferenceRequest>::with_qos(&participant, topics::LLM_REQUEST, Some(&q_llm))
+                .map_err(err)?;
         let llm_result_topic = Topic::<LLMInferenceResult>::with_qos(
-            participant.entity(),
+            &participant,
             topics::LLM_RESULT,
             Some(&q_llm_result),
         )
         .map_err(err)?;
-        let llm_error_topic = Topic::<LLMInferenceError>::with_qos(
-            participant.entity(),
-            topics::LLM_ERROR,
-            Some(&q_llm),
-        )
-        .map_err(err)?;
+        let llm_error_topic =
+            Topic::<LLMInferenceError>::with_qos(&participant, topics::LLM_ERROR, Some(&q_llm))
+                .map_err(err)?;
 
         let context_snapshot_topic = Topic::<ContextSnapshot>::with_qos(
-            participant.entity(),
+            &participant,
             topics::CONTEXT_SNAPSHOT,
             Some(&q_ctx_snap),
         )
         .map_err(err)?;
         let context_update_topic = Topic::<ContextUpdate>::with_qos(
-            participant.entity(),
+            &participant,
             topics::CONTEXT_UPDATE,
             Some(&q_ctx_upd),
         )
         .map_err(err)?;
 
         let tool_call_topic = Topic::<ToolCallRequest>::with_qos(
-            participant.entity(),
+            &participant,
             topics::TOOL_CALL_REQUEST,
             Some(&q_tool),
         )
         .map_err(err)?;
         let execution_trace_topic = Topic::<ExecutionTraceEvent>::with_qos(
-            participant.entity(),
+            &participant,
             topics::EXECUTION_TRACE,
             Some(&q_trace),
         )
         .map_err(err)?;
 
         let security_snapshot_topic = Topic::<SecurityPolicySnapshot>::with_qos(
-            participant.entity(),
+            &participant,
             topics::SECURITY_POLICY_SNAPSHOT,
             Some(&q_sec_snap),
         )
         .map_err(err)?;
         let security_update_topic = Topic::<SecurityPolicyUpdate>::with_qos(
-            participant.entity(),
+            &participant,
             topics::SECURITY_POLICY_UPDATE,
             Some(&q_sec_upd),
         )
         .map_err(err)?;
 
         let qos_routing_topic = Topic::<QoSRoutingProfile>::with_qos(
-            participant.entity(),
+            &participant,
             topics::QOS_ROUTING_PROFILE,
             Some(&q_qos_route),
         )
         .map_err(err)?;
-        let qos_metric_topic = Topic::<QoSMetric>::with_qos(
-            participant.entity(),
-            topics::QOS_METRIC,
-            Some(&q_qos_metric),
-        )
-        .map_err(err)?;
-        let qos_violation_topic = Topic::<QoSViolation>::with_qos(
-            participant.entity(),
-            topics::QOS_VIOLATION,
-            Some(&q_qos_viol),
-        )
-        .map_err(err)?;
-        let discovery_event_topic = Topic::<DiscoveryEvent>::with_qos(
-            participant.entity(),
-            topics::QOS_DISCOVERY,
-            Some(&q_disc),
-        )
-        .map_err(err)?;
+        let qos_metric_topic =
+            Topic::<QoSMetric>::with_qos(&participant, topics::QOS_METRIC, Some(&q_qos_metric))
+                .map_err(err)?;
+        let qos_violation_topic =
+            Topic::<QoSViolation>::with_qos(&participant, topics::QOS_VIOLATION, Some(&q_qos_viol))
+                .map_err(err)?;
+        let discovery_event_topic =
+            Topic::<DiscoveryEvent>::with_qos(&participant, topics::QOS_DISCOVERY, Some(&q_disc))
+                .map_err(err)?;
 
         // ── Writers ──────────────────────────────────────────────────────
         let tasks_writers = build_tasks_writer_pool(&publisher, &tasks_topic, ownership_strength)?;
         let agents_writer =
-            DataWriter::with_qos(publisher.entity(), agents_topic.entity(), Some(&q_agents))
-                .map_err(err)?;
+            DataWriter::with_qos(&publisher, &agents_topic, Some(&q_agents)).map_err(err)?;
         let outputs_writer =
-            DataWriter::with_qos(publisher.entity(), outputs_topic.entity(), Some(&q_outputs))
-                .map_err(err)?;
+            DataWriter::with_qos(&publisher, &outputs_topic, Some(&q_outputs)).map_err(err)?;
 
         let llm_request_writer =
-            DataWriter::with_qos(publisher.entity(), llm_request_topic.entity(), Some(&q_llm))
+            DataWriter::with_qos(&publisher, &llm_request_topic, Some(&q_llm)).map_err(err)?;
+        let llm_result_writer =
+            DataWriter::with_qos(&publisher, &llm_result_topic, Some(&q_llm_result))
                 .map_err(err)?;
-        let llm_result_writer = DataWriter::with_qos(
-            publisher.entity(),
-            llm_result_topic.entity(),
-            Some(&q_llm_result),
-        )
-        .map_err(err)?;
         let llm_error_writer =
-            DataWriter::with_qos(publisher.entity(), llm_error_topic.entity(), Some(&q_llm))
-                .map_err(err)?;
+            DataWriter::with_qos(&publisher, &llm_error_topic, Some(&q_llm)).map_err(err)?;
 
-        let context_snapshot_writer = DataWriter::with_qos(
-            publisher.entity(),
-            context_snapshot_topic.entity(),
-            Some(&q_ctx_snap),
-        )
-        .map_err(err)?;
-        let context_update_writer = DataWriter::with_qos(
-            publisher.entity(),
-            context_update_topic.entity(),
-            Some(&q_ctx_upd),
-        )
-        .map_err(err)?;
+        let context_snapshot_writer =
+            DataWriter::with_qos(&publisher, &context_snapshot_topic, Some(&q_ctx_snap))
+                .map_err(err)?;
+        let context_update_writer =
+            DataWriter::with_qos(&publisher, &context_update_topic, Some(&q_ctx_upd))
+                .map_err(err)?;
 
         let tool_call_writer =
-            DataWriter::with_qos(publisher.entity(), tool_call_topic.entity(), Some(&q_tool))
+            DataWriter::with_qos(&publisher, &tool_call_topic, Some(&q_tool)).map_err(err)?;
+        let execution_trace_writer =
+            DataWriter::with_qos(&publisher, &execution_trace_topic, Some(&q_trace))
                 .map_err(err)?;
-        let execution_trace_writer = DataWriter::with_qos(
-            publisher.entity(),
-            execution_trace_topic.entity(),
-            Some(&q_trace),
-        )
-        .map_err(err)?;
 
-        let security_snapshot_writer = DataWriter::with_qos(
-            publisher.entity(),
-            security_snapshot_topic.entity(),
-            Some(&q_sec_snap),
-        )
-        .map_err(err)?;
-        let security_update_writer = DataWriter::with_qos(
-            publisher.entity(),
-            security_update_topic.entity(),
-            Some(&q_sec_upd),
-        )
-        .map_err(err)?;
+        let security_snapshot_writer =
+            DataWriter::with_qos(&publisher, &security_snapshot_topic, Some(&q_sec_snap))
+                .map_err(err)?;
+        let security_update_writer =
+            DataWriter::with_qos(&publisher, &security_update_topic, Some(&q_sec_upd))
+                .map_err(err)?;
 
-        let qos_routing_writer = DataWriter::with_qos(
-            publisher.entity(),
-            qos_routing_topic.entity(),
-            Some(&q_qos_route),
-        )
-        .map_err(err)?;
-        let qos_metric_writer = DataWriter::with_qos(
-            publisher.entity(),
-            qos_metric_topic.entity(),
-            Some(&q_qos_metric),
-        )
-        .map_err(err)?;
-        let qos_violation_writer = DataWriter::with_qos(
-            publisher.entity(),
-            qos_violation_topic.entity(),
-            Some(&q_qos_viol),
-        )
-        .map_err(err)?;
-        let discovery_event_writer = DataWriter::with_qos(
-            publisher.entity(),
-            discovery_event_topic.entity(),
-            Some(&q_disc),
-        )
-        .map_err(err)?;
+        let qos_routing_writer =
+            DataWriter::with_qos(&publisher, &qos_routing_topic, Some(&q_qos_route))
+                .map_err(err)?;
+        let qos_metric_writer =
+            DataWriter::with_qos(&publisher, &qos_metric_topic, Some(&q_qos_metric))
+                .map_err(err)?;
+        let qos_violation_writer =
+            DataWriter::with_qos(&publisher, &qos_violation_topic, Some(&q_qos_viol))
+                .map_err(err)?;
+        let discovery_event_writer =
+            DataWriter::with_qos(&publisher, &discovery_event_topic, Some(&q_disc)).map_err(err)?;
 
         // ── Readers ──────────────────────────────────────────────────────
         // Só `tasks_reader` é mantido como campo (usado por
@@ -456,8 +395,7 @@ impl DataSpace {
         // dedicado por chamada (ver doc de `stream_tasks`) — manter aqui
         // seria um reader órfão, gastando entidade DDS + WaitSet à toa.
         let tasks_reader =
-            DataReader::with_qos(subscriber.entity(), tasks_topic.entity(), Some(&q_tasks))
-                .map_err(err)?;
+            DataReader::with_qos(&subscriber, &tasks_topic, Some(&q_tasks)).map_err(err)?;
 
         let shared_waitset = dispatch::SharedWaitSet::new(&participant).map_err(err)?;
 
@@ -471,43 +409,43 @@ impl DataSpace {
             agents_writer,
             outputs_writer,
             tasks_reader,
-            tasks_topic,
-            agents_topic,
-            outputs_topic,
+            tasks_topic: Arc::new(tasks_topic),
+            agents_topic: Arc::new(agents_topic),
+            outputs_topic: Arc::new(outputs_topic),
 
             llm_request_writer,
             llm_result_writer,
             llm_error_writer,
-            llm_request_topic,
-            llm_result_topic,
-            llm_error_topic,
+            llm_request_topic: Arc::new(llm_request_topic),
+            llm_result_topic: Arc::new(llm_result_topic),
+            llm_error_topic: Arc::new(llm_error_topic),
 
             context_snapshot_writer,
             context_update_writer,
-            context_snapshot_topic,
-            context_update_topic,
+            context_snapshot_topic: Arc::new(context_snapshot_topic),
+            context_update_topic: Arc::new(context_update_topic),
 
             tool_call_writer,
-            tool_call_topic,
+            tool_call_topic: Arc::new(tool_call_topic),
             execution_trace_writer,
-            execution_trace_topic,
+            execution_trace_topic: Arc::new(execution_trace_topic),
 
             security_snapshot_writer,
             security_update_writer,
-            security_snapshot_topic,
-            security_update_topic,
+            security_snapshot_topic: Arc::new(security_snapshot_topic),
+            security_update_topic: Arc::new(security_update_topic),
 
             qos_routing_writer,
             qos_metric_writer,
             qos_violation_writer,
             discovery_event_writer,
-            qos_routing_topic,
-            qos_metric_topic,
-            qos_violation_topic,
-            discovery_event_topic,
+            qos_routing_topic: Arc::new(qos_routing_topic),
+            qos_metric_topic: Arc::new(qos_metric_topic),
+            qos_violation_topic: Arc::new(qos_violation_topic),
+            discovery_event_topic: Arc::new(discovery_event_topic),
 
-            publisher,
-            subscriber,
+            publisher: Arc::new(publisher),
+            subscriber: Arc::new(subscriber),
             participant,
             ownership_strength,
             caches: Arc::new(TopicCaches::new()),
@@ -541,9 +479,18 @@ impl DataSpace {
     /// aplicação NÃO serve para isso: por chegada, o próprio echo do 2º a clamar
     /// sempre venceria (execução dupla).
     pub fn read_task_mesh(&self, task_id: &str) -> Result<Option<Task>, api::DataSpaceError> {
-        let samples = self.tasks_reader.read().map_err(err)?;
-        // última amostra da instância (ordem de inserção no RHC) = estado corrente
-        Ok(samples.into_iter().rev().find(|t| t.task_id == task_id))
+        let key = Task {
+            task_id: task_id.to_owned(),
+            ..Task::default()
+        };
+        let handle = self.tasks_reader.lookup_instance(&key);
+        if handle == 0 {
+            return Ok(None);
+        }
+
+        let samples = self.tasks_reader.read_instance(handle).map_err(err)?;
+        let samples = samples.to_vec().map_err(err)?;
+        Ok(samples.into_iter().rev().map(|sample| sample.data).next())
     }
 
     /// Aplica os knobs online do decisor de QoS no writer de `Tasks` (REQ-405).
@@ -615,26 +562,30 @@ impl DataSpace {
     /// Stream de `Task` acordada por amostra (WaitSet compartilhado — Fase 5/T-617,
     /// ver `dispatch.rs` — sem polling). Cada chamada cria um reader dedicado
     /// ('static, sem corrida de take entre assinantes), anexado ao WaitSet
-    /// único do `DataSpace`. Cada amostra alimenta o cache (upsert monotônico).
-    pub fn stream_tasks(&self) -> impl Stream<Item = cache::ArcTask> {
+    /// único do `DataSpace`. O reader é criado e anexado antes de devolver o
+    /// stream, para que um pump persistente já exista antes do primeiro write
+    /// em um tópico Volatile. Cada amostra alimenta o cache (upsert monotônico).
+    pub fn stream_tasks(&self) -> impl Stream<Item = cache::ArcTask> + 'static {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.tasks_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.tasks_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(Tasks) falhou; stream encerrado");
-                    return;
-                }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
+        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
+            Ok(reader) => match waitset.register(&reader) {
+                Ok(registration) => Some((reader, registration)),
                 Err(e) => {
                     tracing::error!(error = %e, "waitset.register(Tasks) falhou; stream encerrado");
-                    return;
+                    None
                 }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "DataReader::with_qos(Tasks) falhou; stream encerrado");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let n = registration.notified();
@@ -667,11 +618,11 @@ impl DataSpace {
     /// Stream de `AgentState` acordada por amostra (heartbeat dos agentes).
     pub fn stream_agent_states(&self) -> impl Stream<Item = cache::ArcAgentState> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.agents_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.agents_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(AgentRegistry) falhou; stream encerrado");
@@ -710,25 +661,29 @@ impl DataSpace {
     }
 
     /// Stream de `TaskOutput` acordada por amostra (chunks de inferência).
-    pub fn stream_task_outputs(&self) -> impl Stream<Item = cache::ArcTaskOutput> {
+    /// O reader é criado e anexado antes de devolver o stream, para não perder
+    /// amostras Volatile quando o pump do cliente ainda não foi polled.
+    pub fn stream_task_outputs(&self) -> impl Stream<Item = cache::ArcTaskOutput> + 'static {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.outputs_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.outputs_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(TaskOutput) falhou; stream encerrado");
-                    return;
-                }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
+        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
+            Ok(reader) => match waitset.register(&reader) {
+                Ok(registration) => Some((reader, registration)),
                 Err(e) => {
                     tracing::error!(error = %e, "waitset.register(TaskOutput) falhou; stream encerrado");
-                    return;
+                    None
                 }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "DataReader::with_qos(TaskOutput) falhou; stream encerrado");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let n = registration.notified();
@@ -757,11 +712,11 @@ impl DataSpace {
     /// Stream de `LLMInferenceRequest` acordada por amostra.
     pub fn stream_llm_requests(&self) -> impl Stream<Item = cache::ArcLLMRequest> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.llm_request_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.llm_request_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(LLMRequest) falhou; stream encerrado");
@@ -802,11 +757,11 @@ impl DataSpace {
     /// Stream de `LLMInferenceResult` acordada por amostra.
     pub fn stream_llm_results(&self) -> impl Stream<Item = cache::ArcLLMResult> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.llm_result_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.llm_result_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(LLMResult) falhou; stream encerrado");
@@ -853,11 +808,11 @@ impl DataSpace {
     /// Stream de `LLMInferenceError` acordada por amostra.
     pub fn stream_llm_errors(&self) -> impl Stream<Item = cache::ArcLLMError> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.llm_error_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.llm_error_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(LLMError) falhou; stream encerrado");
@@ -898,11 +853,11 @@ impl DataSpace {
     /// Stream de `ContextSnapshot` acordada por amostra.
     pub fn stream_context_snapshots(&self) -> impl Stream<Item = cache::ArcContextSnapshot> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.context_snapshot_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.context_snapshot_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(ContextSnapshot) falhou; stream encerrado");
@@ -943,11 +898,11 @@ impl DataSpace {
     /// Stream de `ContextUpdate` acordada por amostra.
     pub fn stream_context_updates(&self) -> impl Stream<Item = cache::ArcContextUpdate> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.context_update_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.context_update_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(ContextUpdate) falhou; stream encerrado");
@@ -988,11 +943,11 @@ impl DataSpace {
     /// Stream de `ToolCallRequest` acordada por amostra.
     pub fn stream_tool_calls(&self) -> impl Stream<Item = cache::ArcToolCallRequest> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.tool_call_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.tool_call_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(ToolCall) falhou; stream encerrado");
@@ -1033,11 +988,11 @@ impl DataSpace {
     /// Stream de `ExecutionTraceEvent` acordada por amostra.
     pub fn stream_execution_traces(&self) -> impl Stream<Item = cache::ArcExecutionTraceEvent> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.execution_trace_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.execution_trace_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(ExecutionTrace) falhou; stream encerrado");
@@ -1080,11 +1035,11 @@ impl DataSpace {
         &self,
     ) -> impl Stream<Item = cache::ArcSecurityPolicySnapshot> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.security_snapshot_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.security_snapshot_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(SecuritySnapshot) falhou; stream encerrado");
@@ -1125,11 +1080,11 @@ impl DataSpace {
     /// Stream de `SecurityPolicyUpdate` acordada por amostra.
     pub fn stream_security_updates(&self) -> impl Stream<Item = cache::ArcSecurityPolicyUpdate> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.security_update_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.security_update_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(SecurityUpdate) falhou; stream encerrado");
@@ -1170,11 +1125,11 @@ impl DataSpace {
     /// Stream de `QoSRoutingProfile` acordada por amostra.
     pub fn stream_qos_routing(&self) -> impl Stream<Item = cache::ArcQoSRoutingProfile> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.qos_routing_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.qos_routing_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(QoSRouting) falhou; stream encerrado");
@@ -1215,11 +1170,11 @@ impl DataSpace {
     /// Stream de `QoSMetric` acordada por amostra.
     pub fn stream_qos_metrics(&self) -> impl Stream<Item = cache::ArcQoSMetric> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.qos_metric_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.qos_metric_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(QoSMetric) falhou; stream encerrado");
@@ -1260,11 +1215,11 @@ impl DataSpace {
     /// Stream de `QoSViolation` acordada por amostra.
     pub fn stream_qos_violations(&self) -> impl Stream<Item = cache::ArcQoSViolation> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.qos_violation_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.qos_violation_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(QoSViolation) falhou; stream encerrado");
@@ -1305,11 +1260,11 @@ impl DataSpace {
     /// Stream de `DiscoveryEvent` acordada por amostra.
     pub fn stream_discovery_events(&self) -> impl Stream<Item = cache::ArcDiscoveryEvent> {
         let caches = self.caches();
-        let sub = self.subscriber.entity();
-        let topic = self.discovery_event_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.discovery_event_topic);
         let waitset = Arc::clone(&self.shared_waitset);
         async_stream::stream! {
-            let reader = match DataReader::with_qos(sub, topic, None) {
+            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
                 Ok(r) => r,
                 Err(e) => {
                     tracing::error!(error = %e, "DataReader::with_qos(DiscoveryEvent) falhou; stream encerrado");
@@ -1367,8 +1322,8 @@ impl DataSpace {
         listener: &cyclonedds::Listener,
     ) -> DataReader<AgentState> {
         DataReader::with_qos_and_listener(
-            self.subscriber.entity(),
-            self.agents_topic.entity(),
+            &self.subscriber,
+            &self.agents_topic,
             Some(qos),
             Some(listener),
         )
@@ -1382,8 +1337,8 @@ impl DataSpace {
         listener: &cyclonedds::Listener,
     ) -> DataReader<TaskOutput> {
         DataReader::with_qos_and_listener(
-            self.subscriber.entity(),
-            self.outputs_topic.entity(),
+            &self.subscriber,
+            &self.outputs_topic,
             Some(qos),
             Some(listener),
         )
@@ -1392,33 +1347,20 @@ impl DataSpace {
 
     /// Writer de `AgentRegistry` com QoS custom (testes do monitor).
     pub fn agents_writer_with(&self, qos: &cyclonedds::Qos) -> DataWriter<AgentState> {
-        DataWriter::with_qos(
-            self.publisher.entity(),
-            self.agents_topic.entity(),
-            Some(qos),
-        )
-        .expect("writer AgentRegistry")
+        DataWriter::with_qos(&self.publisher, &self.agents_topic, Some(qos))
+            .expect("writer AgentRegistry")
     }
 
     /// Writer de `TaskOutput` com QoS custom (testes do monitor).
     pub fn outputs_writer_with(&self, qos: &cyclonedds::Qos) -> DataWriter<TaskOutput> {
-        DataWriter::with_qos(
-            self.publisher.entity(),
-            self.outputs_topic.entity(),
-            Some(qos),
-        )
-        .expect("writer TaskOutput")
+        DataWriter::with_qos(&self.publisher, &self.outputs_topic, Some(qos))
+            .expect("writer TaskOutput")
     }
 
     /// Writer de `Tasks` com QoS custom (ex.: papel cliente=10 para submissões
     /// da API — se fosse 200, os claims dos agentes perderiam a arbitragem).
     pub fn tasks_writer_with(&self, qos: &cyclonedds::Qos) -> DataWriter<Task> {
-        DataWriter::with_qos(
-            self.publisher.entity(),
-            self.tasks_topic.entity(),
-            Some(qos),
-        )
-        .expect("writer Tasks")
+        DataWriter::with_qos(&self.publisher, &self.tasks_topic, Some(qos)).expect("writer Tasks")
     }
 }
 
@@ -1437,18 +1379,10 @@ impl DataSpace {
         // caso algum refactor futuro passe a rotear o claim loop por aqui.
         let tw = build_tasks_writer_pool(&self.publisher, &self.tasks_topic, s)
             .expect("writers Tasks do pool");
-        let aw = DataWriter::with_qos(
-            self.publisher.entity(),
-            self.agents_topic.entity(),
-            Some(&q_agents),
-        )
-        .expect("writer AgentRegistry do pool");
-        let ow = DataWriter::with_qos(
-            self.publisher.entity(),
-            self.outputs_topic.entity(),
-            Some(&q_outputs),
-        )
-        .expect("writer TaskOutput do pool");
+        let aw = DataWriter::with_qos(&self.publisher, &self.agents_topic, Some(&q_agents))
+            .expect("writer AgentRegistry do pool");
+        let ow = DataWriter::with_qos(&self.publisher, &self.outputs_topic, Some(&q_outputs))
+            .expect("writer TaskOutput do pool");
 
         writer_pool::WriterPool::new(n_workers, capacity, writer_pool::make_write_fn(tw, aw, ow))
     }

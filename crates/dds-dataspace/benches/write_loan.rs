@@ -11,7 +11,7 @@
 #![cfg(feature = "dds")]
 
 use criterion::{criterion_group, criterion_main, Criterion};
-use cyclonedds::{DataWriter, DdsEntity, DomainParticipant, Publisher, Topic};
+use cyclonedds::{DataWriter, DomainParticipant, Publisher, Topic};
 use dds_contract::generated::dds_llm_orchestrator::TaskOutput;
 use dds_dataspace::writer_pool::write_output_loan;
 use std::hint::black_box;
@@ -35,10 +35,9 @@ fn now_ns() -> u64 {
 
 fn setup() -> Fixture {
     let dp = DomainParticipant::new(DOMAIN).expect("participant");
-    let topic =
-        Topic::<TaskOutput>::new(dp.entity(), "bench.write_loan.TaskOutput").expect("topic");
-    let publisher = Publisher::new(dp.entity()).expect("publisher");
-    let writer = DataWriter::with_qos(publisher.entity(), topic.entity(), None).expect("writer");
+    let topic = Topic::<TaskOutput>::new(&dp, "bench.write_loan.TaskOutput").expect("topic");
+    let publisher = Publisher::new(&dp).expect("publisher");
+    let writer = DataWriter::with_qos(&publisher, &topic, None).expect("writer");
     Fixture {
         _dp: dp,
         _topic: topic,

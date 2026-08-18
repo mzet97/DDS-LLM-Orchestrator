@@ -20,7 +20,7 @@
 //! blocking-pool por ciclo de `wait_async`) drena os cookies disparados e
 //! notifica só os registros correspondentes.
 
-use cyclonedds::{DdsEntity, DdsResult, WaitSet};
+use cyclonedds::{DdsEntity, DdsResult, DomainParticipant, WaitSet};
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -49,8 +49,8 @@ pub struct SharedWaitSet {
 impl SharedWaitSet {
     /// Cria o WaitSet compartilhado e o driver (1 task; 1 thread de
     /// blocking-pool ocupada por ciclo de `wait_async`, não por stream).
-    pub fn new(participant: &impl DdsEntity) -> DdsResult<Arc<Self>> {
-        let waitset = Arc::new(WaitSet::new(participant.entity())?);
+    pub fn new(participant: &DomainParticipant) -> DdsResult<Arc<Self>> {
+        let waitset = Arc::new(WaitSet::new(participant)?);
         let notifiers: Arc<DashMap<i64, Arc<Notify>>> = Arc::new(DashMap::new());
         let driver_restarts = Arc::new(AtomicU64::new(0));
 

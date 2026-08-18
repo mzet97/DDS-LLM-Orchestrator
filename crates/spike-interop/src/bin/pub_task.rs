@@ -3,7 +3,7 @@
 //! Uso: cargo run --bin pub-task -- [--count N] [--domain ID]
 
 use anyhow::Result;
-use cyclonedds::{DataWriter, DdsEntity, DomainParticipant, Publisher, Topic};
+use cyclonedds::{DataWriter, DomainParticipant, Publisher, Topic};
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use dds_contract::topics;
 use spike_interop::profiles;
@@ -37,9 +37,9 @@ fn main() -> Result<()> {
     let dp = DomainParticipant::new(domain_id)?;
     let qos = profiles::tasks(Some(200))?; // strength 200 > 100 do writer ocioso do stub Python
 
-    let topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos))?;
-    let publisher = Publisher::new(dp.entity())?;
-    let writer = DataWriter::with_qos(publisher.entity(), topic.entity(), Some(&qos))?;
+    let topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos))?;
+    let publisher = Publisher::new(&dp)?;
+    let writer = DataWriter::with_qos(&publisher, &topic, Some(&qos))?;
 
     // Aguarda discovery/SEDp casar com os readers (QoS Volatile: amostras
     // escritas antes do match são descartadas).

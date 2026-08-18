@@ -8,9 +8,7 @@
 //! Saída: estatísticas (min/mean/p50/p95/p99/max/stdev) + benchmark_rust_results.json
 
 use anyhow::Result;
-use cyclonedds::{
-    DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, Subscriber, Topic,
-};
+use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 use dds_contract::generated::dds_llm_orchestrator::{Task, TaskOutput};
 use dds_contract::topics;
 use spike_interop::profiles;
@@ -71,15 +69,12 @@ fn main() -> Result<()> {
             let dp = DomainParticipant::new(domain_id)?;
             let qos_t = profiles::tasks(None)?;
             let qos_o = profiles::task_output(Some(200))?;
-            let t_topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos_t))?;
-            let o_topic =
-                Topic::<TaskOutput>::with_qos(dp.entity(), topics::TASK_OUTPUT, Some(&qos_o))?;
-            let sub = Subscriber::new(dp.entity())?;
-            let reader =
-                DataReader::<Task>::with_qos(sub.entity(), t_topic.entity(), Some(&qos_t))?;
-            let pub_ = Publisher::new(dp.entity())?;
-            let writer =
-                DataWriter::<TaskOutput>::with_qos(pub_.entity(), o_topic.entity(), Some(&qos_o))?;
+            let t_topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos_t))?;
+            let o_topic = Topic::<TaskOutput>::with_qos(&dp, topics::TASK_OUTPUT, Some(&qos_o))?;
+            let sub = Subscriber::new(&dp)?;
+            let reader = DataReader::<Task>::with_qos(&sub, &t_topic, Some(&qos_t))?;
+            let pub_ = Publisher::new(&dp)?;
+            let writer = DataWriter::<TaskOutput>::with_qos(&pub_, &o_topic, Some(&qos_o))?;
             let mut echoed: HashSet<String> = HashSet::new();
             while !stop.load(Ordering::Relaxed) {
                 if let Ok(samples) = reader.take() {
@@ -113,12 +108,12 @@ fn main() -> Result<()> {
     let dp = DomainParticipant::new(domain_id)?;
     let qos_t = profiles::tasks(Some(200))?;
     let qos_o = profiles::task_output(None)?;
-    let t_topic = Topic::<Task>::with_qos(dp.entity(), topics::TASKS, Some(&qos_t))?;
-    let o_topic = Topic::<TaskOutput>::with_qos(dp.entity(), topics::TASK_OUTPUT, Some(&qos_o))?;
-    let pub_ = Publisher::new(dp.entity())?;
-    let writer = DataWriter::<Task>::with_qos(pub_.entity(), t_topic.entity(), Some(&qos_t))?;
-    let sub = Subscriber::new(dp.entity())?;
-    let reader = DataReader::<TaskOutput>::with_qos(sub.entity(), o_topic.entity(), Some(&qos_o))?;
+    let t_topic = Topic::<Task>::with_qos(&dp, topics::TASKS, Some(&qos_t))?;
+    let o_topic = Topic::<TaskOutput>::with_qos(&dp, topics::TASK_OUTPUT, Some(&qos_o))?;
+    let pub_ = Publisher::new(&dp)?;
+    let writer = DataWriter::<Task>::with_qos(&pub_, &t_topic, Some(&qos_t))?;
+    let sub = Subscriber::new(&dp)?;
+    let reader = DataReader::<TaskOutput>::with_qos(&sub, &o_topic, Some(&qos_o))?;
 
     // Settle: discovery/SEDp + match do par echo.
     std::thread::sleep(Duration::from_millis(3000));

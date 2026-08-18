@@ -3,9 +3,7 @@
 //! Uso: cargo run --bin llm-client [--domain ID] [--timeout SEC]
 
 use anyhow::Result;
-use cyclonedds::{
-    DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, Subscriber, Topic,
-};
+use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 use dds_contract::generated::orchestrator::{LLMInferenceRequest, LLMInferenceResult};
 use dds_contract::topics;
 use spike_interop::profiles;
@@ -42,20 +40,15 @@ fn main() -> Result<()> {
     let qos = profiles::llm()?;
 
     // Writer para LLMInferenceRequest
-    let req_topic =
-        Topic::<LLMInferenceRequest>::with_qos(dp.entity(), topics::LLM_REQUEST, Some(&qos))?;
-    let publisher = Publisher::new(dp.entity())?;
-    let req_writer = DataWriter::with_qos(publisher.entity(), req_topic.entity(), Some(&qos))?;
+    let req_topic = Topic::<LLMInferenceRequest>::with_qos(&dp, topics::LLM_REQUEST, Some(&qos))?;
+    let publisher = Publisher::new(&dp)?;
+    let req_writer = DataWriter::with_qos(&publisher, &req_topic, Some(&qos))?;
 
     // Reader para LLMInferenceResult
-    let res_topic =
-        Topic::<LLMInferenceResult>::with_qos(dp.entity(), topics::LLM_RESULT, Some(&qos))?;
-    let subscriber = Subscriber::new(dp.entity())?;
-    let res_reader = DataReader::<LLMInferenceResult>::with_qos(
-        subscriber.entity(),
-        res_topic.entity(),
-        Some(&qos),
-    )?;
+    let res_topic = Topic::<LLMInferenceResult>::with_qos(&dp, topics::LLM_RESULT, Some(&qos))?;
+    let subscriber = Subscriber::new(&dp)?;
+    let res_reader =
+        DataReader::<LLMInferenceResult>::with_qos(&subscriber, &res_topic, Some(&qos))?;
 
     let now_ns = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos() as u64;
 
