@@ -75,7 +75,6 @@ async fn one_call<E: Engine>(engine: &E, id: &str) -> Duration {
 /// C concorrências de chamadas simultâneas; retorna tempos por chamada.
 async fn measure_concurrency(engine: &DdsEngine, c: usize, tag: &str) -> Vec<Duration> {
     let mut handles = Vec::new();
-    let engine = &*engine;
     for i in 0..c {
         let id = format!("{tag}-{i}");
         handles.push(async move { one_call(engine, &id).await });

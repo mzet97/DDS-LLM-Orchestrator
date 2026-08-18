@@ -13,6 +13,7 @@
 //! ```
 
 use agent::claim::Specialization;
+use agent::engine::ProviderConstraint;
 #[cfg(not(feature = "dds"))]
 use agent::Agent;
 use agent::AgentConfig;
@@ -51,6 +52,10 @@ struct Args {
     /// llama-server HTTP URL (for http engine)
     #[arg(long, default_value = "http://localhost:8082")]
     llama_url: String,
+
+    /// Restrição de provedor publicada em `LLM.InferenceRequest`.
+    #[arg(long, value_enum, default_value = "local-only")]
+    provider_constraint: ProviderConstraint,
 }
 
 fn parse_specialization(s: &str) -> Specialization {
@@ -107,14 +112,36 @@ async fn main() -> Result<()> {
         runtime.run(engine).await?;
     } else if args.engine == "http" {
         use agent::engine_http::HttpEngine;
-        let engine = Arc::new(HttpEngine::new(&args.llama_url));
+        if args.provider_constraint == ProviderConstraint::CloudOnly {
+            anyhow::bail!("engine http é local-only; use o LLM gateway para cloud");
+        }
+        let engine = Arc::new(HttpEngine::new(&args.llama_url)?);
         runtime.run(engine).await?;
     } else {
-        let engine = Arc::new(DdsEngine::new(args.dds_domain, args.agent_id)?);
+        let engine = Arc::new(DdsEngine::new_with_constraint(
+            args.dds_domain,
+            args.agent_id,
+            args.provider_constraint,
+        )?);
         runtime.run(engine).await?;
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_defaults_to_local_only_and_accepts_cloud_only() {
+        let defaults = Args::try_parse_from(["agent"]).unwrap();
+        assert_eq!(defaults.provider_constraint, ProviderConstraint::LocalOnly);
+
+        let explicit =
+            Args::try_parse_from(["agent", "--provider-constraint", "cloud-only"]).unwrap();
+        assert_eq!(explicit.provider_constraint, ProviderConstraint::CloudOnly);
+    }
 }
 
 #[cfg(not(feature = "dds"))]

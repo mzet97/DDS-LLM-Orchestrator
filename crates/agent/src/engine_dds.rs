@@ -4,11 +4,9 @@
 //! correlacionados por `request_id`. Cada chamada cria readers dedicados
 //! ('static, sem corrida de take entre slots concorrentes).
 
-use crate::engine::{Chunk, Engine, EngineError, InferRequest};
+use crate::engine::{Chunk, Engine, EngineError, InferRequest, ProviderConstraint};
 use async_stream::stream;
-use cyclonedds::{
-    DataReader, DataWriter, DdsEntity, DomainParticipant, Publisher, Subscriber, Topic,
-};
+use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 use dds_contract::generated::orchestrator::{
     LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
 };
@@ -16,6 +14,7 @@ use dds_contract::topics;
 use dds_dataspace::qos::profiles;
 use futures_core::Stream;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 fn now_ns() -> u64 {
@@ -31,51 +30,59 @@ fn now_ns() -> u64 {
 pub struct DdsEngine {
     #[allow(dead_code)]
     participant: DomainParticipant,
-    publisher: Publisher,
-    subscriber: Subscriber,
-    req_topic: Topic<LLMInferenceRequest>,
-    res_topic: Topic<LLMInferenceResult>,
-    err_topic: Topic<LLMInferenceError>,
+    subscriber: Arc<Subscriber>,
+    request_writer: Arc<DataWriter<LLMInferenceRequest>>,
+    res_topic: Arc<Topic<LLMInferenceResult>>,
+    err_topic: Arc<Topic<LLMInferenceError>>,
     agent_id: String,
+    provider_constraint: ProviderConstraint,
 }
 
 impl DdsEngine {
     pub fn new(domain_id: u32, agent_id: String) -> Result<Self, EngineError> {
+        Self::new_with_constraint(domain_id, agent_id, ProviderConstraint::default())
+    }
+
+    pub fn new_with_constraint(
+        domain_id: u32,
+        agent_id: String,
+        provider_constraint: ProviderConstraint,
+    ) -> Result<Self, EngineError> {
         let err = |e: cyclonedds::DdsError| EngineError::DdsError(e.to_string());
         let participant = DomainParticipant::new(domain_id).map_err(err)?;
-        let publisher = Publisher::new(participant.entity()).map_err(err)?;
-        let subscriber = Subscriber::new(participant.entity()).map_err(err)?;
+        let publisher = Publisher::new(&participant).map_err(err)?;
+        let subscriber = Subscriber::new(&participant).map_err(err)?;
 
         let qos = profiles::llm().map_err(err)?;
         let qos_result = profiles::llm_result().map_err(err)?;
-        let req_topic = Topic::<LLMInferenceRequest>::with_qos(
-            participant.entity(),
-            topics::LLM_REQUEST,
-            Some(&qos),
-        )
-        .map_err(err)?;
+        let req_topic =
+            Topic::<LLMInferenceRequest>::with_qos(&participant, topics::LLM_REQUEST, Some(&qos))
+                .map_err(err)?;
         let res_topic = Topic::<LLMInferenceResult>::with_qos(
-            participant.entity(),
+            &participant,
             topics::LLM_RESULT,
             Some(&qos_result),
         )
         .map_err(err)?;
-        let err_topic = Topic::<LLMInferenceError>::with_qos(
-            participant.entity(),
-            topics::LLM_ERROR,
-            Some(&qos),
-        )
-        .map_err(err)?;
+        let err_topic =
+            Topic::<LLMInferenceError>::with_qos(&participant, topics::LLM_ERROR, Some(&qos))
+                .map_err(err)?;
+        let request_writer =
+            DataWriter::with_qos(&publisher, &req_topic, Some(&qos)).map_err(err)?;
 
         Ok(Self {
             participant,
-            publisher,
-            subscriber,
-            req_topic,
-            res_topic,
-            err_topic,
+            subscriber: Arc::new(subscriber),
+            request_writer: Arc::new(request_writer),
+            res_topic: Arc::new(res_topic),
+            err_topic: Arc::new(err_topic),
             agent_id,
+            provider_constraint,
         })
+    }
+
+    pub const fn provider_constraint(&self) -> ProviderConstraint {
+        self.provider_constraint
     }
 }
 
@@ -84,12 +91,12 @@ impl Engine for DdsEngine {
         &self,
         req: InferRequest,
     ) -> Pin<Box<dyn Stream<Item = Result<Chunk, EngineError>> + Send>> {
-        let publisher = self.publisher.entity();
-        let subscriber = self.subscriber.entity();
-        let req_topic = self.req_topic.entity();
-        let res_topic = self.res_topic.entity();
-        let err_topic = self.err_topic.entity();
+        let subscriber = Arc::clone(&self.subscriber);
+        let req_writer = Arc::clone(&self.request_writer);
+        let res_topic = Arc::clone(&self.res_topic);
+        let err_topic = Arc::clone(&self.err_topic);
         let agent_id = self.agent_id.clone();
+        let provider_constraint = self.provider_constraint;
 
         Box::pin(stream! {
             use futures_util::StreamExt;
@@ -111,21 +118,14 @@ impl Engine for DdsEngine {
                     return;
                 }
             };
-            let req_writer = match DataWriter::with_qos(publisher, req_topic, Some(&qos)) {
-                Ok(w) => w,
-                Err(e) => {
-                    yield Err(EngineError::DdsError(e.to_string()));
-                    return;
-                }
-            };
-            let res_reader = match DataReader::<LLMInferenceResult>::with_qos(subscriber, res_topic, Some(&qos_result)) {
+            let res_reader = match DataReader::<LLMInferenceResult>::with_qos(&subscriber, &res_topic, Some(&qos_result)) {
                 Ok(r) => r,
                 Err(e) => {
                     yield Err(EngineError::DdsError(e.to_string()));
                     return;
                 }
             };
-            let err_reader = match DataReader::<LLMInferenceError>::with_qos(subscriber, err_topic, Some(&qos)) {
+            let err_reader = match DataReader::<LLMInferenceError>::with_qos(&subscriber, &err_topic, Some(&qos)) {
                 Ok(r) => r,
                 Err(e) => {
                     yield Err(EngineError::DdsError(e.to_string()));
@@ -146,7 +146,7 @@ impl Engine for DdsEngine {
                 max_tokens: req.max_tokens,
                 stream: true,
                 security_level: 0,
-                provider_constraint: "ANY".into(),
+                provider_constraint: provider_constraint.as_idl_literal().into(),
                 created_at_ns: now_ns(),
             };
 

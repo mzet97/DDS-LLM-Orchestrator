@@ -29,6 +29,7 @@ fn now_ns() -> u64 {
 
 /// Janela de propagação para a confirmação de ownership (readback).
 const CONFIRM_DELAY: Duration = Duration::from_millis(250);
+const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout do ack do write final de TaskOutput (RUST-PROTO-005): se o pool
 /// não confirmar o `dds_write` do chunk final nesse prazo, a task vai para
@@ -226,29 +227,27 @@ impl AgentDds {
             return;
         }
 
-        // T-203: confirma ownership lendo o estado ARBITRADO após a janela de
-        // propagação. Usa `caches().read_task()` (upsert monotônico
-        // alimentado pelo próprio consumo de `stream_tasks()` deste loop de
-        // claim — Fase 5), NÃO `read_task_mesh()` (dds_read direto): esse
-        // último faz um scan linear de até 256 amostras *somadas entre TODAS
-        // as instâncias/tasks* no RHC do reader (`DataReader::read_impl`,
-        // `max_samples = 256` fixo), e como o RHC nunca purga tasks
-        // concluídas, isso satura em ~256/(amostras por task) tasks
-        // processadas (medido: parede real em ~65 tasks, com ~4 amostras de
-        // status por task) — depois disso a confirmação simplesmente não
-        // encontra mais a própria task no scan e todo claim subsequente
-        // "perde" a arbitragem, mesmo sendo o único agente. O cache não sofre
-        // esse limite (é um DashMap por task_id, sem cap de leitura) e ainda
-        // reflete o estado ARBITRADO de verdade: ownership Exclusive é
-        // resolvido pelo próprio DDS antes da amostra sequer chegar a
-        // qualquer reader — amostras perdedoras nunca aparecem em
-        // `stream_tasks()`, então o que está no cache já é o vencedor.
-        tokio::time::sleep(CONFIRM_DELAY).await;
-        let mine = self
-            .dataspace
-            .caches()
-            .read_task(&task_id)
-            .is_some_and(|current| claim::confirm_ownership(&current, &claim_cfg.agent_id));
+        // T-203: confirma ownership no RHC por handle de instância. Essa leitura
+        // independe do stream de ingestão, que pode estar sob backpressure com
+        // a fila cheia, e não varre o limite global de 256 amostras.
+        let confirmation_deadline = Instant::now() + CONFIRM_TIMEOUT;
+        let mine = loop {
+            tokio::time::sleep(CONFIRM_DELAY).await;
+            match self.dataspace.read_task_mesh(&task_id) {
+                Err(e) => {
+                    tracing::warn!(task_id, error = %e, "claim: falha ao confirmar ownership");
+                    if Instant::now() >= confirmation_deadline {
+                        break false;
+                    }
+                }
+                Ok(Some(current)) if claim::confirm_ownership(&current, &claim_cfg.agent_id) => {
+                    break true;
+                }
+                Ok(Some(current)) if current.status != 0 => break false,
+                Ok(_) if Instant::now() >= confirmation_deadline => break false,
+                Ok(_) => {}
+            }
+        };
         if !mine {
             tracing::info!(task_id, "claim perdido na arbitragem (outro agente venceu)");
             self.agent.unmark_claimed(&task_id).await;

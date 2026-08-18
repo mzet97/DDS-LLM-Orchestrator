@@ -49,11 +49,34 @@ struct ChatResponse {
 }
 
 impl HttpEngine {
-    pub fn new(base_url: &str) -> Self {
-        Self {
-            client: reqwest::Client::new(),
-            base_url: base_url.trim_end_matches('/').to_string(),
+    pub fn new(base_url: &str) -> Result<Self, EngineError> {
+        let parsed = reqwest::Url::parse(base_url)
+            .map_err(|error| EngineError::InferenceFailed(error.to_string()))?;
+        let host = parsed
+            .host_str()
+            .ok_or_else(|| EngineError::InferenceFailed("llama URL sem host".into()))?;
+        let host = host.trim_start_matches('[').trim_end_matches(']');
+        let loopback = host.eq_ignore_ascii_case("localhost")
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|address| address.is_loopback());
+        if !matches!(parsed.scheme(), "http" | "https")
+            || !loopback
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err(EngineError::InferenceFailed(
+                "engine HTTP aceita somente URLs loopback http(s) sem credenciais".into(),
+            ));
         }
+        let client = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .build()
+            .map_err(|error| EngineError::InferenceFailed(error.to_string()))?;
+        Ok(Self {
+            client,
+            base_url: base_url.trim_end_matches('/').to_string(),
+        })
     }
 }
 
@@ -114,5 +137,60 @@ impl Engine for HttpEngine {
                 tokens_completion,
             });
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn http_engine_accepts_only_loopback_urls() {
+        assert!(HttpEngine::new("http://127.0.0.1:8082").is_ok());
+        assert!(HttpEngine::new("https://[::1]:8082").is_ok());
+        assert!(HttpEngine::new("https://api.example.com").is_err());
+        assert!(HttpEngine::new("http://user:pass@localhost:8082").is_err());
+    }
+
+    #[tokio::test]
+    async fn http_engine_does_not_follow_redirects() {
+        let target = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target_address = target.local_addr().unwrap();
+        let redirect = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let redirect_address = redirect.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = redirect.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: http://{target_address}/secret\r\nContent-Length: 0\r\n\r\n"
+                    )
+                    .as_bytes(),
+                )
+                .await
+                .unwrap();
+        });
+        let engine = HttpEngine::new(&format!("http://{redirect_address}")).unwrap();
+        let mut stream = engine.infer_stream(InferRequest {
+            request_id: "redirect".into(),
+            model_name: "test".into(),
+            messages_json: "[]".into(),
+            temperature: 0.0,
+            max_tokens: 1,
+            stream: false,
+            timeout_ms: 1_000,
+        });
+
+        assert!(stream.next().await.unwrap().is_err());
+        server.await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(100), target.accept())
+                .await
+                .is_err()
+        );
     }
 }

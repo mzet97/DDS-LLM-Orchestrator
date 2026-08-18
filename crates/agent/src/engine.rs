@@ -7,6 +7,25 @@ use async_stream::stream;
 use futures_core::Stream;
 use std::pin::Pin;
 
+/// Restrição de roteamento serializada no campo IDL `provider_constraint` (REQ-606).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum ProviderConstraint {
+    Any,
+    #[default]
+    LocalOnly,
+    CloudOnly,
+}
+
+impl ProviderConstraint {
+    pub const fn as_idl_literal(self) -> &'static str {
+        match self {
+            Self::Any => "ANY",
+            Self::LocalOnly => "LOCAL_ONLY",
+            Self::CloudOnly => "CLOUD_ONLY",
+        }
+    }
+}
+
 /// Chunk de saída do streaming.
 #[derive(Debug, Clone)]
 pub struct Chunk {
@@ -92,5 +111,22 @@ impl Engine for MockEngine {
                 });
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProviderConstraint;
+
+    #[test]
+    fn provider_constraint_uses_the_three_idl_literals() {
+        assert_eq!(ProviderConstraint::Any.as_idl_literal(), "ANY");
+        assert_eq!(ProviderConstraint::LocalOnly.as_idl_literal(), "LOCAL_ONLY");
+        assert_eq!(ProviderConstraint::CloudOnly.as_idl_literal(), "CLOUD_ONLY");
+    }
+
+    #[test]
+    fn provider_constraint_defaults_to_local_only() {
+        assert_eq!(ProviderConstraint::default(), ProviderConstraint::LocalOnly);
     }
 }
