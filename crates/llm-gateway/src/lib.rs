@@ -47,6 +47,43 @@ impl ProviderConstraint {
             Self::CloudOnly => provider == Provider::Cloud,
         }
     }
+
+    pub const fn as_literal(self) -> &'static str {
+        match self {
+            Self::Any => "ANY",
+            Self::LocalOnly => "LOCAL_ONLY",
+            Self::CloudOnly => "CLOUD_ONLY",
+        }
+    }
+}
+
+impl TryFrom<&str> for ProviderConstraint {
+    type Error = GatewayError;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        match value {
+            "ANY" => Ok(Self::Any),
+            "LOCAL_ONLY" => Ok(Self::LocalOnly),
+            "CLOUD_ONLY" => Ok(Self::CloudOnly),
+            other => Err(GatewayError::InvalidProviderConstraint(other.into())),
+        }
+    }
+}
+
+fn cache_key(request: &LLMInferenceRequest, constraint: ProviderConstraint) -> String {
+    format!(
+        "{}|{}:{}|{}:{}|{}:{}|{}|{}|{}",
+        constraint.as_literal(),
+        request.agent_id.len(),
+        request.agent_id,
+        request.model_name.len(),
+        request.model_name,
+        request.messages_json.len(),
+        request.messages_json,
+        request.temperature.to_bits(),
+        request.max_tokens,
+        request.security_level,
+    )
 }
 
 /// Erro do gateway.
@@ -60,6 +97,8 @@ pub enum GatewayError {
     InferenceFailed(String),
     #[error("timeout: {0}")]
     Timeout(String),
+    #[error("invalid provider constraint: {0}")]
+    InvalidProviderConstraint(String),
 }
 
 /// Métricas do gateway.
@@ -112,13 +151,11 @@ impl RateLimiter {
 
     pub fn try_acquire(&self) -> bool {
         self.refill();
-        let current = self.tokens.load(Ordering::Relaxed);
-        if current > 0 {
-            self.tokens.fetch_sub(1, Ordering::Relaxed);
-            true
-        } else {
-            false
-        }
+        self.tokens
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |tokens| {
+                tokens.checked_sub(1)
+            })
+            .is_ok()
     }
 
     fn refill(&self) {
@@ -130,9 +167,11 @@ impl RateLimiter {
         let elapsed = now.duration_since(*last).as_secs_f64();
         let new_tokens = (elapsed * self.refill_rate) as u32;
         if new_tokens > 0 {
-            let current = self.tokens.load(Ordering::Relaxed);
-            let new_val = std::cmp::min(current + new_tokens, self.max_tokens);
-            self.tokens.store(new_val, Ordering::Relaxed);
+            let _ = self
+                .tokens
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                    Some(current.saturating_add(new_tokens).min(self.max_tokens))
+                });
             *last = now;
         }
     }
@@ -201,7 +240,7 @@ impl LlmGateway {
     /// Processa uma requisição LLM.
     pub async fn process(
         &self,
-        request: LLMInferenceRequest,
+        _request: LLMInferenceRequest,
     ) -> Result<LLMInferenceResult, GatewayError> {
         self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
 
@@ -211,13 +250,6 @@ impl LlmGateway {
             return Err(GatewayError::RateLimited(
                 "gateway saturado, tente novamente".into(),
             ));
-        }
-
-        // Cache check
-        let cache_key = format!("{}:{}", request.agent_id, request.model_name);
-        if let Some(cached) = self.cache.get(&cache_key) {
-            self.metrics.cache_hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(cached);
         }
 
         // Acquire worker semaphore
@@ -265,6 +297,7 @@ impl GatewayError {
             GatewayError::ProviderUnavailable(m) => (503, m.clone(), true),
             GatewayError::InferenceFailed(m) => (500, m.clone(), false),
             GatewayError::Timeout(m) => (504, m.clone(), true),
+            GatewayError::InvalidProviderConstraint(m) => (400, m.clone(), false),
         };
         LLMInferenceError {
             request_id: request_id.into(),
@@ -306,19 +339,16 @@ impl LlmGateway {
         request: LLMInferenceRequest,
     ) -> Result<LLMInferenceResult, GatewayError> {
         self.metrics.total_requests.fetch_add(1, Ordering::Relaxed);
+        let constraint = ProviderConstraint::try_from(request.provider_constraint.as_str())?;
 
         // Cache ANTES do rate limit (T-422): cache hit não consome quota.
-        let cache_key = format!(
-            "{}:{}:{}:{}:{}",
-            request.provider_constraint,
-            request.model_name,
-            request.messages_json,
-            request.temperature,
-            request.max_tokens
-        );
-        if let Some(cached) = self.cache.get(&cache_key) {
-            self.metrics.cache_hits.fetch_add(1, Ordering::Relaxed);
-            return Ok(cached);
+        let cache_key = (!request.stream).then(|| cache_key(&request, constraint));
+        if let Some(key) = cache_key.as_deref() {
+            if let Some(mut cached) = self.cache.get(key) {
+                self.metrics.cache_hits.fetch_add(1, Ordering::Relaxed);
+                cached.request_id = request.request_id.clone();
+                return Ok(cached);
+            }
         }
 
         // Rate limit → 429 retriable (T-422)
@@ -330,8 +360,8 @@ impl LlmGateway {
         }
 
         // Roteamento por constraint (T-421)
-        let provider = providers.route(&request.provider_constraint)?;
-        let provider_name = providers.provider_name_from_constraint(&request.provider_constraint);
+        let provider = providers.route(constraint)?;
+        let provider_name = providers.provider_name_from_constraint(constraint);
         let _permit = self
             .worker_semaphore
             .acquire()
@@ -342,8 +372,8 @@ impl LlmGateway {
         let primary_result = provider.infer(&request).await;
         match primary_result {
             Ok(result) => {
-                if !request.stream {
-                    self.cache.insert(cache_key, result.clone());
+                if let Some(key) = cache_key.as_ref() {
+                    self.cache.insert(key.clone(), result.clone());
                 }
                 Ok(result)
             }
@@ -363,6 +393,9 @@ impl LlmGateway {
 
                 let mut last_err = primary_err;
                 for target in failover_targets.iter().filter(|t| t.priority > 0) {
+                    if !constraint.matches(target.provider.kind()) {
+                        continue;
+                    }
                     if !target.circuit_breaker.is_available() {
                         tracing::debug!(
                             model = %target.model,
@@ -392,8 +425,8 @@ impl LlmGateway {
                                 model = %target.model,
                                 "Failover bem-sucedido"
                             );
-                            if !request.stream {
-                                self.cache.insert(cache_key, result.clone());
+                            if let Some(key) = cache_key.as_ref() {
+                                self.cache.insert(key.clone(), result.clone());
                             }
                             return Ok(result);
                         }
@@ -469,15 +502,18 @@ impl GatewayProviders {
             .any(|t| t.circuit_breaker.is_available())
     }
 
-    pub fn route(&self, constraint: &str) -> Result<Arc<dyn LlmProvider>, GatewayError> {
+    pub fn route(
+        &self,
+        constraint: ProviderConstraint,
+    ) -> Result<Arc<dyn LlmProvider>, GatewayError> {
         match constraint {
-            "LOCAL_ONLY" => self.local.clone().ok_or_else(|| {
+            ProviderConstraint::LocalOnly => self.local.clone().ok_or_else(|| {
                 GatewayError::ProviderUnavailable("provider local indisponível".into())
             }),
-            "CLOUD_ONLY" => self.cloud.clone().ok_or_else(|| {
+            ProviderConstraint::CloudOnly => self.cloud.clone().ok_or_else(|| {
                 GatewayError::ProviderUnavailable("provider cloud indisponível".into())
             }),
-            _ => self
+            ProviderConstraint::Any => self
                 .local
                 .clone()
                 .or_else(|| self.cloud.clone())
@@ -488,11 +524,10 @@ impl GatewayProviders {
     }
 
     /// Determine provider name from constraint for failover lookup.
-    pub fn provider_name_from_constraint(&self, constraint: &str) -> &str {
+    pub fn provider_name_from_constraint(&self, constraint: ProviderConstraint) -> &str {
         match constraint {
-            "LOCAL_ONLY" => "local",
-            "CLOUD_ONLY" => "cloud",
-            _ => "local", // default
+            ProviderConstraint::LocalOnly | ProviderConstraint::Any => "local",
+            ProviderConstraint::CloudOnly => "cloud",
         }
     }
 }

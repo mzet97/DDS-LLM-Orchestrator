@@ -4,7 +4,7 @@
 use dds_contract::generated::orchestrator::LLMInferenceRequest;
 use llm_gateway::{
     CircuitBreaker, FailoverTarget, GatewayError, GatewayProviders, LlmGateway, MockProvider,
-    Provider,
+    Provider, RateLimiter,
 };
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -50,6 +50,89 @@ fn failing_mock(kind: Provider) -> Arc<MockProvider> {
         calls: Arc::new(AtomicU64::new(0)),
         fail: true,
     })
+}
+
+#[test]
+fn rate_limiter_never_grants_one_token_twice() {
+    let limiter = Arc::new(RateLimiter::new(1, 0.0));
+    let barrier = Arc::new(std::sync::Barrier::new(32));
+    let mut threads = Vec::new();
+    for _ in 0..32 {
+        let limiter = Arc::clone(&limiter);
+        let barrier = Arc::clone(&barrier);
+        threads.push(std::thread::spawn(move || {
+            barrier.wait();
+            limiter.try_acquire()
+        }));
+    }
+    let grants = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .filter(|granted| *granted)
+        .count();
+    assert_eq!(grants, 1);
+}
+
+#[tokio::test]
+async fn cache_is_isolated_by_agent_and_unambiguous_at_field_boundaries() {
+    let (local, _, calls) = mock(Provider::Local, 0);
+    let providers = GatewayProviders::new(Some(local), None);
+    let gateway = LlmGateway::new(1, 100, 16);
+    let mut first = req("first", "LOCAL_ONLY");
+    first.agent_id = "victim".into();
+    first.model_name = "m".into();
+    first.messages_json = "[]".into();
+    first.temperature = 0.0;
+    first.max_tokens = 1;
+    gateway
+        .process_routed(&providers, first.clone())
+        .await
+        .unwrap();
+
+    let mut other_agent = first.clone();
+    other_agent.request_id = "other".into();
+    other_agent.agent_id = "other-agent".into();
+    gateway
+        .process_routed(&providers, other_agent)
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+
+    let mut left = first.clone();
+    left.request_id = "left".into();
+    left.agent_id = "a".into();
+    left.model_name = "b:c".into();
+    gateway.process_routed(&providers, left).await.unwrap();
+
+    let mut right = first;
+    right.request_id = "right".into();
+    right.agent_id = "a:b".into();
+    right.model_name = "c".into();
+    gateway.process_routed(&providers, right).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::Relaxed), 4);
+}
+
+#[tokio::test]
+async fn streaming_request_never_reuses_non_stream_cache_entry() {
+    let (local, _, calls) = mock(Provider::Local, 0);
+    let providers = GatewayProviders::new(Some(local), None);
+    let gateway = LlmGateway::new(1, 100, 16);
+    let first = req("non-stream", "LOCAL_ONLY");
+
+    gateway
+        .process_routed(&providers, first.clone())
+        .await
+        .unwrap();
+
+    let mut streaming = first;
+    streaming.request_id = "stream".into();
+    streaming.stream = true;
+    let result = gateway.process_routed(&providers, streaming).await.unwrap();
+
+    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert_eq!(result.content, "mock-stream");
+    assert_eq!(gateway.metrics().cache_hits.load(Ordering::Relaxed), 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -160,7 +243,7 @@ async fn t422_cache_rate_limit_e_429() {
 async fn t424_failover_sucesso() {
     // Primary: always fails. Failover target: always succeeds.
     let primary = failing_mock(Provider::Local);
-    let (failover, _, failover_calls) = mock(Provider::Cloud, 10);
+    let (failover, _, failover_calls) = mock(Provider::Local, 10);
 
     let mut providers = GatewayProviders::new(Some(primary), None);
     let cb = Arc::new(CircuitBreaker::new(3, Duration::from_secs(60)));
@@ -192,7 +275,7 @@ async fn t424_failover_sucesso() {
 async fn t424_failover_todos_falham() {
     // Both primary and failover fail.
     let primary = failing_mock(Provider::Local);
-    let failover = failing_mock(Provider::Cloud);
+    let failover = failing_mock(Provider::Local);
 
     let mut providers = GatewayProviders::new(Some(primary), None);
     let cb = Arc::new(CircuitBreaker::new(3, Duration::from_secs(60)));
@@ -222,7 +305,7 @@ async fn t424_failover_todos_falham() {
 async fn t424_failover_circuit_breaker_aberto() {
     // Primary fails. Failover target has circuit breaker open (too many failures).
     let primary = failing_mock(Provider::Local);
-    let (failover, _, failover_calls) = mock(Provider::Cloud, 10);
+    let (failover, _, failover_calls) = mock(Provider::Local, 10);
 
     let mut providers = GatewayProviders::new(Some(primary), None);
     let cb = Arc::new(CircuitBreaker::new(1, Duration::from_secs(60)));
@@ -259,8 +342,8 @@ async fn t424_failover_circuit_breaker_aberto() {
 async fn t424_failover_multiplos_targets_prioridade() {
     // Primary fails. Two failover targets: first has CB open, second succeeds.
     let primary = failing_mock(Provider::Local);
-    let failover1 = failing_mock(Provider::Cloud);
-    let (failover2, _, calls2) = mock(Provider::Cloud, 10);
+    let failover1 = failing_mock(Provider::Local);
+    let (failover2, _, calls2) = mock(Provider::Local, 10);
 
     let mut providers = GatewayProviders::new(Some(primary), None);
 
@@ -298,4 +381,33 @@ async fn t424_failover_multiplos_targets_prioridade() {
     );
     assert_eq!(calls2.load(Ordering::Relaxed), 1);
     assert_eq!(gw.metrics().failover_successes.load(Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn local_only_rejects_cloud_failover_and_unknown_constraints() {
+    let primary = failing_mock(Provider::Local);
+    let (cloud, _, cloud_calls) = mock(Provider::Cloud, 1);
+    let mut providers = GatewayProviders::new(Some(primary), None);
+    providers.register_failover(
+        "local",
+        vec![FailoverTarget {
+            provider: cloud,
+            model: "cloud-model".into(),
+            circuit_breaker: Arc::new(CircuitBreaker::new(3, Duration::from_secs(60))),
+            priority: 1,
+        }],
+    );
+    let gateway = LlmGateway::new(1, 100, 0);
+
+    assert!(gateway
+        .process_routed(&providers, req("local", "LOCAL_ONLY"))
+        .await
+        .is_err());
+    assert_eq!(cloud_calls.load(Ordering::Relaxed), 0);
+    assert!(matches!(
+        gateway
+            .process_routed(&providers, req("invalid", "LOCAL_OR_CLOUD"))
+            .await,
+        Err(GatewayError::InvalidProviderConstraint(_))
+    ));
 }
