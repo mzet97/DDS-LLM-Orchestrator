@@ -9,6 +9,8 @@
 //! - State machine para transições de task
 //! - Failover cascading (T-424)
 
+pub mod http;
+pub mod http_config;
 pub mod state_machine;
 
 #[cfg(feature = "dds")]
