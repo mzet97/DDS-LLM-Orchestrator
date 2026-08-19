@@ -7,11 +7,11 @@ license.workspace = true
 description = "Orquestrador: ingestão HTTP (axum) + scheduler/registry/selector + decisão de QoS (NFCM)."
 
 [dependencies]
-dds-dataspace = { path = "../dds-dataspace" }
-dds-contract = { path = "../dds-contract" }
-orch-common = { path = "../orch-common" }
-llm-gateway = { path = "../llm-gateway" }
-qos-nfcm = { path = "../qos-nfcm" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
+llm-gateway = { version = "=0.1.0", path = "../llm-gateway" }
+qos-nfcm = { version = "=0.1.0", path = "../qos-nfcm" }
 tokio = { workspace = true }
 axum = { workspace = true }
 async-trait = "0.1"

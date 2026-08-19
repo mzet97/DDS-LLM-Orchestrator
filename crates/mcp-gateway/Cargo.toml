@@ -7,10 +7,10 @@ license.workspace = true
 description = "MCP Gateway: expõe ferramentas (filesystem/github/web/database/ci-cd) via ToolCall.Request com governança por política. Substitui mcp_gateway/."
 
 [dependencies]
-dds-contract = { path = "../dds-contract" }
-dds-dataspace = { path = "../dds-dataspace" }
-orch-common = { path = "../orch-common" }
-policy-engine = { path = "../policy-engine" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
+policy-engine = { version = "=0.1.0", path = "../policy-engine" }
 cyclonedds = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
