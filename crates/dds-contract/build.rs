@@ -20,22 +20,10 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
-    // crates/dds-contract -> src/rust -> src -> tese -> third_party/llama.cpp_dds/...
-    //
-    // Repontado em 2026-07-20: `tese/src/llama_cpp/` está sendo descontinuado em favor
-    // de `tese/third_party/llama.cpp_dds/` (fonte atual da integração C++/DDS). O IDL
-    // V4 de `third_party/llama.cpp_dds` estava desatualizado (pré-WF-3, só 4 tipos,
-    // `#pragma keylist`) — foi re-sincronizado byte-a-byte com a versão de
-    // `src/llama_cpp` (14 tipos, `@key`, já validada contra SEDP do Python) antes deste
-    // repontamento. Ver OPTIMIZATION_AUDIT.md para o histórico da divergência.
-    let idl_dds = resolve(
-        &manifest_dir,
-        "../../../../third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl",
-    );
-    let idl_v4 = resolve(
-        &manifest_dir,
-        "../../../../third_party/llama.cpp_dds/dds/v4/idl/OrchestratorV4.idl",
-    );
+    // O snapshot auditado do contrato vive dentro da crate para que um checkout
+    // isolado do runtime não dependa do monorepo pai nem de um checkout C++ irmão.
+    let idl_dds = resolve(&manifest_dir, "idl/OrchestratorDDS.idl");
+    let idl_v4 = resolve(&manifest_dir, "idl/OrchestratorV4.idl");
 
     println!("cargo:rerun-if-changed={}", idl_dds.display());
     println!("cargo:rerun-if-changed={}", idl_v4.display());
