@@ -9,7 +9,8 @@ fn req(tool_name: &str, security_level: i32, request_id: &str) -> ToolCallReques
     ToolCallRequest {
         tool_name: tool_name.into(),
         security_level,
-        request_id: request_id.into(),
+        request_id: "correlation-id".into(),
+        requester_id: request_id.into(),
         ..Default::default()
     }
 }
@@ -43,8 +44,7 @@ fn security_level_acima_do_max_nega() {
     assert_eq!(engine.evaluate(&req("t", 0, "r")), ToolCallStatus::Allowed);
     assert_eq!(engine.evaluate(&req("t", 1, "r")), ToolCallStatus::Allowed);
     assert_eq!(engine.evaluate(&req("t", 2, "r")), ToolCallStatus::Denied);
-    // Valor fora do enum (> RESTRICTED) também é negado — comparação por int,
-    // como no IntEnum do Python.
+    assert_eq!(engine.evaluate(&req("t", -1, "r")), ToolCallStatus::Denied);
     assert_eq!(engine.evaluate(&req("t", 99, "r")), ToolCallStatus::Denied);
 }
 
@@ -176,11 +176,10 @@ fn rate_limit_prune_de_entradas_vazias() {
 }
 
 #[test]
-fn identidade_do_agente_e_o_request_id() {
-    // O IDL de ToolCallRequest não tem agent_id — `_agent_identity` do Python
-    // cai no fallback `request.request_id`.
+fn identidade_do_agente_e_o_requester_id() {
     let r = req("t", 0, "request-123");
     assert_eq!(LocalPolicyEngine::agent_identity(&r), "request-123");
+    assert_eq!(r.request_id, "correlation-id");
 }
 
 #[test]

@@ -10,9 +10,11 @@ description = "MCP Gateway: expõe ferramentas (filesystem/github/web/database/c
 dds-contract = { path = "../dds-contract" }
 dds-dataspace = { path = "../dds-dataspace" }
 orch-common = { path = "../orch-common" }
+policy-engine = { path = "../policy-engine" }
 cyclonedds = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -20,6 +22,7 @@ serde_json = { workspace = true }
 dashmap = { workspace = true }
 # Stream trait (poll_next) para consumir DataSpaceApi::subscribe_* sem futures-util.
 futures-core = "0.3"
+rustix = { version = "1.1.4", features = ["fs"] }
 
 [features]
 default = []

@@ -338,7 +338,7 @@ impl TopicCaches {
         self.tool_calls
             .entry(call.call_id.clone())
             .and_modify(|cur| {
-                if call.created_at_ns >= cur.created_at_ns {
+                if call_supersedes_tool_call(&call, cur) {
                     *cur = Arc::new(call.clone());
                 }
             })
@@ -572,4 +572,24 @@ fn is_regression(new: &Task, cur: &Task) -> bool {
     }
     // status avançou; incoming quer voltar → regressão
     new.status < cur.status
+}
+
+fn call_supersedes_tool_call(new: &ToolCallRequest, cur: &ToolCallRequest) -> bool {
+    if new.created_at_ns < cur.created_at_ns {
+        return false;
+    }
+    if is_call_terminal(cur.status) {
+        return false;
+    }
+    if is_call_terminal(new.status) {
+        return true;
+    }
+    if new.status < cur.status {
+        return false;
+    }
+    true
+}
+
+fn is_call_terminal(status: i32) -> bool {
+    matches!(status, 2 | 4 | 5)
 }

@@ -23,8 +23,8 @@
 //! requester precisa ter strength >= a dele (agente=100, cliente=10) — senão
 //! as atualizações de status seriam filtradas pela arbitragem.
 
+use crate::claim::{FileClaimStore, OwnerId};
 use crate::handler::ToolRegistry;
-use crate::policy::PolicyHook;
 use crate::service::ToolCallService;
 use crate::tools::{external_tools, FilesystemTool};
 use anyhow::{Context, Result};
@@ -48,14 +48,26 @@ pub fn default_registry(filesystem_root: impl AsRef<Path>) -> Result<ToolRegistr
 }
 
 /// Sobe o gateway completo: DataSpace no domínio (strength de orquestrador) +
-/// registry padrão + política injetada. Pronto para `service.run()`.
+/// registry padrão + política distribuída fail-closed. Pronto para `service.run()`.
 pub fn build_service(
     domain_id: u32,
     filesystem_root: impl AsRef<Path>,
-    policy: Arc<dyn PolicyHook>,
 ) -> Result<Arc<ToolCallService<DataSpace>>> {
     let data_space = DataSpace::new(domain_id, DataSpace::STRENGTH_ORCHESTRATOR)
         .context("falha ao subir o DataSpace")?;
+    let filesystem_root = filesystem_root.as_ref();
     let registry = default_registry(filesystem_root)?;
-    Ok(Arc::new(ToolCallService::new(data_space, registry, policy)))
+    let claims = Arc::new(
+        FileClaimStore::new(&filesystem_root.join(".mcp-claims"))
+            .context("falha ao abrir o store de claims")?,
+    );
+    let owner = OwnerId::parse(&format!("gateway-{}", std::process::id()))
+        .context("falha ao criar a identidade do gateway")?;
+    Ok(Arc::new(ToolCallService::with_policy_and_claims(
+        data_space,
+        registry,
+        Arc::new(crate::policy::DistributedPolicy::default()),
+        claims,
+        owner,
+    )))
 }

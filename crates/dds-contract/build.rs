@@ -40,6 +40,10 @@ fn main() {
     println!("cargo:rerun-if-changed={}", idl_dds.display());
     println!("cargo:rerun-if-changed={}", idl_v4.display());
     println!(
+        "cargo:rustc-env=DDS_CONTRACT_ORCHESTRATOR_IDL={}",
+        idl_dds.display()
+    );
+    println!(
         "cargo:rerun-if-changed={}",
         idl_dds.with_extension("c").display()
     );
