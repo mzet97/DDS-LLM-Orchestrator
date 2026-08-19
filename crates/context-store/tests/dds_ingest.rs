@@ -66,11 +66,13 @@ where
 async fn snapshot_e_update_chegam_ao_store() {
     // Participante 1 (subscriber): o serviço Context Store.
     let store = Arc::new(LocalContextStore::in_memory());
-    let service = ContextStoreService::new(DOMAIN, Arc::clone(&store)).expect("serviço sobe");
+    let service =
+        Arc::new(ContextStoreService::new(DOMAIN, Arc::clone(&store)).expect("serviço sobe"));
 
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let service_task = Arc::clone(&service);
     let svc = tokio::spawn(async move {
-        service
+        service_task
             .run(async move {
                 let _ = stop_rx.await;
             })
@@ -124,5 +126,11 @@ async fn snapshot_e_update_chegam_ao_store() {
         .await
         .expect("serviço encerra")
         .expect("task do serviço ok");
+    let teardown_started = Instant::now();
+    drop(service);
+    println!(
+        "[dds_ingest] service_teardown_ms={}",
+        teardown_started.elapsed().as_millis()
+    );
     ds_pub.shutdown().await.expect("ds_pub encerra");
 }
