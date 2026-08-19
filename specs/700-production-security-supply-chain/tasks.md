@@ -36,20 +36,28 @@
   - Aceite: runtime fixa o `git rev` candidato, lock é rastreado e clone isolado
     compila/testa com `--locked` sem checkout irmão; publicação ainda não ocorre.
 
-- [ ] **T-810 · CI de segurança dos dois repositórios** (REQ-709)
+- [x] **T-810 · CI de segurança dos dois repositórios** (REQ-709)
   - Aceite: runtime tem CI Rust+DDS; biblioteca adiciona Dynamic XTypes ao ASan e Miri
     pure-Rust; cargo-deny/audit, CodeQL, MSRV, no_std, docs e action SHA pins verdes.
+  - Fechada em 2026-08-19; runtime SHA `f467cfe07d3219b2891b6a9d369625ed186ff64a`,
+    biblioteca SHA final `960b0f2e0519c81728e48321a2a402f009e5116b`; revisão
+    independente em `.omo/evidence/t810-gate-review-20260819.md`.
 
-- [ ] **T-811 · Triage dos 16 PRs Dependabot** (REQ-710)
-  - [ ] Rebase/integrar com checks frescos: #21, #19, #17, #18.
-  - [ ] Rebase/testar superfícies específicas: #2, #20, #13, #1, #11.
-  - [ ] Rebase/pinar/testar actions: #10, #9, #8, #6, #5.
-  - [ ] Fechar/substituir #3; adiar/substituir #12 sem elevar MSRV implicitamente.
+- [x] **T-811 · Triage dos 16 PRs Dependabot** (REQ-710)
+  - [x] Rebase/integrar com checks frescos: #21, #19, #17, #18.
+  - [x] Rebase/testar superfícies específicas: #2, #20, #13, #1, #11.
+  - [x] Rebase/pinar/testar actions: #10, #8, #6, #5.
+  - [x] Fechar/substituir #3; adiar/substituir #12 sem elevar MSRV implicitamente.
   - Aceite: cada PR tem evidência e decisão; nenhum vermelho/obsoleto fica sem dono.
+  - Fechada em 2026-08-19; integração no branch `candidate/t811-dependabot`,
+    draft PR #24, todos os checks verdes; evidência em
+    `.omo/evidence/t811-dependabot-triage-20260819.md`.
 
-- [ ] **T-812 · Reconciliar documentação e dissertação** (REQ-711)
+- [x] **T-812 · Reconciliar documentação e dissertação** (REQ-711)
   - Aceite: versões, 18 tópicos, DDS-first, HTTP, MCP/policy, providers, persistência,
     IDL e estado implementado/parcial/planejado batem com o snapshot testado.
+  - Fechada em 2026-08-19; branch `candidate/t812-docs` nos três repositórios; revisão
+    independente em `.omo/evidence/t812-documentation-reconciliation-20260819.md`.
 
 - [ ] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
   - Aceite: modo local não é anunciado como seguro externamente; modo externo tem
