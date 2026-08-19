@@ -129,11 +129,11 @@ impl From<ModelSpecialization> for i32 {
 
 impl ModelSpecialization {
     /// Returns whether this agent specialization can serve `required`.
-    /// Vision models are the only superset: they also accept text tasks.
+    /// Text agents are the generic fallback; vision also accepts text tasks.
     pub const fn can_serve(self, required: Self) -> bool {
         matches!(
             (self, required),
-            (Self::Text, Self::Text)
+            (Self::Text, _)
                 | (Self::Vision, Self::Text | Self::Vision)
                 | (Self::Embedding, Self::Embedding)
                 | (Self::Transcription, Self::Transcription)
@@ -501,8 +501,11 @@ mod tests {
         assert_eq!(i32::from(ModelSpecialization::Vision), 1);
         assert_eq!(i32::from(ModelSpecialization::Embedding), 2);
         assert_eq!(i32::from(ModelSpecialization::Transcription), 3);
+        assert!(ModelSpecialization::Text.can_serve(ModelSpecialization::Vision));
+        assert!(ModelSpecialization::Text.can_serve(ModelSpecialization::Embedding));
+        assert!(ModelSpecialization::Text.can_serve(ModelSpecialization::Transcription));
         assert!(ModelSpecialization::Vision.can_serve(ModelSpecialization::Text));
-        assert!(!ModelSpecialization::Text.can_serve(ModelSpecialization::Vision));
+        assert!(!ModelSpecialization::Vision.can_serve(ModelSpecialization::Embedding));
         assert!(ModelSpecialization::Transcription.can_serve(ModelSpecialization::Transcription));
         assert!(ModelSpecialization::try_from(-1).is_err());
         assert!(ModelSpecialization::try_from(4).is_err());
