@@ -93,11 +93,9 @@ impl From<TaskPriority> for i32 {
     }
 }
 
-/// Especialização de modelo (`Task.model_required`). **4 variantes, não as
-/// 3 que `OrchestratorV4.idl`'s `enum ModelSpecialization` declara**
-/// (falta `Transcription`) — espelha `agent::claim::Specialization`, que já
-/// usa `Transcription = 3` (`is_eligible`/`Specialization::matches`); o IDL
-/// está incompleto em relação ao que o código realmente usa.
+/// Especialização de modelo (`Task.model_required`). Os discriminantes são
+/// os mesmos do `ModelSpecialization` canônico em `OrchestratorV4.idl`
+/// (REQ-708), incluindo o agente Whisper existente (`Transcription = 3`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum ModelSpecialization {
@@ -126,6 +124,20 @@ impl TryFrom<i32> for ModelSpecialization {
 impl From<ModelSpecialization> for i32 {
     fn from(v: ModelSpecialization) -> i32 {
         v as i32
+    }
+}
+
+impl ModelSpecialization {
+    /// Returns whether this agent specialization can serve `required`.
+    /// Vision models are the only superset: they also accept text tasks.
+    pub const fn can_serve(self, required: Self) -> bool {
+        matches!(
+            (self, required),
+            (Self::Text, Self::Text)
+                | (Self::Vision, Self::Text | Self::Vision)
+                | (Self::Embedding, Self::Embedding)
+                | (Self::Transcription, Self::Transcription)
+        )
     }
 }
 
@@ -481,6 +493,19 @@ mod tests {
     fn task_status_variants() {
         assert_ne!(TaskStatus::Pending, TaskStatus::Running);
         assert_ne!(TaskStatus::Done, TaskStatus::Failed);
+    }
+
+    #[test]
+    fn model_specialization_discriminants_and_routing_are_canonical() {
+        assert_eq!(i32::from(ModelSpecialization::Text), 0);
+        assert_eq!(i32::from(ModelSpecialization::Vision), 1);
+        assert_eq!(i32::from(ModelSpecialization::Embedding), 2);
+        assert_eq!(i32::from(ModelSpecialization::Transcription), 3);
+        assert!(ModelSpecialization::Vision.can_serve(ModelSpecialization::Text));
+        assert!(!ModelSpecialization::Text.can_serve(ModelSpecialization::Vision));
+        assert!(ModelSpecialization::Transcription.can_serve(ModelSpecialization::Transcription));
+        assert!(ModelSpecialization::try_from(-1).is_err());
+        assert!(ModelSpecialization::try_from(4).is_err());
     }
 
     #[test]

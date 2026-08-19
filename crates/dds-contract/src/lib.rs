@@ -15,6 +15,27 @@
 
 /// Nomes canônicos dos tópicos (iguais aos do Python/C++). REQ-007.
 pub mod topics {
+    /// Complete canonical topic inventory (REQ-708).
+    pub const ALL: [&str; 18] = [
+        TASKS,
+        AGENT_REGISTRY,
+        TASK_OUTPUT,
+        SYSTEM_METRICS,
+        LLM_REQUEST,
+        LLM_RESULT,
+        LLM_ERROR,
+        SERVER_STATUS,
+        QOS_ROUTING_PROFILE,
+        CONTEXT_SNAPSHOT,
+        CONTEXT_UPDATE,
+        TOOL_CALL_REQUEST,
+        EXECUTION_TRACE,
+        SECURITY_POLICY_SNAPSHOT,
+        SECURITY_POLICY_UPDATE,
+        QOS_METRIC,
+        QOS_VIOLATION,
+        QOS_DISCOVERY,
+    ];
     pub const TASKS: &str = "Tasks";
     pub const AGENT_REGISTRY: &str = "AgentRegistry";
     pub const TASK_OUTPUT: &str = "TaskOutput";
@@ -246,6 +267,7 @@ pub mod generated {
         pub struct ToolCallRequest {
             pub call_id: String,
             pub request_id: String,
+            pub requester_id: String,
             pub tool_name: String,
             pub arguments_json: String,
             pub security_level: i32,
@@ -413,6 +435,10 @@ mod dds_tests {
         LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
     };
 
+    // REQ-705: reuse the canonical IDL path that build.rs resolved for this worktree.
+    const CANONICAL_ORCHESTRATOR_DDS_IDL: &str =
+        include_str!(env!("DDS_CONTRACT_ORCHESTRATOR_IDL"));
+
     #[test]
     fn wire_typenames_match_idl_modules() {
         assert_eq!(
@@ -473,10 +499,7 @@ mod dds_tests {
     #[test]
     fn idl_file_llm_structs_are_keyless_by_source() {
         // Parse do IDL canônico (sem depender só do runtime).
-        let idl = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../llama_cpp/dds/idl/OrchestratorDDS.idl" // crates/dds-contract -> src/llama_cpp
-        ));
+        let idl = CANONICAL_ORCHESTRATOR_DDS_IDL;
         for name in [
             "LLMInferenceRequest",
             "LLMInferenceResult",

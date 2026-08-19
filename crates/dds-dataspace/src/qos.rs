@@ -99,6 +99,16 @@ pub mod profiles {
             .build()
     }
 
+    /// `ServerStatus`: BestEffort, Volatile, KeepLast(1), Shared.
+    /// Matches the keyless heartbeat semantics of the C++ llama-server.
+    pub fn server_status() -> DdsResult<Qos> {
+        QosBuilder::new()
+            .best_effort()
+            .durability(Durability::Volatile)
+            .history(History::KeepLast(1))
+            .build()
+    }
+
     /// `QoS.Metric`: Reliable(5s), TransientLocal, KeepLast(100), tprio 7.
     /// Espelha `qos_qos_metric()` do `dds_data_space.py`.
     pub fn qos_metric() -> DdsResult<Qos> {

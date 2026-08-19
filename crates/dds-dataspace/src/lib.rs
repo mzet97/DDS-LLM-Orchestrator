@@ -34,12 +34,12 @@ use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscribe
 #[cfg(feature = "dds")]
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, Task,
-    TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
+    Task, TaskOutput, ToolCallRequest,
 };
 #[cfg(feature = "dds")]
 use dds_contract::generated::orchestrator::{
-    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
+    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
 };
 #[cfg(feature = "dds")]
 use dds_contract::topics;
@@ -67,6 +67,12 @@ pub struct DataSpace {
     agents_topic: Arc<Topic<AgentState>>,
     outputs_topic: Arc<Topic<TaskOutput>>,
 
+    // Runtime telemetry (2)
+    system_metrics_writer: DataWriter<SystemMetric>,
+    server_status_writer: DataWriter<ServerStatus>,
+    system_metrics_topic: Arc<Topic<SystemMetric>>,
+    server_status_topic: Arc<Topic<ServerStatus>>,
+
     // Tópicos LLM (3)
     llm_request_writer: DataWriter<LLMInferenceRequest>,
     llm_result_writer: DataWriter<LLMInferenceResult>,
@@ -84,6 +90,7 @@ pub struct DataSpace {
     // Tópicos ToolCall (1)
     tool_call_writer: DataWriter<ToolCallRequest>,
     tool_call_topic: Arc<Topic<ToolCallRequest>>,
+    tool_call_reader: DataReader<ToolCallRequest>,
 
     // Tópicos ExecutionTrace (1)
     execution_trace_writer: DataWriter<ExecutionTraceEvent>,
@@ -250,6 +257,8 @@ impl DataSpace {
         };
         let q_agents = qos::profiles::agent_registry().map_err(err)?;
         let q_outputs = qos::profiles::task_output(Some(ownership_strength)).map_err(err)?;
+        let q_system_metrics = qos::profiles::system_metrics().map_err(err)?;
+        let q_server_status = qos::profiles::server_status().map_err(err)?;
         let q_llm = qos::profiles::llm().map_err(err)?;
         let q_llm_result = qos::profiles::llm_result().map_err(err)?;
         let q_ctx_snap = qos::profiles::context_snapshot().map_err(err)?;
@@ -272,6 +281,18 @@ impl DataSpace {
         let outputs_topic =
             Topic::<TaskOutput>::with_qos(&participant, topics::TASK_OUTPUT, Some(&q_outputs))
                 .map_err(err)?;
+        let system_metrics_topic = Topic::<SystemMetric>::with_qos(
+            &participant,
+            topics::SYSTEM_METRICS,
+            Some(&q_system_metrics),
+        )
+        .map_err(err)?;
+        let server_status_topic = Topic::<ServerStatus>::with_qos(
+            &participant,
+            topics::SERVER_STATUS,
+            Some(&q_server_status),
+        )
+        .map_err(err)?;
 
         let llm_request_topic =
             Topic::<LLMInferenceRequest>::with_qos(&participant, topics::LLM_REQUEST, Some(&q_llm))
@@ -347,6 +368,12 @@ impl DataSpace {
             DataWriter::with_qos(&publisher, &agents_topic, Some(&q_agents)).map_err(err)?;
         let outputs_writer =
             DataWriter::with_qos(&publisher, &outputs_topic, Some(&q_outputs)).map_err(err)?;
+        let system_metrics_writer =
+            DataWriter::with_qos(&publisher, &system_metrics_topic, Some(&q_system_metrics))
+                .map_err(err)?;
+        let server_status_writer =
+            DataWriter::with_qos(&publisher, &server_status_topic, Some(&q_server_status))
+                .map_err(err)?;
 
         let llm_request_writer =
             DataWriter::with_qos(&publisher, &llm_request_topic, Some(&q_llm)).map_err(err)?;
@@ -396,13 +423,15 @@ impl DataSpace {
         // seria um reader órfão, gastando entidade DDS + WaitSet à toa.
         let tasks_reader =
             DataReader::with_qos(&subscriber, &tasks_topic, Some(&q_tasks)).map_err(err)?;
+        let tool_call_reader =
+            DataReader::with_qos(&subscriber, &tool_call_topic, Some(&q_tool)).map_err(err)?;
 
         let shared_waitset = dispatch::SharedWaitSet::new(&participant).map_err(err)?;
 
         tracing::info!(
             domain_id,
             ownership_strength,
-            "DataSpace iniciado com 17 tópicos"
+            "DataSpace iniciado com 18 tópicos"
         );
         Ok(Self {
             tasks_writers,
@@ -412,6 +441,10 @@ impl DataSpace {
             tasks_topic: Arc::new(tasks_topic),
             agents_topic: Arc::new(agents_topic),
             outputs_topic: Arc::new(outputs_topic),
+            system_metrics_writer,
+            server_status_writer,
+            system_metrics_topic: Arc::new(system_metrics_topic),
+            server_status_topic: Arc::new(server_status_topic),
 
             llm_request_writer,
             llm_result_writer,
@@ -427,6 +460,7 @@ impl DataSpace {
 
             tool_call_writer,
             tool_call_topic: Arc::new(tool_call_topic),
+            tool_call_reader,
             execution_trace_writer,
             execution_trace_topic: Arc::new(execution_trace_topic),
 
@@ -489,6 +523,23 @@ impl DataSpace {
         }
 
         let samples = self.tasks_reader.read_instance(handle).map_err(err)?;
+        let samples = samples.to_vec().map_err(err)?;
+        Ok(samples.into_iter().rev().map(|sample| sample.data).next())
+    }
+
+    pub fn read_tool_call_mesh(
+        &self,
+        call_id: &str,
+    ) -> Result<Option<ToolCallRequest>, api::DataSpaceError> {
+        let key = ToolCallRequest {
+            call_id: call_id.to_owned(),
+            ..ToolCallRequest::default()
+        };
+        let handle = self.tool_call_reader.lookup_instance(&key);
+        if handle == 0 {
+            return Ok(None);
+        }
+        let samples = self.tool_call_reader.read_instance(handle).map_err(err)?;
         let samples = samples.to_vec().map_err(err)?;
         Ok(samples.into_iter().rev().map(|sample| sample.data).next())
     }
@@ -1061,7 +1112,8 @@ impl DataSpace {
                     match reader.take_async().await {
                         Ok(snaps) if !snaps.is_empty() => {
                         for s in snaps {
-                            yield caches.upsert_security_snapshot(s);
+                            caches.upsert_security_snapshot(s.clone());
+                            yield Arc::new(s);
                         }
                     }
                         Ok(_) => break,
@@ -1301,6 +1353,110 @@ impl DataSpace {
             }
         }
     }
+
+    /// Streams `SystemMetrics` using the shared event-driven WaitSet (REQ-708).
+    pub fn stream_system_metrics(&self) -> impl Stream<Item = cache::ArcSystemMetric> {
+        let caches = self.caches();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.system_metrics_topic);
+        let waitset = Arc::clone(&self.shared_waitset);
+        async_stream::stream! {
+            let profile = match qos::profiles::system_metrics() {
+                Ok(profile) => profile,
+                Err(error) => {
+                    tracing::error!(%error, "SystemMetrics reader QoS failed");
+                    return;
+                }
+            };
+            let reader = match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
+                Ok(reader) => reader,
+                Err(error) => {
+                    tracing::error!(%error, "DataReader::with_qos(SystemMetrics) failed");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(registration) => registration,
+                Err(error) => {
+                    tracing::error!(%error, "waitset.register(SystemMetrics) failed");
+                    return;
+                }
+            };
+            loop {
+                let notified = registration.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(metrics) if !metrics.is_empty() => {
+                            for metric in metrics {
+                                yield caches.upsert_system_metric(metric);
+                            }
+                        }
+                        Ok(_) => break,
+                        Err(error) => {
+                            tracing::warn!(%error, "take_async(SystemMetrics) failed; retrying");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
+                    }
+                }
+                notified.await;
+            }
+        }
+    }
+
+    /// Streams `ServerStatus` using the shared event-driven WaitSet (REQ-708).
+    pub fn stream_server_status(&self) -> impl Stream<Item = cache::ArcServerStatus> {
+        let caches = self.caches();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.server_status_topic);
+        let waitset = Arc::clone(&self.shared_waitset);
+        async_stream::stream! {
+            let profile = match qos::profiles::server_status() {
+                Ok(profile) => profile,
+                Err(error) => {
+                    tracing::error!(%error, "ServerStatus reader QoS failed");
+                    return;
+                }
+            };
+            let reader = match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
+                Ok(reader) => reader,
+                Err(error) => {
+                    tracing::error!(%error, "DataReader::with_qos(ServerStatus) failed");
+                    return;
+                }
+            };
+            let registration = match waitset.register(&reader) {
+                Ok(registration) => registration,
+                Err(error) => {
+                    tracing::error!(%error, "waitset.register(ServerStatus) failed");
+                    return;
+                }
+            };
+            loop {
+                let notified = registration.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(statuses) if !statuses.is_empty() => {
+                            for status in statuses {
+                                yield caches.upsert_server_status(status);
+                            }
+                        }
+                        Ok(_) => break,
+                        Err(error) => {
+                            tracing::warn!(%error, "take_async(ServerStatus) failed; retrying");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
+                    }
+                }
+                notified.await;
+            }
+        }
+    }
 }
 
 // ── Pool de writers (T-305) ────────────────────────────────────────────────
@@ -1466,11 +1622,56 @@ impl api::DataSpaceApi for DataSpace {
         Box::pin(self.stream_task_outputs())
     }
 
+    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), api::DataSpaceError> {
+        self.system_metrics_writer.write(&metric).map_err(err)
+    }
+
+    async fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Result<Option<SystemMetric>, api::DataSpaceError> {
+        Ok(self
+            .caches
+            .read_system_metric(metric_name, component_id)
+            .map(|metric| (*metric).clone()))
+    }
+
+    fn subscribe_system_metrics(
+        &self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = SystemMetric> + Send>> {
+        use futures::StreamExt;
+        Box::pin(self.stream_system_metrics().map(|metric| (*metric).clone()))
+    }
+
+    async fn write_server_status(&self, status: ServerStatus) -> Result<(), api::DataSpaceError> {
+        self.server_status_writer.write(&status).map_err(err)
+    }
+
+    async fn read_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<ServerStatus>, api::DataSpaceError> {
+        Ok(self
+            .caches
+            .read_server_status(server_id)
+            .map(|status| (*status).clone()))
+    }
+
+    fn subscribe_server_status(
+        &self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = ServerStatus> + Send>> {
+        use futures::StreamExt;
+        Box::pin(self.stream_server_status().map(|status| (*status).clone()))
+    }
+
     async fn shutdown(&self) -> Result<(), api::DataSpaceError> {
         // Teardown real é via drop (RAII); aqui limpamos os caches (paridade com o mock).
         self.caches.tasks.clear();
         self.caches.agents.clear();
         self.caches.outputs.clear();
+        self.caches.system_metrics.clear();
+        self.caches.server_status.clear();
         self.caches.llm_requests.clear();
         self.caches.llm_results.clear();
         self.caches.llm_errors.clear();
@@ -1556,6 +1757,13 @@ impl api::DataSpaceApi for DataSpace {
 
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), api::DataSpaceError> {
         self.tool_call_writer.write(&call).map_err(err)
+    }
+
+    async fn read_tool_call(
+        &self,
+        call_id: &str,
+    ) -> Result<Option<ToolCallRequest>, api::DataSpaceError> {
+        Ok(self.read_tool_call_mesh(call_id)?)
     }
 
     fn subscribe_tool_calls(

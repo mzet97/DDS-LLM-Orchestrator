@@ -10,11 +10,11 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, Task,
-    TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
+    Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
-    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
+    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
 };
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,6 +58,8 @@ pub type ArcQoSRoutingProfile = Arc<QoSRoutingProfile>;
 pub type ArcQoSMetric = Arc<QoSMetric>;
 pub type ArcQoSViolation = Arc<QoSViolation>;
 pub type ArcDiscoveryEvent = Arc<DiscoveryEvent>;
+pub type ArcSystemMetric = Arc<SystemMetric>;
+pub type ArcServerStatus = Arc<ServerStatus>;
 
 /// Resultado explícito do upsert de task (RUST-CACHE-006).
 ///
@@ -109,6 +111,10 @@ pub struct TopicCaches {
     pub tasks: FastMap<String, ArcTask>,
     pub agents: FastMap<String, ArcAgentState>,
     pub outputs: FastMap<String, Vec<ArcTaskOutput>>,
+
+    // Runtime telemetry (2)
+    pub system_metrics: FastMap<String, ArcSystemMetric>,
+    pub server_status: FastMap<String, ArcServerStatus>,
 
     // Tópicos LLM (3)
     pub llm_requests: FastMap<String, ArcLLMRequest>,
@@ -243,6 +249,41 @@ impl TopicCaches {
             .get(task_id)
             .map(|o| o.clone())
             .unwrap_or_default()
+    }
+
+    pub fn upsert_system_metric(&self, metric: SystemMetric) -> ArcSystemMetric {
+        let key = format!("{}\u{1f}{}", metric.metric_name, metric.component_id);
+        self.system_metrics
+            .entry(key)
+            .and_modify(|current| {
+                if metric.timestamp_ns >= current.timestamp_ns {
+                    *current = Arc::new(metric.clone());
+                }
+            })
+            .or_insert_with(|| Arc::new(metric))
+            .clone()
+    }
+
+    pub fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Option<ArcSystemMetric> {
+        let key = format!("{metric_name}\u{1f}{component_id}");
+        self.system_metrics.get(&key).map(|metric| metric.clone())
+    }
+
+    pub fn upsert_server_status(&self, status: ServerStatus) -> ArcServerStatus {
+        let status = Arc::new(status);
+        self.server_status
+            .insert(status.server_id.clone(), Arc::clone(&status));
+        status
+    }
+
+    pub fn read_server_status(&self, server_id: &str) -> Option<ArcServerStatus> {
+        self.server_status
+            .get(server_id)
+            .map(|status| status.clone())
     }
 
     // ── LLM caches ──────────────────────────────────────────────────────
