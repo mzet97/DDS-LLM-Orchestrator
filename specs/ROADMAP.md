@@ -28,6 +28,7 @@ de spec em `specs/NNN-nome/` com `spec.md` + `plan.md` + `tasks.md`.
 | 4 | `400-baselines` | Zadeh/FCM/DHL em `qos-nfcm`; desligar Python | 5 braços comparáveis; Python equivalente arquivado; suíte E2E verde |
 | 5 | `500-dds-first-hardening` | Alinhar runtime e dissertação ao caminho DDS-first | writer LLM persistente; restrição de provedor tipada; texto fiel ao código |
 | 6 | `600-v1-stability` | Revisar e endurecer a API Rust/CycloneDDS e sua integração | contratos `unsafe` explícitos; lifecycle seguro; runtime DDS-first verde; matriz código↔dissertação auditada |
+| 7 | `700-production-security-supply-chain` | Fechar blockers de segurança/UB, boundaries e supply chain | Dynamic XTypes/FFI sem UB por safe API; HTTP/MCP fail-closed; DDS externo autenticado ou local-only explícito; 18 tópicos; par runtime/lib reproduzível; fila Dependabot resolvida com checks frescos |
 
 ## Orçamentos de desempenho (metas — validar com bench, não afirmar sem medir)
 - Propagação de estado de Task (mesmo host): **< 5 ms p99** (Python: piso ~20–70 ms).

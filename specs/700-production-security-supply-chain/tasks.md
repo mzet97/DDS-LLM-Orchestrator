@@ -1,0 +1,61 @@
+# Tasks 700 — Segurança de produção e supply chain Rust
+
+- [ ] **T-801 · Recuperar ordem SDD e congelar snapshots** (REQ-712)
+  - Aceite: fase 500 fechada com evidência; SHAs/worktrees limpos e threat model
+    registrados; nenhum patch usa o checkout sujo original da biblioteca.
+
+- [x] **T-802 · Bounded strings e invariantes de DynamicData** (REQ-701/703)
+  - Red: safe mutation + `string<4>` excedida reproduz o acesso inválido sob ASan.
+  - Aceite: bound real, escrita/leitura limitada, erro tipado e custom fields corretos.
+
+- [x] **T-803 · Normalização CDR e RAII do decode dinâmico** (REQ-702)
+  - Red: CDR truncado/length prefix malicioso chega ao reader C no estado anterior.
+  - Aceite: rejeição antes do FFI, cleanup em todos os erros, corpus/fuzz/ASan verdes.
+
+- [x] **T-804 · Publicação dinâmica por schema real** (REQ-703)
+  - Aceite: builder com nomes não sintéticos publica e reader DDS observa exatamente os
+    valores definidos; teste anterior observa zeros e fica verde só com a correção.
+
+- [x] **T-805 · Boundary HTTP autenticada e limitada** (REQ-704)
+  - Aceite: loopback default; exposição externa sem auth não inicia; requests inválidos,
+    grandes ou acima de quota falham antes do DDS; identidade não é `http-client` global.
+
+- [ ] **T-806 · Política MCP fail-closed e security level tipado** (REQ-705)
+  - Aceite: sem snapshot válido nenhuma tool executa; -1/4 são negados; snapshot/delta,
+    expiração e identidade do agente têm testes DDS e logs de auditoria.
+
+- [ ] **T-807 · Claim idempotente e sandbox sem TOCTOU** (REQ-706)
+  - Aceite: 2 gateways/100 calls executam 100 side effects; symlink swap concorrente não
+    lê/escreve fora da raiz; erros e retries não transferem ownership silenciosamente.
+
+- [ ] **T-808 · Dezoito tópicos e enum IDL único** (REQ-708)
+  - Aceite: `SystemMetrics`/`ServerStatus` têm QoS, lifecycle e streams/escritas públicas;
+    geração e TypeIds comprovam enum idêntico em Rust/C++/Python.
+
+- [ ] **T-809 · Integração reproduzível do candidato** (REQ-707)
+  - Aceite: runtime fixa o `git rev` candidato, lock é rastreado e clone isolado
+    compila/testa com `--locked` sem checkout irmão; publicação ainda não ocorre.
+
+- [ ] **T-810 · CI de segurança dos dois repositórios** (REQ-709)
+  - Aceite: runtime tem CI Rust+DDS; biblioteca adiciona Dynamic XTypes ao ASan e Miri
+    pure-Rust; cargo-deny/audit, CodeQL, MSRV, no_std, docs e action SHA pins verdes.
+
+- [ ] **T-811 · Triage dos 16 PRs Dependabot** (REQ-710)
+  - [ ] Rebase/integrar com checks frescos: #21, #19, #17, #18.
+  - [ ] Rebase/testar superfícies específicas: #2, #20, #13, #1, #11.
+  - [ ] Rebase/pinar/testar actions: #10, #9, #8, #6, #5.
+  - [ ] Fechar/substituir #3; adiar/substituir #12 sem elevar MSRV implicitamente.
+  - Aceite: cada PR tem evidência e decisão; nenhum vermelho/obsoleto fica sem dono.
+
+- [ ] **T-812 · Reconciliar documentação e dissertação** (REQ-711)
+  - Aceite: versões, 18 tópicos, DDS-first, HTTP, MCP/policy, providers, persistência,
+    IDL e estado implementado/parcial/planejado batem com o snapshot testado.
+
+- [ ] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
+  - Aceite: modo local não é anunciado como seguro externamente; modo externo tem
+    autenticação, criptografia, access control e smokes de identidade permitida/negada.
+
+- [ ] **T-814 · Gate final, prerelease e relatório** (REQ-701..713)
+  - Aceite: Gates A–G, QA pública, matriz requisito→teste→artefato e cinco lanes finais
+    têm PASS; prerelease é publicada, runtime passa a usá-la pelo número exato e os
+    gates do consumidor são repetidos antes de autorizar deploy.

@@ -113,3 +113,29 @@ e são A/B testáveis contra o Python. Detalhar em specs próprias quando chegar
 ## 8. Ligações
 - Catálogo visual: `FIGURES.md`. · Plano macro: `../MIGRATION_PLAN.md`. · Contexto técnico:
   `CONTEXT.md`. · Dissertação: `tese/69a588a60776208777b2007b/dissertacao.tex`.
+
+## 9. Correção de fidelidade do snapshot Rust (T-602, 2026-08-18)
+
+Esta seção registra o estado de implementação do runtime Rust no snapshot
+`6c226b0220d43d0f090b1b051f2de9f31ea72b49`; ela não altera o escopo histórico da
+qualificação descrito nas seções anteriores. A mesma correção factual foi inserida na
+fonte LaTeX canônica em `69a588a60776208777b2007b/dissertacao.tex:2182-2203` e
+renderizada com sucesso no PDF T-801. O checkout da tese já continha alterações de
+outros trabalhos; a recuperação acrescentou somente essa subseção, sem reescrever o
+conteúdo existente. Esta correção impede que a arquitetura proposta seja apresentada
+como capacidade integralmente entregue pelo runtime Rust atual.
+
+- O caminho local do agente é DDS-first: `DdsEngine` reutiliza um writer de
+  `LLM.InferenceRequest` e publica `LOCAL_ONLY` por padrão. Isso prova o lado Rust do
+  caminho agente→DDS; não prova que um `llama-server` externo esteve ativo neste ciclo.
+- Provedores externos permanecem uma fronteira mediada pelo `llm-gateway`. O seu núcleo
+  de roteamento é parcial; nenhum adaptador HTTPS de produção foi validado como aplicação
+  completa neste snapshot.
+- O `DataSpace` Rust materializa **16 dos 18** tópicos canônicos. `SystemMetrics` e
+  `ServerStatus` ainda faltam, e a divergência do enum `ModelSpecialization` entre o IDL
+  e consumidores continua aberta para a fase 700.
+- MCP, snapshots de política e observabilidade têm componentes locais, mas a integração
+  completa de consumo de política pelo gateway MCP ainda não está concluída.
+- O deployment DDS é somente local/rede confiável neste estado. Autenticação,
+  criptografia e controle de acesso DDS para exposição externa são planejados, não
+  validados; portanto o runtime não é descrito como um "secure v1" completo.
