@@ -17,7 +17,7 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 [build-dependencies]
-cyclonedds-build = { version = "=3.0.0-alpha.3", git = "https://github.com/mzet97/cyclonedds-rust.git", rev = "98aae322dbabd64e9cd0ab3fe3cf18822930ef87" }
+cyclonedds-build = { version = "=3.0.0-alpha.3", git = "https://github.com/mzet97/cyclonedds-rust.git", rev = "7c1502f178ed7d777e1001f3dc1ae7e25da81abb" }
 regex = "1"
 
 [features]
