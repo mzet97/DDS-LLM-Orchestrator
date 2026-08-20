@@ -77,27 +77,15 @@ mod app {
 
         let args = Args::parse();
 
-        let security = if args.dds_secure {
-            let dir = args.dds_security_dir.as_deref().ok_or_else(|| {
-                anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
-            })?;
-            #[cfg(feature = "security")]
-            {
-                Some(security_config_from_dir(dir)?)
-            }
+        if args.dds_secure {
             #[cfg(not(feature = "security"))]
-            {
-                anyhow::bail!(
-                    "--dds-secure requires the security feature to be enabled at build time"
-                )
-            }
+            anyhow::bail!("--dds-secure requires the security feature to be enabled at build time");
         } else {
             tracing::warn!(
                 "DDS running in local-only mode without authentication or encryption; \
                  do not expose this deployment to untrusted networks"
             );
-            None
-        };
+        }
 
         let http_config = HttpConfig::load(
             args.bind,
@@ -131,15 +119,25 @@ mod app {
             "QoS decider selected"
         );
         #[cfg(feature = "security")]
-        let orchestrator = Arc::new(
-            OrchestratorDds::new_with_security(
-                args.dds_domain,
-                decider,
-                args.qos_profile.as_deref(),
-                security,
-            )?
-            .with_fuzzy_routing(args.fuzzy_routing),
-        );
+        let orchestrator = {
+            let security = if args.dds_secure {
+                let dir = args.dds_security_dir.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
+                })?;
+                Some(security_config_from_dir(dir)?)
+            } else {
+                None
+            };
+            Arc::new(
+                OrchestratorDds::new_with_security(
+                    args.dds_domain,
+                    decider,
+                    args.qos_profile.as_deref(),
+                    security,
+                )?
+                .with_fuzzy_routing(args.fuzzy_routing),
+            )
+        };
         #[cfg(not(feature = "security"))]
         let orchestrator = Arc::new(
             OrchestratorDds::new(args.dds_domain, decider, args.qos_profile.as_deref())?

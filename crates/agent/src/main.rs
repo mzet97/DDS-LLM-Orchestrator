@@ -104,29 +104,15 @@ async fn main() -> Result<()> {
     let args = Args::parse();
     let spec = parse_specialization(&args.specialization);
 
-    let security = if args.dds_secure {
-        let dir = args
-            .dds_security_dir
-            .as_deref()
-            .map(PathBuf::from)
-            .ok_or_else(|| {
-                anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
-            })?;
-        #[cfg(feature = "security")]
-        {
-            Some(security_config_from_dir(&dir)?)
-        }
+    if args.dds_secure {
         #[cfg(not(feature = "security"))]
-        {
-            anyhow::bail!("--dds-secure requires the security feature to be enabled at build time")
-        }
+        anyhow::bail!("--dds-secure requires the security feature to be enabled at build time");
     } else {
         tracing::warn!(
             "DDS running in local-only mode without authentication or encryption; \
              do not expose this deployment to untrusted networks"
         );
-        None
-    };
+    }
 
     let config = AgentConfig {
         agent_id: args.agent_id.clone(),
@@ -150,7 +136,21 @@ async fn main() -> Result<()> {
     );
 
     #[cfg(feature = "security")]
-    let runtime = Arc::new(AgentDds::new_with_security(config, security)?);
+    let runtime = {
+        let security = if args.dds_secure {
+            let dir = args
+                .dds_security_dir
+                .as_deref()
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
+                })?;
+            Some(security_config_from_dir(&dir)?)
+        } else {
+            None
+        };
+        Arc::new(AgentDds::new_with_security(config, security)?)
+    };
     #[cfg(not(feature = "security"))]
     let runtime = Arc::new(AgentDds::new(config)?);
     let _heartbeat = runtime.spawn_heartbeat();

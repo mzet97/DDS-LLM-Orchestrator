@@ -54,7 +54,7 @@ async fn main() {
     if args.len() != 4 {
         eprintln!(
             "Usage: {} <publisher|subscriber|intruder> <domain_id> <security_dir>",
-            args.get(0).map(|s| s.as_str()).unwrap_or("security_echo")
+            args.first().map(|s| s.as_str()).unwrap_or("security_echo")
         );
         std::process::exit(2);
     }
