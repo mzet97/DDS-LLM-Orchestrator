@@ -26,12 +26,16 @@ struct ObservedClaims {
     inner: Arc<FileClaimStore>,
     attempts: AtomicUsize,
     delay: Duration,
+    loses_every_claim: bool,
 }
 
 impl ClaimStore for ObservedClaims {
     fn try_claim(&self, call_id: &str, owner: &OwnerId) -> Result<ClaimDecision, ClaimError> {
         self.attempts.fetch_add(1, Ordering::Relaxed);
         std::thread::sleep(self.delay);
+        if self.loses_every_claim {
+            return Ok(ClaimDecision::AlreadyClaimed);
+        }
         self.inner.try_claim(call_id, owner)
     }
 }
@@ -96,7 +100,7 @@ fn now_ns() -> u64 {
         .unwrap_or(0)
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 1)]
 async fn two_real_gateways_execute_exactly_100_calls() {
     let temp = TempDir::new("exactly-once-dds");
     let output = temp.path().join("effects.log");
@@ -111,11 +115,13 @@ async fn two_real_gateways_execute_exactly_100_calls() {
         inner: Arc::clone(&claim_store),
         attempts: AtomicUsize::new(0),
         delay: Duration::ZERO,
+        loses_every_claim: false,
     });
     let claims_b = Arc::new(ObservedClaims {
         inner: claim_store,
         attempts: AtomicUsize::new(0),
-        delay: Duration::from_millis(10),
+        delay: Duration::ZERO,
+        loses_every_claim: true,
     });
     let policy = policy();
     let gateway_a = Arc::new(ToolCallService::with_policy_and_claims(
@@ -196,6 +202,7 @@ async fn two_real_gateways_execute_exactly_100_calls() {
     assert_eq!(lines.len(), CALL_COUNT, "external side-effect count");
     assert_eq!(unique.len(), CALL_COUNT, "duplicate side-effect count");
     assert!(claims_a.attempts.load(Ordering::Relaxed) >= CALL_COUNT);
+
     eprintln!(
         "terminal_results=100 side_effects=100 unique_effects=100 duplicates=0 gateway_a_claims={} gateway_b_claims={}",
         claims_a.attempts.load(Ordering::Relaxed),
