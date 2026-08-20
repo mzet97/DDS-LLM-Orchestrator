@@ -36,7 +36,12 @@ jobs:
           key: stable-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           cache-targets: false
       - name: Verify the immutable CycloneDDS candidate
-        run: grep -R "7c1502f178ed7d777e1001f3dc1ae7e25da81abb" Cargo.toml Cargo.lock crates/dds-contract/Cargo.toml
+        run: |
+          grep 'cyclonedds = { version = "=3.0.0-alpha.4" }' Cargo.toml
+          grep 'cyclonedds-rust-sys = { version = "=1.1.2" }' Cargo.toml
+          grep 'cyclonedds-build = { workspace = true }' crates/dds-contract/Cargo.toml
+          grep -A1 'name = "cyclonedds"' Cargo.lock | grep 'version = "3.0.0-alpha.4"'
+          grep -A1 'name = "cyclonedds-rust-sys"' Cargo.lock | grep 'version = "1.1.2"'
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
