@@ -7,13 +7,15 @@ license.workspace = true
 description = "Orquestrador: ingestão HTTP (axum) + scheduler/registry/selector + decisão de QoS (NFCM)."
 
 [dependencies]
-dds-dataspace = { path = "../dds-dataspace" }
-dds-contract = { path = "../dds-contract" }
-orch-common = { path = "../orch-common" }
-llm-gateway = { path = "../llm-gateway" }
-qos-nfcm = { path = "../qos-nfcm" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
+llm-gateway = { version = "=0.1.0", path = "../llm-gateway" }
+qos-nfcm = { version = "=0.1.0", path = "../qos-nfcm" }
 tokio = { workspace = true }
 axum = { workspace = true }
+async-trait = "0.1"
+clap = { version = "4", features = ["derive"] }
 serde = { workspace = true }
 futures-util = "0.3"
 serde_json = { workspace = true }
@@ -27,6 +29,8 @@ cyclonedds = { workspace = true, optional = true }
 parking_lot = { workspace = true }
 chrono = "0.4"
 uuid = { version = "1", features = ["v4"] }
+sha2 = "0.10"
+subtle = "2"
 
 [features]
 default = []
@@ -35,3 +39,6 @@ dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
 [[bin]]
 name = "orchestrator"
 path = "src/main.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }

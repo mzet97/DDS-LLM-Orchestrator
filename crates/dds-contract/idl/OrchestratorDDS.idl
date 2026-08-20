@@ -1,0 +1,87 @@
+// Unified DDS IDL for LLM Orchestrator
+// This file defines the message types used by BOTH the Python orchestrator
+// AND the C++ llama-server-dds, ensuring a single topic namespace.
+//
+// Topic names match the Python orchestrator's DDSDataSpace:
+//   - LLM.InferenceRequest
+//   - LLM.InferenceResult
+//   - LLM.InferenceError
+//   - ServerStatus (llama-server heartbeat)
+//
+// Key design decisions:
+//   - messages_json is a JSON string (not structured ChatMessage sequence)
+//     This allows the Python orchestrator to pass messages without conversion.
+//   - The C++ side parses JSON from messages_json when needed.
+//   - ServerStatus uses BEST_EFFORT + VOLATILE for lightweight heartbeat.
+//
+// NOTE: LLMInferenceRequest/Result/Error and ServerStatus are intentionally
+// KEYLESS — this matches the reconciliation already done on the Python side
+// (see `tese/src/rust/specs/000-dds-contract/spec.md`, REQ-003: "Tipos LLM
+// keyless... casar a reconciliação já feita no Python"), and is enforced by
+// `dds-contract`'s own tests (`llm_types_are_keyless`,
+// `idl_file_llm_structs_are_keyless_by_source`). An architecture review this
+// session flagged the keyless design as a theoretical fragility (a single
+// global instance means a KeepLast(N) history bound is shared across ALL
+// concurrent requests' chunks, not per-request) and briefly added `@key` here
+// — that was reverted after discovering this explicit, tested, spec'd
+// requirement. Do not add `@key` to these types without first updating REQ-003
+// and the Python side in lockstep; changing only the C++/Rust side would
+// silently break wire compatibility with the Python reference implementation.
+
+module orchestrator {
+
+    // LLM Inference Request
+    // Published by: LLM Gateway (Python), Agents (Python)
+    // Subscribed by: llama-server-dds (C++), LLM Gateway (Python)
+    struct LLMInferenceRequest {
+        string request_id;           // UUID for correlation
+        string task_id;              // Task UUID from orchestrator
+        string agent_id;             // Agent UUID that made the request
+        string model_name;           // Model name (e.g., "qwen3.5-0.8b")
+        string messages_json;        // JSON array of {role, content} objects
+        float temperature;           // Sampling temperature (default 0.7)
+        unsigned long max_tokens;    // Max tokens to generate
+        boolean stream;              // Enable streaming mode
+        long security_level;         // SecurityLevel enum (0=PUBLIC, 1=INTERNAL, etc.)
+        string provider_constraint;  // "ANY", "LOCAL_ONLY", "CLOUD_ONLY"
+        unsigned long long created_at_ns;  // Timestamp (nanoseconds)
+    };
+
+    // LLM Inference Result (streaming chunks)
+    // Published by: llama-server-dds (C++), LLM Gateway (Python)
+    // Subscribed by: Agents (Python), LLM Gateway (Python)
+    struct LLMInferenceResult {
+        string request_id;           // Correlates with request
+        unsigned long seq_num;       // Sequence number for ordering
+        string content;              // Generated text chunk
+        boolean is_final;            // True on last chunk
+        long finish_reason;          // FinishReason enum (0=NONE, 1=COMPLETION, etc.)
+        string model_used;           // Model that generated the response
+        unsigned long tokens_prompt;     // Tokens in prompt
+        unsigned long tokens_completion; // Tokens generated
+        unsigned long long emitted_at_ns;  // Timestamp (nanoseconds)
+    };
+
+    // LLM Inference Error
+    // Published by: llama-server-dds (C++), LLM Gateway (Python)
+    // Subscribed by: Agents (Python), LLM Gateway (Python)
+    struct LLMInferenceError {
+        string request_id;           // Correlates with request
+        long error_code;             // HTTP-style error code
+        string error_message;        // Human-readable error
+        string provider;             // Provider that generated the error
+        boolean retriable;           // Whether the request can be retried
+        unsigned long long emitted_at_ns;  // Timestamp (nanoseconds)
+    };
+
+    // Server Status (heartbeat)
+    // Published by: llama-server-dds (C++)
+    // Subscribed by: LLM Gateway (Python), monitoring tools
+    struct ServerStatus {
+        string server_id;            // Unique server identifier
+        long slots_idle;             // Number of idle inference slots
+        long slots_processing;       // Number of active inference slots
+        string model_loaded;         // Currently loaded model name
+        boolean ready;               // Server ready for requests
+    };
+};

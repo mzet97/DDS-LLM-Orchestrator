@@ -11,9 +11,7 @@
 //!   stdio. Mesma semântica de sandbox: tudo restrito a uma raiz, com
 //!   `canonicalize` + prefix check contra path traversal (inclui symlinks).
 //! - **Framework** `ToolHandler` / `ToolRegistry` / despacho por `tool_name`.
-//! - **Governança**: trait `PolicyHook` (default `PermissivePolicy`) +
-//!   `SecurityPolicy` (fast-path do `PolicyEngine` Python: nível máximo +
-//!   allow/deny lists).
+//! - **Governança** fail-closed por snapshot/update DDS versionado.
 //! - **Ferramentas externas** (github/web/database/ci-cd): handlers registrados
 //!   que retornam `ToolError::NotConfigured` documentando o que falta — as
 //!   chamadas de API (httpx/psycopg/bs4) são follow-up, não foram inventadas.
@@ -28,6 +26,7 @@
 //!
 //! Compile com `--features dds` para o serviço sobre o CycloneDDS real.
 
+pub mod claim;
 pub mod error;
 pub mod handler;
 pub mod policy;
@@ -37,8 +36,9 @@ pub mod tools;
 #[cfg(feature = "dds")]
 pub mod dds;
 
+pub use claim::{ClaimDecision, ClaimError, ClaimStore, FileClaimStore, MemoryClaimStore, OwnerId};
 pub use error::ToolError;
 pub use handler::{ToolHandler, ToolRegistry};
-pub use policy::{PermissivePolicy, PolicyHook, SecurityPolicy};
+pub use policy::{DenialReason, DistributedPolicy, PolicyDecision, PolicyIngestError};
 pub use service::{ServiceError, ToolCallService};
 pub use tools::{ExternalTool, FilesystemTool};

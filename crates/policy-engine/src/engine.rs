@@ -49,24 +49,43 @@ pub enum SecurityLevel {
     Restricted = 3,
 }
 
+/// Valor fora do conjunto fechado de níveis do contrato DDS.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[error("security_level inválido: {0}; esperado 0..=3")]
+pub struct InvalidSecurityLevel(pub i32);
+
+impl TryFrom<i32> for SecurityLevel {
+    type Error = InvalidSecurityLevel;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Self::Public),
+            1 => Ok(Self::Internal),
+            2 => Ok(Self::Confidential),
+            3 => Ok(Self::Restricted),
+            invalid => Err(InvalidSecurityLevel(invalid)),
+        }
+    }
+}
+
 impl SecurityLevel {
     /// Nome canônico do nível (P1.8: `SecurityLevel(0).name == "PUBLIC"`).
     pub fn name(self) -> &'static str {
-        security_level_name(self as i32)
+        match self {
+            Self::Public => "PUBLIC",
+            Self::Internal => "INTERNAL",
+            Self::Confidential => "CONFIDENTIAL",
+            Self::Restricted => "RESTRICTED",
+        }
     }
 }
 
 /// Nome canônico do nível a partir do inteiro do wire (IDL).
 ///
-/// Valor fora do enum cai em `"PUBLIC"` — mesmo fallback de
-/// `llm_gateway._check_policy` (`except (ValueError, TypeError)` no Python).
 pub fn security_level_name(level: i32) -> &'static str {
-    match level {
-        0 => "PUBLIC",
-        1 => "INTERNAL",
-        2 => "CONFIDENTIAL",
-        3 => "RESTRICTED",
-        _ => "PUBLIC",
+    match SecurityLevel::try_from(level) {
+        Ok(valid) => valid.name(),
+        Err(_) => "INVALID",
     }
 }
 
@@ -125,12 +144,25 @@ impl LocalPolicyEngine {
 
     /// Identidade do agente para o rate limit (porte de `_agent_identity`).
     pub fn agent_identity(request: &ToolCallRequest) -> &str {
-        &request.request_id
+        &request.requester_id
     }
 
     /// Avalia se a chamada é permitida (porte de `evaluate`).
     pub fn evaluate(&self, request: &ToolCallRequest) -> ToolCallStatus {
-        if request.security_level > self.max_security_level as i32 {
+        let level = match SecurityLevel::try_from(request.security_level) {
+            Ok(level) => level,
+            Err(error) => {
+                tracing::warn!(
+                    call_id = %request.call_id,
+                    requester_id = %request.requester_id,
+                    security_level = request.security_level,
+                    reason = %error,
+                    "ToolCall negada: security_level inválido"
+                );
+                return ToolCallStatus::Denied;
+            }
+        };
+        if level > self.max_security_level {
             tracing::warn!(
                 call_id = %request.call_id,
                 level = security_level_name(request.security_level),

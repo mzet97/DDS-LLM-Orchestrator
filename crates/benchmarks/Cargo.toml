@@ -7,10 +7,10 @@ license.workspace = true
 description = "Geração de carga E1–E5/OP1–OP4 + coleta JSONL. Porte de benchmarks/ e benchmarks/qualificacao (Python). Análise estatística permanece no Python."
 
 [dependencies]
-client = { path = "../client" }
-dds-contract = { path = "../dds-contract" }
-dds-dataspace = { path = "../dds-dataspace" }
-qos-nfcm = { path = "../qos-nfcm" }
+client = { version = "=0.1.0", path = "../client" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+qos-nfcm = { version = "=0.1.0", path = "../qos-nfcm" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -37,4 +37,4 @@ path = "src/main.rs"
 
 [dev-dependencies]
 tempfile = "3"
-agent = { path = "../agent" }
+agent = { version = "=0.1.0", path = "../agent" }

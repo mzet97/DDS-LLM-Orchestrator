@@ -7,8 +7,8 @@ license.workspace = true
 description = "Camada DDS: readers/writers, WaitSet nativo, caches lock-free, zero-copy. Substitui dds_backend/."
 
 [dependencies]
-dds-contract = { path = "../dds-contract" }
-orch-common = { path = "../orch-common" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
 cyclonedds = { workspace = true, optional = true }
 tokio = { workspace = true }
 futures = { workspace = true }

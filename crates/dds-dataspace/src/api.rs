@@ -5,11 +5,11 @@
 
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, Task,
-    TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
+    Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
-    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
+    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
 };
 use futures_core::Stream;
 use std::pin::Pin;
@@ -75,6 +75,33 @@ pub trait DataSpaceApi: Send + Sync {
     /// Retorna um stream de outputs.
     fn subscribe_task_outputs(&self) -> Pin<Box<dyn Stream<Item = Arc<TaskOutput>> + Send>>;
 
+    // === Runtime telemetry ===
+
+    /// Publishes one system metric sample (REQ-708).
+    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), DataSpaceError>;
+
+    /// Reads the most recent metric for a `(metric_name, component_id)` key.
+    async fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Result<Option<SystemMetric>, DataSpaceError>;
+
+    /// Streams system metrics as DDS samples arrive.
+    fn subscribe_system_metrics(&self) -> Pin<Box<dyn Stream<Item = SystemMetric> + Send>>;
+
+    /// Publishes one llama-server status sample (REQ-708).
+    async fn write_server_status(&self, status: ServerStatus) -> Result<(), DataSpaceError>;
+
+    /// Reads the most recent status for a server.
+    async fn read_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<ServerStatus>, DataSpaceError>;
+
+    /// Streams server status samples as they arrive.
+    fn subscribe_server_status(&self) -> Pin<Box<dyn Stream<Item = ServerStatus> + Send>>;
+
     // === LLM ===
 
     /// Publica um request de inferência LLM.
@@ -116,6 +143,11 @@ pub trait DataSpaceApi: Send + Sync {
 
     /// Retorna um stream de tool calls.
     fn subscribe_tool_calls(&self) -> Pin<Box<dyn Stream<Item = ToolCallRequest> + Send>>;
+
+    async fn read_tool_call(
+        &self,
+        call_id: &str,
+    ) -> Result<Option<ToolCallRequest>, DataSpaceError>;
 
     // === ExecutionTrace ===
 

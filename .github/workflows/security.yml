@@ -1,0 +1,152 @@
+name: Runtime security gates
+
+on:
+  push:
+    branches: [main, "candidate/**"]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runtime-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  CYCLONEDDS_STATIC: "1"
+
+jobs:
+  quality:
+    name: Format, Clippy, workspace all-features
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install CycloneDDS build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake clang build-essential
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: clippy,rustfmt
+      - name: Record exact toolchain
+        run: rustc -vV
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: stable-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          cache-targets: false
+      - name: Verify the immutable CycloneDDS candidate
+        run: grep -R "98aae322dbabd64e9cd0ab3fe3cf18822930ef87" Cargo.toml Cargo.lock crates/dds-contract/Cargo.toml
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - name: Workspace tests
+        run: cargo test --workspace --all-features --locked -- --test-threads=1
+
+  dependencies:
+    name: cargo-audit and cargo-deny
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - uses: taiki-e/install-action@5b4d68e2e660441203ab128a23676f1e4faf1532
+        with:
+          tool: cargo-audit@0.22.2,cargo-deny@0.20.2
+      - run: cargo audit
+      - run: cargo deny check
+
+  real-dds:
+    name: Real CycloneDDS loopback, 18 topics, fail-closed MCP
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install CycloneDDS build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake clang build-essential
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: stable-dds-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
+          cache-targets: false
+      - name: Canonical 18-topic contract
+        run: cargo test -p dds-contract --features dds --locked topics_match_context
+      - name: Real DDS loopback
+        run: cargo test -p dds-dataspace --features dds --locked --test contract contract_real_dds -- --exact --nocapture
+      - name: MCP starts fail-closed and recovers from a real DDS policy
+        run: cargo test -p mcp-gateway --features dds --locked --test dds_policy policy_lifecycle_controls_real_dds_filesystem_side_effects -- --exact --nocapture
+      - name: Two real gateways execute exactly 100 calls
+        run: cargo test -p mcp-gateway --features dds --locked --test exactly_once_dds two_real_gateways_execute_exactly_100_calls -- --exact --nocapture
+      - name: Sandbox denies concurrent symlink swaps
+        run: cargo test -p mcp-gateway --locked --test sandbox_adversarial concurrent_symlink_rename_swap_cannot_write_outside_root -- --exact --nocapture
+      - name: In-memory claim has one winner
+        run: cargo test -p mcp-gateway --locked concurrent_memory_claim_has_one_winner -- --exact --nocapture
+
+  miri:
+    name: Miri pure Rust (${{ matrix.model }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - model: miri-strict-provenance
+            flags: -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-backtrace=full -Zmiri-disable-isolation
+          - model: miri-tree-borrows
+            flags: -Zmiri-tree-borrows -Zmiri-strict-provenance -Zmiri-symbolic-alignment-check -Zmiri-backtrace=full -Zmiri-disable-isolation
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb
+        with:
+          components: miri,rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: nightly-${{ matrix.model }}-${{ hashFiles('Cargo.lock') }}
+          cache-targets: false
+      - name: Pure-Rust Miri suite
+        env:
+          MIRIFLAGS: ${{ matrix.flags }}
+        run: |
+          cargo +nightly miri test -p orch-common -p policy-engine --locked
+          cargo +nightly miri test -p qos-nfcm --lib --locked baselines::tests::
+          cargo +nightly miri test -p qos-nfcm --lib --locked membership::tests::
+          cargo +nightly miri test -p qos-nfcm --lib --locked tests::discrimina_os_quatro_cenarios
+          cargo +nightly miri test -p qos-nfcm --lib --locked tests::explicacao_menciona_vencedor
+          cargo +nightly miri test -p qos-nfcm --lib --locked tests::reproduz_numeros_do_artigo_degradado
+
+  asan:
+    name: ASan runtime DDS and MCP FFI
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install CycloneDDS build dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake clang build-essential
+      - uses: dtolnay/rust-toolchain@7c8d7d138f5c09cef361f8214cf96882cd029cdb
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          key: nightly-asan-${{ hashFiles('Cargo.lock') }}
+          cache-targets: false
+      - name: ASan real DDS loopback
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+          ASAN_OPTIONS: detect_leaks=0:halt_on_error=1
+        run: |
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            -p dds-dataspace --features dds --locked \
+            --test contract contract_real_dds -- --exact --nocapture
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu \
+            -p mcp-gateway --features dds --locked \
+            --test dds_policy policy_lifecycle_controls_real_dds_filesystem_side_effects \
+            -- --exact --nocapture
+
+  workflow-policy:
+    name: Immutable workflow policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - run: scripts/ci/check-security-workflows.sh
