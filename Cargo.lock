@@ -544,9 +544,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b2207467af8c65d002d122a567bd3b766479fa6221a0714edb7346255fe2a75"
+checksum = "8da642ec6705136d64259b3b845445c45daa9c8cc9de1876d3511df009f1f57b"
 dependencies = [
  "async-stream",
  "cyclonedds-derive",
@@ -559,9 +559,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds-build"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "540839518a147306b079f8922603b13fd7679334966a8328df1c6515e99c02a3"
+checksum = "4abaa892f2f06c2587658c9a5a6a99def91d8bdcbe39320e861aa8db821cfa7a"
 dependencies = [
  "anyhow",
  "serde",
@@ -570,9 +570,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds-derive"
-version = "3.0.0"
+version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87c559a13a568eb83fa8f6b2594ad5cfb2af74c572a0417579fe0d3c6ac541d1"
+checksum = "5c6d49f4cbb00f8bef65e738f27c7cb932d01e55bd79a819df283590b17b26f5"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -581,9 +581,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds-rust-sys"
-version = "1.2.0"
+version = "1.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d8c3d6851d2a4915377e0ac34dc2b06ffce7c4ab13f2e22ab5c2d0a9a0314c2b"
+checksum = "29717e2254c3b45993581629e02ba3f85f0d8fc354c450cbdb541ef28e8f916d"
 dependencies = [
  "cyclonedds-src",
 ]
