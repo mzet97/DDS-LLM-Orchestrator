@@ -1,35 +1,46 @@
-const CANDIDATE_REV: &str = "7c1502f178ed7d777e1001f3dc1ae7e25da81abb";
-const CANDIDATE_URL: &str = "https://github.com/mzet97/cyclonedds-rust.git";
+const CYCLONEDDS_VERSION: &str = "=3.0.0-alpha.4";
+const SYS_VERSION: &str = "=1.1.2";
 const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
 const CONTRACT_MANIFEST: &str = include_str!("../Cargo.toml");
 const LOCKFILE: &str = include_str!("../../../Cargo.lock");
 
 #[test]
-fn candidate_dependencies_use_one_immutable_git_revision() {
+fn candidate_dependencies_use_exact_crates_io_versions() {
     // Given: the runtime workspace and contract build manifests.
-    let expected = format!("git = \"{CANDIDATE_URL}\", rev = \"{CANDIDATE_REV}\"");
-
     // When: every CycloneDDS dependency declaration is inspected.
-    let declarations = WORKSPACE_MANIFEST.matches(&expected).count()
-        + CONTRACT_MANIFEST.matches(&expected).count();
+    // Then: runtime and sys use exact prerelease versions from crates.io,
+    //       and build tooling uses the workspace version.
+    assert!(
+        WORKSPACE_MANIFEST.contains(&format!("cyclonedds = {{ version = \"{CYCLONEDDS_VERSION}\" }}")),
+        "workspace must pin exact cyclonedds crates.io version"
+    );
+    assert!(
+        WORKSPACE_MANIFEST.contains(&format!("cyclonedds-rust-sys = {{ version = \"{SYS_VERSION}\" }}")),
+        "workspace must pin exact cyclonedds-rust-sys crates.io version"
+    );
+    assert!(
+        CONTRACT_MANIFEST.contains("cyclonedds-build = { workspace = true }"),
+        "dds-contract must inherit cyclonedds-build from workspace"
+    );
 
-    // Then: runtime, sys, and build tooling share the exact immutable candidate.
-    assert_eq!(declarations, 3);
+    // No git or path dependencies remain for CycloneDDS crates.
+    assert!(!WORKSPACE_MANIFEST.contains("github.com/mzet97/cyclonedds-rust"));
+    assert!(!CONTRACT_MANIFEST.contains("github.com/mzet97/cyclonedds-rust"));
     assert!(!WORKSPACE_MANIFEST.contains("cyclonedds = { path ="));
     assert!(!CONTRACT_MANIFEST.contains("cyclonedds-build = { path ="));
 }
 
 #[test]
-fn lockfile_records_the_candidate_git_source() {
+fn lockfile_records_registry_sources() {
     // Given: the lockfile committed by the runtime workspace.
-    let source_prefix = format!("git+{CANDIDATE_URL}?rev={CANDIDATE_REV}#");
-
     // When: package source identities are inspected.
-    let locked_sources = LOCKFILE.matches(&source_prefix).count();
-
-    // Then: every CycloneDDS package resolved from the same candidate commit.
-    assert_eq!(locked_sources, 5);
-    assert!(LOCKFILE.contains(&format!("#{CANDIDATE_REV}")));
+    // Then: every CycloneDDS package resolves from crates.io registry.
+    assert!(LOCKFILE.contains("name = \"cyclonedds\""));
+    assert!(LOCKFILE.contains("name = \"cyclonedds-rust-sys\""));
+    assert!(LOCKFILE.contains("name = \"cyclonedds-build\""));
+    assert!(LOCKFILE.contains("name = \"cyclonedds-derive\""));
+    assert!(LOCKFILE.contains("source = \"registry+https://github.com/rust-lang/crates.io-index\""));
+    assert!(!LOCKFILE.contains("github.com/mzet97/cyclonedds-rust"));
 }
 
 #[test]
