@@ -545,7 +545,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds"
 version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=04731797fd34730ab5ea9c41c8650103c841ef46#04731797fd34730ab5ea9c41c8650103c841ef46"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "async-stream",
  "cyclonedds-derive",
@@ -569,7 +569,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds-derive"
 version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=04731797fd34730ab5ea9c41c8650103c841ef46#04731797fd34730ab5ea9c41c8650103c841ef46"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds-rust-sys"
 version = "1.1.1"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=04731797fd34730ab5ea9c41c8650103c841ef46#04731797fd34730ab5ea9c41c8650103c841ef46"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "cyclonedds-src",
 ]
@@ -587,7 +587,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds-src"
 version = "1.0.2"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=04731797fd34730ab5ea9c41c8650103c841ef46#04731797fd34730ab5ea9c41c8650103c841ef46"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 
 [[package]]
 name = "dashmap"

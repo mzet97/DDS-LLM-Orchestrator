@@ -36,7 +36,7 @@ jobs:
           key: stable-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           cache-targets: false
       - name: Verify the immutable CycloneDDS candidate
-        run: grep -R "04731797fd34730ab5ea9c41c8650103c841ef46" Cargo.toml Cargo.lock crates/dds-contract/Cargo.toml
+        run: grep -R "7c1502f178ed7d777e1001f3dc1ae7e25da81abb" Cargo.toml Cargo.lock crates/dds-contract/Cargo.toml
       - name: Format
         run: cargo fmt --all -- --check
       - name: Clippy
