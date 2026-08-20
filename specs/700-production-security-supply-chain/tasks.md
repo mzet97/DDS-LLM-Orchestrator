@@ -59,9 +59,14 @@
   - Fechada em 2026-08-19; branch `candidate/t812-docs` nos três repositórios; revisão
     independente em `.omo/evidence/t812-documentation-reconciliation-20260819.md`.
 
-- [ ] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
+- [x] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
   - Aceite: modo local não é anunciado como seguro externamente; modo externo tem
     autenticação, criptografia, access control e smokes de identidade permitida/negada.
+  - Fechada em 2026-08-20; runtime branch `candidate/t813-security` SHA `cfacf33`,
+    draft PR #3; biblioteca branch `candidate/t813-security` SHA `0473179`,
+    draft PR #26; smokes `intruder_participant_is_rejected` e
+    `secure_participants_exchange_sample` passam localmente e no CI job
+    `dds-security`; evidência em `.omo/evidence/t813-security-deployment-20260820.md`.
 
 - [ ] **T-814 · Gate final, prerelease e relatório** (REQ-701..713)
   - Aceite: Gates A–G, QA pública, matriz requisito→teste→artefato e cinco lanes finais
