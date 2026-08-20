@@ -103,7 +103,9 @@ async fn intruder_participant_is_rejected() {
     let domain_id = unique_domain();
 
     let intruder = run_echo("intruder", domain_id);
-    let out = intruder.wait_with_output().expect("intruder process failed");
+    let out = intruder
+        .wait_with_output()
+        .expect("intruder process failed");
 
     assert!(
         !out.status.success(),

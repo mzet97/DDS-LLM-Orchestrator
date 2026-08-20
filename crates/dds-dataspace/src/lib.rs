@@ -29,10 +29,10 @@ use std::sync::Arc;
 /// Cache de tópico concorrente e lock-free (substitui dict + RLock global).
 pub type TopicCache<T> = Arc<DashMap<String, T>>;
 
-#[cfg(feature = "dds")]
-use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 #[cfg(feature = "security")]
 pub use cyclonedds::SecurityConfig;
+#[cfg(feature = "dds")]
+use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
 #[cfg(feature = "dds")]
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,

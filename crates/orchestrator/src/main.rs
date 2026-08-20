@@ -54,7 +54,9 @@ mod app {
     }
 
     #[cfg(feature = "security")]
-    fn security_config_from_dir(dir: &std::path::Path) -> anyhow::Result<dds_dataspace::SecurityConfig> {
+    fn security_config_from_dir(
+        dir: &std::path::Path,
+    ) -> anyhow::Result<dds_dataspace::SecurityConfig> {
         let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
         Ok(dds_dataspace::SecurityConfig::new()
             .identity_ca(p("identity_ca_cert.pem"))
@@ -85,7 +87,9 @@ mod app {
             }
             #[cfg(not(feature = "security"))]
             {
-                anyhow::bail!("--dds-secure requires the security feature to be enabled at build time")
+                anyhow::bail!(
+                    "--dds-secure requires the security feature to be enabled at build time"
+                )
             }
         } else {
             tracing::warn!(

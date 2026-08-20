@@ -95,10 +95,7 @@ impl OrchestratorDds {
         Self::build(dataspace, decider)
     }
 
-    fn build(
-        dataspace: Arc<DataSpace>,
-        decider: Arc<dyn QosDecider>,
-    ) -> Result<Self> {
+    fn build(dataspace: Arc<DataSpace>, decider: Arc<dyn QosDecider>) -> Result<Self> {
         let api_qos = dds_dataspace::qos::profiles::tasks(Some(DataSpace::STRENGTH_CLIENT))?;
         let api_tasks_writer = dataspace.tasks_writer_with(&api_qos);
         Ok(Self {

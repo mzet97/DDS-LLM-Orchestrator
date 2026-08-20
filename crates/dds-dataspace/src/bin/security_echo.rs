@@ -24,18 +24,24 @@ fn security_config(dir: &Path, role: &str) -> SecurityConfig {
         .permissions_ca(p("permissions_ca_cert.pem"));
 
     match role {
-        "publisher" => config = config
-            .identity_certificate(p("publisher_cert.pem"))
-            .identity_private_key(p("publisher_key.pem"))
-            .permissions(p("permissions_publisher.p7s")),
-        "subscriber" => config = config
-            .identity_certificate(p("subscriber_cert.pem"))
-            .identity_private_key(p("subscriber_key.pem"))
-            .permissions(p("permissions_subscriber.p7s")),
-        "intruder" => config = config
-            .identity_certificate(p("intruder_cert.pem"))
-            .identity_private_key(p("intruder_key.pem"))
-            .permissions(p("permissions_intruder.p7s")),
+        "publisher" => {
+            config = config
+                .identity_certificate(p("publisher_cert.pem"))
+                .identity_private_key(p("publisher_key.pem"))
+                .permissions(p("permissions_publisher.p7s"))
+        }
+        "subscriber" => {
+            config = config
+                .identity_certificate(p("subscriber_cert.pem"))
+                .identity_private_key(p("subscriber_key.pem"))
+                .permissions(p("permissions_subscriber.p7s"))
+        }
+        "intruder" => {
+            config = config
+                .identity_certificate(p("intruder_cert.pem"))
+                .identity_private_key(p("intruder_key.pem"))
+                .permissions(p("permissions_intruder.p7s"))
+        }
         _ => panic!("unknown role: {}", role),
     }
 
@@ -46,7 +52,10 @@ fn security_config(dir: &Path, role: &str) -> SecurityConfig {
 async fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() != 4 {
-        eprintln!("Usage: {} <publisher|subscriber|intruder> <domain_id> <security_dir>", args.get(0).map(|s| s.as_str()).unwrap_or("security_echo"));
+        eprintln!(
+            "Usage: {} <publisher|subscriber|intruder> <domain_id> <security_dir>",
+            args.get(0).map(|s| s.as_str()).unwrap_or("security_echo")
+        );
         std::process::exit(2);
     }
 
