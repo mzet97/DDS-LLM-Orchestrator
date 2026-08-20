@@ -34,7 +34,7 @@ required=(
   'policy_lifecycle_controls_real_dds_filesystem_side_effects'
   'concurrent_memory_claim_has_one_winner'
   'symlink'
-  '0605d9e564ef91d95903b7a490d0119f1cc0de71'
+  '04731797fd34730ab5ea9c41c8650103c841ef46'
   'miri-strict-provenance'
   'miri-disable-isolation'
   'baselines::tests::'
