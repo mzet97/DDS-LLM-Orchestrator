@@ -30,9 +30,9 @@ authors = ["Matheus Zeitune <matheus.zeitune.developer@gmail.com>"]
 license = "MIT"
 
 [workspace.dependencies]
-cyclonedds = { version = "=3.0.0" }
-cyclonedds-rust-sys = { version = "=1.2.0" }
-cyclonedds-build = { version = "=3.0.0" }
+cyclonedds = { version = "=3.0.1" }
+cyclonedds-rust-sys = { version = "=1.2.1" }
+cyclonedds-build = { version = "=3.0.1" }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)

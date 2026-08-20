@@ -34,7 +34,7 @@ required=(
   'policy_lifecycle_controls_real_dds_filesystem_side_effects'
   'concurrent_memory_claim_has_one_winner'
   'symlink'
-  'cyclonedds = { version = "=3.0.0" }'
+  'cyclonedds = { version = "=3.0.1" }'
   'miri-strict-provenance'
   'miri-disable-isolation'
   'baselines::tests::'
