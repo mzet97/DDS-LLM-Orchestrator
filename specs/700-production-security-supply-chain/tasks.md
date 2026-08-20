@@ -62,7 +62,7 @@
 - [x] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
   - Aceite: modo local não é anunciado como seguro externamente; modo externo tem
     autenticação, criptografia, access control e smokes de identidade permitida/negada.
-  - Fechada em 2026-08-20; runtime branch `candidate/t813-security` SHA `15c6cf6`,
+  - Fechada em 2026-08-20; runtime branch `candidate/t813-security` SHA `84ef6d9`,
     draft PR #3; biblioteca branch `candidate/t813-security` SHA `7c1502f`,
     draft PR #26; smokes `intruder_participant_is_rejected` e
     `secure_participants_exchange_sample` passam localmente e no CI job
