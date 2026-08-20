@@ -11,11 +11,15 @@ fn candidate_dependencies_use_exact_crates_io_versions() {
     // Then: runtime and sys use exact prerelease versions from crates.io,
     //       and build tooling uses the workspace version.
     assert!(
-        WORKSPACE_MANIFEST.contains(&format!("cyclonedds = {{ version = \"{CYCLONEDDS_VERSION}\" }}")),
+        WORKSPACE_MANIFEST.contains(&format!(
+            "cyclonedds = {{ version = \"{CYCLONEDDS_VERSION}\" }}"
+        )),
         "workspace must pin exact cyclonedds crates.io version"
     );
     assert!(
-        WORKSPACE_MANIFEST.contains(&format!("cyclonedds-rust-sys = {{ version = \"{SYS_VERSION}\" }}")),
+        WORKSPACE_MANIFEST.contains(&format!(
+            "cyclonedds-rust-sys = {{ version = \"{SYS_VERSION}\" }}"
+        )),
         "workspace must pin exact cyclonedds-rust-sys crates.io version"
     );
     assert!(
