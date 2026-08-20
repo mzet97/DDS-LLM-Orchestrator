@@ -1,5 +1,5 @@
-const CYCLONEDDS_VERSION: &str = "=3.0.0-alpha.4";
-const SYS_VERSION: &str = "=1.1.2";
+const CYCLONEDDS_VERSION: &str = "=3.0.0";
+const SYS_VERSION: &str = "=1.2.0";
 const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
 const CONTRACT_MANIFEST: &str = include_str!("../Cargo.toml");
 const LOCKFILE: &str = include_str!("../../../Cargo.lock");
