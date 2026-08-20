@@ -544,8 +544,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds"
-version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
+version = "3.0.0-alpha.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7a54c14baade31ae6c27ddbc14f1e27c0a63ef1f26a576d80f213eba6ef798c3"
 dependencies = [
  "async-stream",
  "cyclonedds-derive",
@@ -558,8 +559,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds-build"
-version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
+version = "3.0.0-alpha.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a84920dbc2577c51b06f512c3e86c56134fdf2f7926c0369aba3c12bac06ca70"
 dependencies = [
  "anyhow",
  "serde",
@@ -568,8 +570,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds-derive"
-version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
+version = "3.0.0-alpha.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3add584b3a9f3a6748f0cf16172c791e313bb9d07321ae282959358cf26675da"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -578,8 +581,9 @@ dependencies = [
 
 [[package]]
 name = "cyclonedds-rust-sys"
-version = "1.1.1"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "19852ba33e1c450563fa0f5b441ae2b7adaa883ca56c4e239b0c1a5ddad2b35f"
 dependencies = [
  "cyclonedds-src",
 ]
@@ -587,7 +591,8 @@ dependencies = [
 [[package]]
 name = "cyclonedds-src"
 version = "1.0.2"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd254b42f42f678a72ba3a549b9a86ada9418ce0f60add965f4f752d94e088f6"
 
 [[package]]
 name = "dashmap"
