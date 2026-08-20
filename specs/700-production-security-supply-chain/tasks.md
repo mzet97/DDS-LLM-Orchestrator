@@ -1,6 +1,6 @@
 # Tasks 700 — Segurança de produção e supply chain Rust
 
-- [ ] **T-801 · Recuperar ordem SDD e congelar snapshots** (REQ-712)
+- [x] **T-801 · Recuperar ordem SDD e congelar snapshots** (REQ-712)
   - Aceite: fase 500 fechada com evidência; SHAs/worktrees limpos e threat model
     registrados; nenhum patch usa o checkout sujo original da biblioteca.
 
@@ -20,19 +20,19 @@
   - Aceite: loopback default; exposição externa sem auth não inicia; requests inválidos,
     grandes ou acima de quota falham antes do DDS; identidade não é `http-client` global.
 
-- [ ] **T-806 · Política MCP fail-closed e security level tipado** (REQ-705)
+- [x] **T-806 · Política MCP fail-closed e security level tipado** (REQ-705)
   - Aceite: sem snapshot válido nenhuma tool executa; -1/4 são negados; snapshot/delta,
     expiração e identidade do agente têm testes DDS e logs de auditoria.
 
-- [ ] **T-807 · Claim idempotente e sandbox sem TOCTOU** (REQ-706)
+- [x] **T-807 · Claim idempotente e sandbox sem TOCTOU** (REQ-706)
   - Aceite: 2 gateways/100 calls executam 100 side effects; symlink swap concorrente não
     lê/escreve fora da raiz; erros e retries não transferem ownership silenciosamente.
 
-- [ ] **T-808 · Dezoito tópicos e enum IDL único** (REQ-708)
+- [x] **T-808 · Dezoito tópicos e enum IDL único** (REQ-708)
   - Aceite: `SystemMetrics`/`ServerStatus` têm QoS, lifecycle e streams/escritas públicas;
     geração e TypeIds comprovam enum idêntico em Rust/C++/Python.
 
-- [ ] **T-809 · Integração reproduzível do candidato** (REQ-707)
+- [x] **T-809 · Integração reproduzível do candidato** (REQ-707)
   - Aceite: runtime fixa o `git rev` candidato, lock é rastreado e clone isolado
     compila/testa com `--locked` sem checkout irmão; publicação ainda não ocorre.
 
@@ -59,9 +59,14 @@
   - Fechada em 2026-08-19; branch `candidate/t812-docs` nos três repositórios; revisão
     independente em `.omo/evidence/t812-documentation-reconciliation-20260819.md`.
 
-- [ ] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
+- [x] **T-813 · Deployment DDS autenticado ou local-only explícito** (REQ-713)
   - Aceite: modo local não é anunciado como seguro externamente; modo externo tem
     autenticação, criptografia, access control e smokes de identidade permitida/negada.
+  - Fechada em 2026-08-20; runtime branch `candidate/t813-security` SHA `2745c2e`,
+    draft PR #3; biblioteca branch `candidate/t813-security` SHA `7c1502f`,
+    draft PR #26; smokes `intruder_participant_is_rejected` e
+    `secure_participants_exchange_sample` passam localmente e no CI job
+    `DDS Security local-only smoke`; evidência em `.omo/evidence/t813-security-deployment-20260820.md`.
 
 - [ ] **T-814 · Gate final, prerelease e relatório** (REQ-701..713)
   - Aceite: Gates A–G, QA pública, matriz requisito→teste→artefato e cinco lanes finais

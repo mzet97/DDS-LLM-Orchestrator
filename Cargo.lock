@@ -19,7 +19,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -239,7 +239,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -389,7 +389,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "uuid",
@@ -415,7 +415,7 @@ dependencies = [
  "orch-common",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -545,21 +545,21 @@ dependencies = [
 [[package]]
 name = "cyclonedds"
 version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=98aae322dbabd64e9cd0ab3fe3cf18822930ef87#98aae322dbabd64e9cd0ab3fe3cf18822930ef87"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "async-stream",
  "cyclonedds-derive",
  "cyclonedds-rust-sys",
  "futures-core",
  "futures-util",
- "thiserror",
+ "thiserror 2.0.20",
  "tokio",
 ]
 
 [[package]]
 name = "cyclonedds-build"
 version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=98aae322dbabd64e9cd0ab3fe3cf18822930ef87#98aae322dbabd64e9cd0ab3fe3cf18822930ef87"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "anyhow",
  "serde",
@@ -569,7 +569,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds-derive"
 version = "3.0.0-alpha.3"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=98aae322dbabd64e9cd0ab3fe3cf18822930ef87#98aae322dbabd64e9cd0ab3fe3cf18822930ef87"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -579,7 +579,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds-rust-sys"
 version = "1.1.1"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=98aae322dbabd64e9cd0ab3fe3cf18822930ef87#98aae322dbabd64e9cd0ab3fe3cf18822930ef87"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 dependencies = [
  "cyclonedds-src",
 ]
@@ -587,7 +587,7 @@ dependencies = [
 [[package]]
 name = "cyclonedds-src"
 version = "1.0.2"
-source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=98aae322dbabd64e9cd0ab3fe3cf18822930ef87#98aae322dbabd64e9cd0ab3fe3cf18822930ef87"
+source = "git+https://github.com/mzet97/cyclonedds-rust.git?rev=7c1502f178ed7d777e1001f3dc1ae7e25da81abb#7c1502f178ed7d777e1001f3dc1ae7e25da81abb"
 
 [[package]]
 name = "dashmap"
@@ -612,7 +612,7 @@ dependencies = [
  "futures",
  "regex",
  "serde",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
 ]
 
@@ -633,7 +633,7 @@ dependencies = [
  "futures-core",
  "orch-common",
  "parking_lot",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]
@@ -1273,7 +1273,7 @@ dependencies = [
  "dds-contract",
  "dds-dataspace",
  "orch-common",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]
@@ -1323,7 +1323,7 @@ dependencies = [
  "rustix",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1402,7 +1402,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1477,7 +1477,7 @@ dependencies = [
  "parking_lot",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tracing",
 ]
 
@@ -1504,7 +1504,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "subtle",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tower",
  "tracing",
@@ -1595,7 +1595,7 @@ dependencies = [
  "orch-common",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1626,7 +1626,7 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
- "thiserror",
+ "thiserror 1.0.69",
 ]
 
 [[package]]
@@ -2109,7 +2109,16 @@ version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b6aaf5339b578ea85b50e080feb250a3e8ae8cfcdff9a461c9ec2904bc923f52"
 dependencies = [
- "thiserror-impl",
+ "thiserror-impl 1.0.69",
+]
+
+[[package]]
+name = "thiserror"
+version = "2.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ec86235f5fcc2a73650310756d2ac5b138a5780bbbdfae3eeccec992c435ba4f"
+dependencies = [
+ "thiserror-impl 2.0.20",
 ]
 
 [[package]]
@@ -2121,6 +2130,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "thiserror-impl"
+version = "2.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc04cd3e1236dd4a98afca4569f2deb3f120e5422a4023be2cb683f8486292af"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

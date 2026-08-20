@@ -27,6 +27,7 @@ rustix = { version = "1.1.4", features = ["fs"] }
 [features]
 default = []
 dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+security = ["dds", "cyclonedds/security", "dds-dataspace/security", "dds-contract/security"]
 
 [[bin]]
 name = "mcp-gateway"

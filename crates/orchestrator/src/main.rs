@@ -41,12 +41,30 @@ mod app {
         http_dds_wait_timeout_ms: u64,
         #[arg(long, default_value_t = 0)]
         dds_domain: u32,
+        #[arg(long)]
+        dds_secure: bool,
+        #[arg(long)]
+        dds_security_dir: Option<PathBuf>,
         #[arg(long, default_value = "nfcm")]
         qos_manager: String,
         #[arg(long)]
         qos_profile: Option<String>,
         #[arg(long)]
         fuzzy_routing: bool,
+    }
+
+    #[cfg(feature = "security")]
+    fn security_config_from_dir(
+        dir: &std::path::Path,
+    ) -> anyhow::Result<dds_dataspace::SecurityConfig> {
+        let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
+        Ok(dds_dataspace::SecurityConfig::new()
+            .identity_ca(p("identity_ca_cert.pem"))
+            .identity_certificate(p("participant_cert.pem"))
+            .identity_private_key(p("participant_key.pem"))
+            .governance(p("governance.xml"))
+            .permissions(p("permissions.xml"))
+            .permissions_ca(p("permissions_ca_cert.pem")))
     }
 
     pub async fn run() -> anyhow::Result<()> {
@@ -58,6 +76,17 @@ mod app {
             .init();
 
         let args = Args::parse();
+
+        if args.dds_secure {
+            #[cfg(not(feature = "security"))]
+            anyhow::bail!("--dds-secure requires the security feature to be enabled at build time");
+        } else {
+            tracing::warn!(
+                "DDS running in local-only mode without authentication or encryption; \
+                 do not expose this deployment to untrusted networks"
+            );
+        }
+
         let http_config = HttpConfig::load(
             args.bind,
             args.port,
@@ -89,6 +118,27 @@ mod app {
             qos_profile = ?args.qos_profile,
             "QoS decider selected"
         );
+        #[cfg(feature = "security")]
+        let orchestrator = {
+            let security = if args.dds_secure {
+                let dir = args.dds_security_dir.as_deref().ok_or_else(|| {
+                    anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
+                })?;
+                Some(security_config_from_dir(dir)?)
+            } else {
+                None
+            };
+            Arc::new(
+                OrchestratorDds::new_with_security(
+                    args.dds_domain,
+                    decider,
+                    args.qos_profile.as_deref(),
+                    security,
+                )?
+                .with_fuzzy_routing(args.fuzzy_routing),
+            )
+        };
+        #[cfg(not(feature = "security"))]
         let orchestrator = Arc::new(
             OrchestratorDds::new(args.dds_domain, decider, args.qos_profile.as_deref())?
                 .with_fuzzy_routing(args.fuzzy_routing),

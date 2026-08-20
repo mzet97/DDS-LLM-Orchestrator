@@ -1,4 +1,4 @@
-const CANDIDATE_REV: &str = "98aae322dbabd64e9cd0ab3fe3cf18822930ef87";
+const CANDIDATE_REV: &str = "7c1502f178ed7d777e1001f3dc1ae7e25da81abb";
 const CANDIDATE_URL: &str = "https://github.com/mzet97/cyclonedds-rust.git";
 const WORKSPACE_MANIFEST: &str = include_str!("../../../Cargo.toml");
 const CONTRACT_MANIFEST: &str = include_str!("../Cargo.toml");

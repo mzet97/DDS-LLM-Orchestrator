@@ -57,6 +57,25 @@ impl AgentDds {
     pub fn new(config: AgentConfig) -> Result<Self> {
         anyhow::ensure!(config.slots > 0, "agent precisa ter ao menos um slot");
         let dataspace = DataSpace::new(config.dds_domain, DataSpace::STRENGTH_AGENT)?;
+        Self::build(config, dataspace)
+    }
+
+    #[cfg(feature = "security")]
+    pub fn new_with_security(
+        config: AgentConfig,
+        security: Option<dds_dataspace::SecurityConfig>,
+    ) -> Result<Self> {
+        anyhow::ensure!(config.slots > 0, "agent precisa ter ao menos um slot");
+        let dataspace = DataSpace::new_with_profile_and_security(
+            config.dds_domain,
+            DataSpace::STRENGTH_AGENT,
+            None,
+            security,
+        )?;
+        Self::build(config, dataspace)
+    }
+
+    fn build(config: AgentConfig, dataspace: DataSpace) -> Result<Self> {
         let writer_pool = dataspace.new_writer_pool(2, 4096);
         Ok(Self {
             claim_permits: Arc::new(Semaphore::new(config.slots as usize)),

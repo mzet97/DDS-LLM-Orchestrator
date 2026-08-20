@@ -55,6 +55,29 @@ pub fn build_service(
 ) -> Result<Arc<ToolCallService<DataSpace>>> {
     let data_space = DataSpace::new(domain_id, DataSpace::STRENGTH_ORCHESTRATOR)
         .context("falha ao subir o DataSpace")?;
+    build_service_from_data_space(data_space, filesystem_root)
+}
+
+#[cfg(feature = "security")]
+pub fn build_service_with_security(
+    domain_id: u32,
+    filesystem_root: impl AsRef<Path>,
+    security: Option<dds_dataspace::SecurityConfig>,
+) -> Result<Arc<ToolCallService<DataSpace>>> {
+    let data_space = DataSpace::new_with_profile_and_security(
+        domain_id,
+        DataSpace::STRENGTH_ORCHESTRATOR,
+        None,
+        security,
+    )
+    .context("falha ao subir o DataSpace")?;
+    build_service_from_data_space(data_space, filesystem_root)
+}
+
+fn build_service_from_data_space(
+    data_space: DataSpace,
+    filesystem_root: impl AsRef<Path>,
+) -> Result<Arc<ToolCallService<DataSpace>>> {
     let filesystem_root = filesystem_root.as_ref();
     let registry = default_registry(filesystem_root)?;
     let claims = Arc::new(

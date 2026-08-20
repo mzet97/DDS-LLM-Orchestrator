@@ -76,6 +76,26 @@ impl OrchestratorDds {
             DataSpace::STRENGTH_ORCHESTRATOR,
             qos_profile,
         )?);
+        Self::build(dataspace, decider)
+    }
+
+    #[cfg(feature = "security")]
+    pub fn new_with_security(
+        domain_id: u32,
+        decider: Arc<dyn QosDecider>,
+        qos_profile: Option<&str>,
+        security: Option<dds_dataspace::SecurityConfig>,
+    ) -> Result<Self> {
+        let dataspace = Arc::new(DataSpace::new_with_profile_and_security(
+            domain_id,
+            DataSpace::STRENGTH_ORCHESTRATOR,
+            qos_profile,
+            security,
+        )?);
+        Self::build(dataspace, decider)
+    }
+
+    fn build(dataspace: Arc<DataSpace>, decider: Arc<dyn QosDecider>) -> Result<Self> {
         let api_qos = dds_dataspace::qos::profiles::tasks(Some(DataSpace::STRENGTH_CLIENT))?;
         let api_tasks_writer = dataspace.tasks_writer_with(&api_qos);
         Ok(Self {
