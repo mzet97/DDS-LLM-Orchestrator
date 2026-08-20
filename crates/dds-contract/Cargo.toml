@@ -24,3 +24,4 @@ regex = "1"
 default = []
 # Liga geração IDL + runtime CycloneDDS (build C via cmake).
 dds = ["dep:cyclonedds"]
+security = ["dds", "cyclonedds/security"]

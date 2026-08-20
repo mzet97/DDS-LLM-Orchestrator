@@ -29,6 +29,12 @@ cyclonedds-rust-sys = { workspace = true }
 [features]
 default = []
 dds = ["dep:cyclonedds", "dds-contract/dds"]
+security = ["dds", "cyclonedds/security", "dds-contract/security"]
+
+[[bin]]
+name = "security_echo"
+path = "src/bin/security_echo.rs"
+required-features = ["security"]
 
 [[bench]]
 name = "write_loan"

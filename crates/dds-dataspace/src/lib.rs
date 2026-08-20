@@ -31,6 +31,8 @@ pub type TopicCache<T> = Arc<DashMap<String, T>>;
 
 #[cfg(feature = "dds")]
 use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscriber, Topic};
+#[cfg(feature = "security")]
+pub use cyclonedds::SecurityConfig;
 #[cfg(feature = "dds")]
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
@@ -218,6 +220,34 @@ pub(crate) fn select_task_writer_slot(task_id: &str, pool_len: usize) -> usize {
 }
 
 #[cfg(feature = "dds")]
+fn create_participant(
+    domain_id: u32,
+    #[cfg(feature = "security")] security: Option<SecurityConfig>,
+) -> Result<DomainParticipant, api::DataSpaceError> {
+    #[cfg(feature = "security")]
+    if let Some(sec) = security {
+        let qos = cyclonedds::QosBuilder::new()
+            .security(sec)
+            // CycloneDDS exige as propriedades de plugin dynamic loader para
+            // auth/crypto/access. A biblioteca rust configura os nomes dos
+            // plugins built-in, mas não os entrypoints das bibliotecas nativas.
+            .property("dds.sec.auth.library.path", "dds_security_auth")
+            .property("dds.sec.auth.library.init", "init_authentication")
+            .property("dds.sec.auth.library.finalize", "finalize_authentication")
+            .property("dds.sec.crypto.library.path", "dds_security_crypto")
+            .property("dds.sec.crypto.library.init", "init_crypto")
+            .property("dds.sec.crypto.library.finalize", "finalize_crypto")
+            .property("dds.sec.access.library.path", "dds_security_ac")
+            .property("dds.sec.access.library.init", "init_access_control")
+            .property("dds.sec.access.library.finalize", "finalize_access_control")
+            .build()
+            .map_err(err)?;
+        return DomainParticipant::with_qos(domain_id, Some(&qos)).map_err(err);
+    }
+    DomainParticipant::new(domain_id).map_err(err)
+}
+
+#[cfg(feature = "dds")]
 impl DataSpace {
     /// Strength por papel (Fase 2.2 já validada no Python): cliente<agente<orq.
     pub const STRENGTH_CLIENT: i32 = 10;
@@ -245,7 +275,38 @@ impl DataSpace {
         ownership_strength: i32,
         profile_name: Option<&str>,
     ) -> Result<Self, api::DataSpaceError> {
-        let participant = DomainParticipant::new(domain_id).map_err(err)?;
+        #[cfg(feature = "security")]
+        return Self::new_with_profile_and_security(
+            domain_id,
+            ownership_strength,
+            profile_name,
+            None,
+        );
+        #[cfg(not(feature = "security"))]
+        {
+            let participant = create_participant(domain_id)?;
+            Self::build_data_space(domain_id, participant, ownership_strength, profile_name)
+        }
+    }
+
+    /// Sobe o DataSpace com perfil QoS opcional e configuração DDS Security.
+    #[cfg(feature = "security")]
+    pub fn new_with_profile_and_security(
+        domain_id: u32,
+        ownership_strength: i32,
+        profile_name: Option<&str>,
+        security: Option<SecurityConfig>,
+    ) -> Result<Self, api::DataSpaceError> {
+        let participant = create_participant(domain_id, security)?;
+        Self::build_data_space(domain_id, participant, ownership_strength, profile_name)
+    }
+
+    fn build_data_space(
+        domain_id: u32,
+        participant: DomainParticipant,
+        ownership_strength: i32,
+        profile_name: Option<&str>,
+    ) -> Result<Self, api::DataSpaceError> {
         let publisher = Publisher::new(&participant).map_err(err)?;
         let subscriber = Subscriber::new(&participant).map_err(err)?;
 

@@ -28,6 +28,7 @@ serde_json = { workspace = true }
 [features]
 default = []
 dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+security = ["dds", "cyclonedds/security", "dds-dataspace/security", "dds-contract/security"]
 
 [[bin]]
 name = "agent"
