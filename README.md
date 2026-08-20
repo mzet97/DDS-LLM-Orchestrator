@@ -113,6 +113,29 @@ see `src/llama_cpp/`):
 CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds
 ```
 
+### DDS Security (local-only)
+
+The runtime supports OMG DDS Security via the `security` feature. This is
+**intentionally local-only for now** — it authenticates participants with
+X.509 certificates and encrypts discovery/user data, but it does not replace
+network-level segmentation and is not exposed as a multi-host deployment option.
+
+```bash
+# Run the security smoke test (uses separate processes because CycloneDDS
+# skips the security handshake for in-process participants).
+CYCLONEDDS_STATIC=1 cargo test -p dds-dataspace --features dds,security \
+  --test security_smoke -- --test-threads=1
+
+# Run a component with DDS Security enabled (uses certificates under
+# config/dds/security/ by default).
+CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds,security -- \
+  --dds-secure --dds-security-dir ./config/dds/security
+```
+
+See `config/dds/security/generate-certs.sh` for regenerating the local test
+artefacts (identity/permissions CAs, governance and permissions P7S). These
+certificates are test fixtures only; do not reuse them in production.
+
 ## Crates
 
 | Crate | Role |
