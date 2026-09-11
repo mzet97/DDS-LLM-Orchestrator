@@ -156,6 +156,24 @@ async fn traversal_symlink_negado() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn symlink_component_inside_root_is_denied() {
+    let tmp = TempDir::new("fs-internal-symlink");
+    std::fs::create_dir(tmp.path().join("real")).unwrap();
+    std::fs::write(tmp.path().join("real/secret.txt"), "inside").unwrap();
+    std::os::unix::fs::symlink("real", tmp.path().join("link")).unwrap();
+    let registry = registry_with_fs(tmp.path());
+
+    let err = registry
+        .dispatch(
+            FilesystemTool::READ_FILE,
+            &args(serde_json::json!({"path": "link/secret.txt"})),
+        )
+        .await
+        .expect_err("every symlink component must be denied");
+    assert!(matches!(err, ToolError::PathTraversal(_)), "veio {err:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn write_traversal_dotdot_negado() {
     let tmp = TempDir::new("fs-wdotdot");
     let registry = registry_with_fs(tmp.path());
@@ -249,4 +267,22 @@ async fn nao_encontrado_e_argumentos_invalidos() {
         matches!(err, ToolError::InvalidArguments(_)),
         "veio {err:?}"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn internal_claim_directory_is_not_a_tool_path() {
+    let tmp = TempDir::new("fs-claims-private");
+    std::fs::create_dir(tmp.path().join(".mcp-claims")).unwrap();
+    std::fs::write(tmp.path().join(".mcp-claims/claim"), "owner").unwrap();
+    let registry = registry_with_fs(tmp.path());
+    for path in [".mcp-claims/claim", "./.mcp-claims/claim"] {
+        let error = registry
+            .dispatch(
+                FilesystemTool::READ_FILE,
+                &args(serde_json::json!({"path": path})),
+            )
+            .await
+            .expect_err("claim storage stays private");
+        assert!(matches!(error, ToolError::PathTraversal(_)));
+    }
 }

@@ -19,7 +19,7 @@
 
 use serde_json::Value;
 
-use crate::engine::security_level_name;
+use crate::engine::SecurityLevel;
 use crate::error::PolicyError;
 
 /// Resultado da avaliação de uma regra de política.
@@ -94,6 +94,10 @@ impl PolicyDocument {
     /// (O ramo `provider_constraint == "LOCAL_ONLY"` fica no gateway, não na
     /// política, e não é portado aqui.)
     pub fn check_llm_request(&self, agent_id: &str, security_level: i32) -> PolicyDecision {
+        let security_level = match SecurityLevel::try_from(security_level) {
+            Ok(level) => level,
+            Err(error) => return PolicyDecision::Denied(error.to_string()),
+        };
         if self.is_empty() {
             return PolicyDecision::AllowedNoPolicy;
         }
@@ -125,7 +129,7 @@ impl PolicyDocument {
             }
         }
 
-        let sec_level_str = security_level_name(security_level);
+        let sec_level_str = security_level.name();
         let allowed_levels = str_list(agent_policy, "allowed_security_levels");
         if !allowed_levels.contains(&sec_level_str) {
             return PolicyDecision::Denied(format!(

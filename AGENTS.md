@@ -38,18 +38,18 @@ Nunca marque uma task como feita sem o teste verde. Nunca pule a spec.
 
 ## 4. Comandos canônicos
 ```bash
-cd tese/src/rust
+cd <raiz-deste-worktree-rust>
 cargo test -p <crate>                 # testes de uma crate
 cargo test --workspace                # tudo (sem feature dds → não builda o C)
 CYCLONEDDS_STATIC=1 cargo build -p <crate> --features dds # runtime DDS real (ver nota de ambiente)
 cargo clippy --workspace -- -D warnings
 cargo fmt --all
 # gerar tipos do IDL (Fase 0):
-cargo run -p cyclonedds-idlc -- --input ../../src/llama_cpp/dds/idl/OrchestratorDDS.idl \
+cargo run -p cyclonedds-idlc -- --input /path/to/main/project/src/llama_cpp/dds/idl/OrchestratorDDS.idl \
   --output-dir crates/dds-contract/src/generated/   # caminho exato: ver specs/000-dds-contract
 ```
 - **DDS em teste:** rode com domínio ≤ 232. Isole domínios por teste para não cruzar tráfego.
-- A crate `cyclonedds` está em `third_party/cyclonedds-rust/cyclonedds-rust/` (path dep).
+- A crate `cyclonedds` é dependência Git fixada por `rev` em `Cargo.toml`/`Cargo.lock` (não path dep deste worktree).
 - **⚠️ Ambiente SMB/CIFS (o repo está num mount `smb2` que NÃO suporta symlink).** Por padrão o
   `cyclonedds-rust-sys` compila o CycloneDDS como **.so compartilhada**, e o CMake cria symlinks
   de versão (`libddsc.so.11 → .so.11.0.0`) que **falham no SMB** → o build C aborta. Use SEMPRE

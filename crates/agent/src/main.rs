@@ -33,6 +33,14 @@ struct Args {
     #[arg(long, default_value_t = 0)]
     dds_domain: u32,
 
+    /// Enable DDS Security (requires --dds-security-dir)
+    #[arg(long)]
+    dds_secure: bool,
+
+    /// Directory containing DDS Security certificates and policy files
+    #[arg(long)]
+    dds_security_dir: Option<String>,
+
     /// Number of concurrent slots
     #[arg(long, default_value_t = 8)]
     slots: u32,
@@ -68,12 +76,25 @@ fn parse_specialization(s: &str) -> Specialization {
     }
 }
 
+#[cfg(feature = "security")]
+fn security_config_from_dir(dir: &std::path::Path) -> Result<dds_dataspace::SecurityConfig> {
+    let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    Ok(dds_dataspace::SecurityConfig::new()
+        .identity_ca(p("identity_ca_cert.pem"))
+        .identity_certificate(p("participant_cert.pem"))
+        .identity_private_key(p("participant_key.pem"))
+        .governance(p("governance.xml"))
+        .permissions(p("permissions.xml"))
+        .permissions_ca(p("permissions_ca_cert.pem")))
+}
+
 #[cfg(feature = "dds")]
 #[tokio::main]
 async fn main() -> Result<()> {
     use agent::dds::AgentDds;
     use agent::engine::MockEngine;
     use agent::engine_dds::DdsEngine;
+    use std::path::PathBuf;
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -82,6 +103,16 @@ async fn main() -> Result<()> {
         .init();
     let args = Args::parse();
     let spec = parse_specialization(&args.specialization);
+
+    if args.dds_secure {
+        #[cfg(not(feature = "security"))]
+        anyhow::bail!("--dds-secure requires the security feature to be enabled at build time");
+    } else {
+        tracing::warn!(
+            "DDS running in local-only mode without authentication or encryption; \
+             do not expose this deployment to untrusted networks"
+        );
+    }
 
     let config = AgentConfig {
         agent_id: args.agent_id.clone(),
@@ -104,6 +135,23 @@ async fn main() -> Result<()> {
         "agent iniciando (DDS)"
     );
 
+    #[cfg(feature = "security")]
+    let runtime = {
+        let security = if args.dds_secure {
+            let dir = args
+                .dds_security_dir
+                .as_deref()
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
+                })?;
+            Some(security_config_from_dir(&dir)?)
+        } else {
+            None
+        };
+        Arc::new(AgentDds::new_with_security(config, security)?)
+    };
+    #[cfg(not(feature = "security"))]
     let runtime = Arc::new(AgentDds::new(config)?);
     let _heartbeat = runtime.spawn_heartbeat();
 

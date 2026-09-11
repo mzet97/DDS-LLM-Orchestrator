@@ -7,9 +7,9 @@ license.workspace = true
 description = "Gateway LLM: roteia requisições a provedores (local C++ / cloud), multi-worker real. Substitui llm_gateway/."
 
 [dependencies]
-dds-dataspace = { path = "../dds-dataspace" }
-dds-contract = { path = "../dds-contract" }
-orch-common = { path = "../orch-common" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }

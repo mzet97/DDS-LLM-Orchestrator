@@ -9,6 +9,8 @@
 //! - State machine para transições de task
 //! - Failover cascading (T-424)
 
+pub mod http;
+pub mod http_config;
 pub mod state_machine;
 
 #[cfg(feature = "dds")]
@@ -21,6 +23,7 @@ mod qos_routing;
 mod qos_monitor;
 
 use dds_contract::generated::dds_llm_orchestrator::Task;
+use orch_common::ModelSpecialization;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
@@ -200,13 +203,17 @@ pub fn select_agent(
 }
 
 fn matches_specialization(agent_spec: &str, required: i32) -> bool {
-    match agent_spec.to_uppercase().as_str() {
-        "TEXT" => true,                             // TEXT aceita qualquer coisa
-        "VISION" => required == 0 || required == 1, // TEXT ou VISION
-        "EMBEDDING" => required == 2,
-        "TRANSCRIPTION" => required == 3,
-        _ => false,
-    }
+    let agent = match agent_spec.to_uppercase().as_str() {
+        "TEXT" => ModelSpecialization::Text,
+        "VISION" => ModelSpecialization::Vision,
+        "EMBEDDING" => ModelSpecialization::Embedding,
+        "TRANSCRIPTION" => ModelSpecialization::Transcription,
+        _ => return false,
+    };
+    let Ok(required) = ModelSpecialization::try_from(required) else {
+        return false;
+    };
+    agent.can_serve(required)
 }
 
 /// Build failover chains from `FailoverConfig` and register them on `GatewayProviders`.

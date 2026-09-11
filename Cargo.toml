@@ -1,6 +1,6 @@
 # Workspace da migração para Rust do orquestrador DDS-LLM.
-# Usa a crate `cyclonedds` publicada (crates.io, v2.0.0 — mesmo código de
-# third_party/cyclonedds-rust) — mesmo wire format (XTypes/XCDR) do C++
+# Usa o candidato auditado de `cyclonedds` publicado no crates.io — mesmo
+# wire format (XTypes/XCDR) do C++
 # (llama_cpp) e do Python atual, permitindo migração incremental nos MESMOS
 # tópicos DDS. Ver MIGRATION_PLAN.md.
 [workspace]
@@ -33,8 +33,9 @@ authors = ["Matheus Zeitune <matheus.zeitune.developer@gmail.com>"]
 license = "MIT"
 
 [workspace.dependencies]
-cyclonedds = { path = "../../third_party/cyclonedds-rust/cyclonedds" }
-cyclonedds-rust-sys = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust-sys" }
+cyclonedds = { version = "=3.0.1" }
+cyclonedds-rust-sys = { version = "=1.2.1" }
+cyclonedds-build = { version = "=3.0.1" }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)

@@ -112,6 +112,10 @@ pub struct TopicCaches {
     pub agents: FastMap<String, ArcAgentState>,
     pub outputs: FastMap<String, Vec<ArcTaskOutput>>,
 
+    // Runtime telemetry (2)
+    pub system_metrics: FastMap<String, ArcSystemMetric>,
+    pub server_status: FastMap<String, ArcServerStatus>,
+
     // Tópicos LLM (3)
     pub llm_requests: FastMap<String, ArcLLMRequest>,
     pub llm_results: FastMap<String, Vec<ArcLLMResult>>,
@@ -253,6 +257,41 @@ impl TopicCaches {
         self.tool_calls.get(call_id).map(|c| c.clone())
     }
 
+    pub fn upsert_system_metric(&self, metric: SystemMetric) -> ArcSystemMetric {
+        let key = format!("{}\u{1f}{}", metric.metric_name, metric.component_id);
+        self.system_metrics
+            .entry(key)
+            .and_modify(|current| {
+                if metric.timestamp_ns >= current.timestamp_ns {
+                    *current = Arc::new(metric.clone());
+                }
+            })
+            .or_insert_with(|| Arc::new(metric))
+            .clone()
+    }
+
+    pub fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Option<ArcSystemMetric> {
+        let key = format!("{metric_name}\u{1f}{component_id}");
+        self.system_metrics.get(&key).map(|metric| metric.clone())
+    }
+
+    pub fn upsert_server_status(&self, status: ServerStatus) -> ArcServerStatus {
+        let status = Arc::new(status);
+        self.server_status
+            .insert(status.server_id.clone(), Arc::clone(&status));
+        status
+    }
+
+    pub fn read_server_status(&self, server_id: &str) -> Option<ArcServerStatus> {
+        self.server_status
+            .get(server_id)
+            .map(|status| status.clone())
+    }
+
     // ── LLM caches ──────────────────────────────────────────────────────
 
     pub fn upsert_llm_request(&self, req: LLMInferenceRequest) -> ArcLLMRequest {
@@ -346,7 +385,7 @@ impl TopicCaches {
         self.tool_calls
             .entry(call.call_id.clone())
             .and_modify(|cur| {
-                if call.created_at_ns >= cur.created_at_ns {
+                if call_supersedes_tool_call(&call, cur) {
                     *cur = Arc::new(call.clone());
                 }
             })
@@ -622,4 +661,24 @@ fn is_regression(new: &Task, cur: &Task) -> bool {
     }
     // status avançou; incoming quer voltar → regressão
     new.status < cur.status
+}
+
+fn call_supersedes_tool_call(new: &ToolCallRequest, cur: &ToolCallRequest) -> bool {
+    if new.created_at_ns < cur.created_at_ns {
+        return false;
+    }
+    if is_call_terminal(cur.status) {
+        return false;
+    }
+    if is_call_terminal(new.status) {
+        return true;
+    }
+    if new.status < cur.status {
+        return false;
+    }
+    true
+}
+
+fn is_call_terminal(status: i32) -> bool {
+    matches!(status, 2 | 4 | 5)
 }

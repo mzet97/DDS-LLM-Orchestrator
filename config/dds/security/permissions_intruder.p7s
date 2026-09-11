@@ -1,0 +1,64 @@
+MIME-Version: 1.0
+Content-Type: multipart/signed; protocol="application/x-pkcs7-signature"; micalg="sha-256"; boundary="----8E324E2D1BC24D0D0DEDBDC415975032"
+
+This is an S/MIME signed message
+
+------8E324E2D1BC24D0D0DEDBDC415975032
+Content-Type: text/plain
+
+<?xml version="1.0" encoding="UTF-8"?>
+<dds xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+     xsi:noNamespaceSchemaLocation="https://www.omg.org/spec/DDS-SECURITY/20170901/omg_shared_ca_permissions.xsd">
+  <permissions>
+    <grant name="IntruderGrant">
+      <subject_name>CN=Intruder, O=DDS-LLM-Orchestrator, C=BR</subject_name>
+      <validity>
+        <not_before>2026-01-01T00:00:00</not_before>
+        <not_after>2027-01-01T00:00:00</not_after>
+      </validity>
+      <default>DENY</default>
+    </grant>
+  </permissions>
+</dds>
+
+------8E324E2D1BC24D0D0DEDBDC415975032
+Content-Type: application/x-pkcs7-signature; name="smime.p7s"
+Content-Transfer-Encoding: base64
+Content-Disposition: attachment; filename="smime.p7s"
+
+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
+
+------8E324E2D1BC24D0D0DEDBDC415975032--
+

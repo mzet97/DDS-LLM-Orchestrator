@@ -33,6 +33,11 @@ pub struct InMemoryDataSpace {
     agent_tx: broadcast::Sender<AgentState>,
     output_tx: broadcast::Sender<Arc<TaskOutput>>,
 
+    system_metrics: DashMap<(String, String), SystemMetric>,
+    server_status: DashMap<String, ServerStatus>,
+    system_metric_tx: broadcast::Sender<SystemMetric>,
+    server_status_tx: broadcast::Sender<ServerStatus>,
+
     // Tópicos LLM
     llm_requests: DashMap<String, LLMInferenceRequest>,
     llm_results: DashMap<String, Vec<LLMInferenceResult>>,
@@ -87,6 +92,8 @@ impl InMemoryDataSpace {
         let (task_tx, _) = broadcast::channel(1024);
         let (agent_tx, _) = broadcast::channel(1024);
         let (output_tx, _) = broadcast::channel(1024);
+        let (system_metric_tx, _) = broadcast::channel(1024);
+        let (server_status_tx, _) = broadcast::channel(1024);
         let (llm_request_tx, _) = broadcast::channel(1024);
         let (llm_result_tx, _) = broadcast::channel(1024);
         let (llm_error_tx, _) = broadcast::channel(1024);
@@ -110,6 +117,10 @@ impl InMemoryDataSpace {
             task_tx,
             agent_tx,
             output_tx,
+            system_metrics: DashMap::new(),
+            server_status: DashMap::new(),
+            system_metric_tx,
+            server_status_tx,
 
             llm_requests: DashMap::new(),
             llm_results: DashMap::new(),
@@ -237,6 +248,47 @@ impl DataSpaceApi for InMemoryDataSpace {
     }
 
     impl_subscribe!(subscribe_task_outputs, output_tx, Arc<TaskOutput>);
+
+    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), DataSpaceError> {
+        self.system_metrics.insert(
+            (metric.metric_name.clone(), metric.component_id.clone()),
+            metric.clone(),
+        );
+        let _ = self.system_metric_tx.send(metric);
+        Ok(())
+    }
+
+    async fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Result<Option<SystemMetric>, DataSpaceError> {
+        Ok(self
+            .system_metrics
+            .get(&(metric_name.to_owned(), component_id.to_owned()))
+            .map(|metric| metric.clone()))
+    }
+
+    impl_subscribe!(subscribe_system_metrics, system_metric_tx, SystemMetric);
+
+    async fn write_server_status(&self, status: ServerStatus) -> Result<(), DataSpaceError> {
+        self.server_status
+            .insert(status.server_id.clone(), status.clone());
+        let _ = self.server_status_tx.send(status);
+        Ok(())
+    }
+
+    async fn read_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<ServerStatus>, DataSpaceError> {
+        Ok(self
+            .server_status
+            .get(server_id)
+            .map(|status| status.clone()))
+    }
+
+    impl_subscribe!(subscribe_server_status, server_status_tx, ServerStatus);
 
     // === LLM ===
 
@@ -445,6 +497,8 @@ impl DataSpaceApi for InMemoryDataSpace {
         self.tasks.clear();
         self.agents.clear();
         self.outputs.clear();
+        self.system_metrics.clear();
+        self.server_status.clear();
         self.llm_requests.clear();
         self.llm_results.clear();
         self.llm_errors.clear();

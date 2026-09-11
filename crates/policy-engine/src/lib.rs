@@ -30,7 +30,9 @@ pub mod rules;
 pub mod service;
 
 pub use cache::PolicyCache;
-pub use engine::{security_level_name, LocalPolicyEngine, SecurityLevel, ToolCallStatus};
+pub use engine::{
+    security_level_name, InvalidSecurityLevel, LocalPolicyEngine, SecurityLevel, ToolCallStatus,
+};
 pub use error::PolicyError;
 pub use rules::{PolicyDecision, PolicyDocument};
 pub use service::PolicyEngineService;

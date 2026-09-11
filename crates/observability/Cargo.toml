@@ -7,9 +7,9 @@ license.workspace = true
 description = "Observabilidade: sink JSONL, coletores QoS/Trace e trackers (tokens/RTT/custo). Porte de observability/, qos_collector/, trace_collector/, metrics/ (Python)."
 
 [dependencies]
-dds-contract = { path = "../dds-contract" }
-dds-dataspace = { path = "../dds-dataspace" }
-orch-common = { path = "../orch-common" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

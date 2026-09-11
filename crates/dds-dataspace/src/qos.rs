@@ -100,11 +100,13 @@ pub mod profiles {
     }
 
     /// `ServerStatus`: BestEffort, Volatile, KeepLast(1), Shared.
-    ///
-    /// Reúso do perfil de `SystemMetrics` para manter compatibilidade com
-    /// o contrato canônico de telemetria de operação leve do agente.
+    /// Matches the keyless heartbeat semantics of the C++ llama-server.
     pub fn server_status() -> DdsResult<Qos> {
-        system_metrics()
+        QosBuilder::new()
+            .best_effort()
+            .durability(Durability::Volatile)
+            .history(History::KeepLast(1))
+            .build()
     }
 
     /// `QoS.Metric`: Reliable(5s), TransientLocal, KeepLast(100), tprio 7.

@@ -17,13 +17,14 @@ tokio = { workspace = true }
 futures = { workspace = true }
 
 [build-dependencies]
-cyclonedds-build = { path = "../../../../third_party/cyclonedds-rust/cyclonedds-build" }
+cyclonedds-build = { workspace = true }
 regex = "1"
 
 [features]
 default = []
 # Liga geração IDL + runtime CycloneDDS (build C via cmake).
 dds = ["dep:cyclonedds"]
+security = ["dds", "cyclonedds/security"]
 
 [lints]
 workspace = true

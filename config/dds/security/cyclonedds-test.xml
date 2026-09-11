@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Configuração CycloneDDS mínima para os smokes de DDS Security rodarem em
+  loopback/local-only (T-813). O handshake de autenticação OMG DDS Security
+  exige que os participantes se descubram via SPDP; em algumas interfaces a
+  descoberta multicast default do CycloneDDS não faz loopback local, fazendo o
+  subscriber reenviar handshake_init_message indefinidamente e dar timeout.
+
+  AllowMulticast=spdp    -> SPDP continua multicast; dados/traffic via unicast.
+  EnableMulticastLoopback=true -> garante que o multicast local seja recebido
+                                  pelo próprio host, essencial quando ambos os
+                                  processos do smoke estão na mesma máquina.
+
+  NÃO use esta configuração em deploys reais de múltiplos hosts; ela é
+  intencionalmente restrita aos testes local-only do runtime.
+-->
+<CycloneDDS xmlns="https://cdds.io/config"
+            xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <Domain id="any">
+    <General>
+      <AllowMulticast>spdp</AllowMulticast>
+      <EnableMulticastLoopback>true</EnableMulticastLoopback>
+    </General>
+  </Domain>
+</CycloneDDS>

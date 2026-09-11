@@ -10,15 +10,16 @@
 //! | `filesystem.write_file`   | `{path, content}`           | confirmação                   |
 //! | `filesystem.list_directory` | `{path}`                  | linhas `[FILE] x` / `[DIR] d` |
 //!
-//! Segurança: todo path é resolvido contra a raiz com `canonicalize` + prefix
-//! check — `..`, paths absolutos e **symlinks** que escapem da raiz viram
-//! `ToolError::PathTraversal`. Leitura/escrita têm limites de tamanho
-//! (`FsLimits`).
+//! Segurança: operações usam um directory fd fixo e `openat2` com
+//! `RESOLVE_BENEATH|RESOLVE_NO_SYMLINKS` até o open final. Leitura/escrita
+//! têm limites de tamanho (`FsLimits`).
 
 use crate::error::ToolError;
 use crate::handler::{ToolFuture, ToolHandler};
+use crate::tools::sandbox::SandboxRoot;
 use serde::Deserialize;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use std::sync::Arc;
 
 /// Limites de tamanho do sandbox.
 #[derive(Debug, Clone, Copy)]
@@ -63,7 +64,7 @@ struct WriteArgs {
 /// Handler das operações `filesystem.*` — cada instância cobre UMA operação,
 /// todas compartilhando a mesma raiz canonicalizada e limites.
 pub struct FilesystemTool {
-    root: PathBuf,
+    root: Arc<SandboxRoot>,
     limits: FsLimits,
     op: FsOp,
 }
@@ -89,11 +90,11 @@ impl FilesystemTool {
         root: impl AsRef<Path>,
         limits: FsLimits,
     ) -> Result<Vec<Self>, ToolError> {
-        let root = canonical_root(root.as_ref())?;
+        let root = Arc::new(SandboxRoot::open(root.as_ref())?);
         Ok([FsOp::ReadFile, FsOp::WriteFile, FsOp::ListDirectory]
             .into_iter()
             .map(|op| Self {
-                root: root.clone(),
+                root: Arc::clone(&root),
                 limits,
                 op,
             })
@@ -102,82 +103,12 @@ impl FilesystemTool {
 
     /// Raiz canonicalizada do sandbox.
     pub fn root(&self) -> &Path {
-        &self.root
-    }
-
-    /// Resolve `raw` contra a raiz e garante que o resultado fica DENTRO dela.
-    ///
-    /// - `must_exist = true` (read/list): canonicaliza o path inteiro (resolve
-    ///   `..` e symlinks) — inexistente vira `NotFound`.
-    /// - `must_exist = false` (write): se já existir (arquivo ou symlink),
-    ///   canonicaliza tudo; senão canonicaliza o pai (que precisa existir) e
-    ///   anexa o nome do arquivo. Um symlink apontando para fora é pego pelo
-    ///   prefix check nos dois casos.
-    fn resolve(&self, raw: &str, must_exist: bool) -> Result<PathBuf, ToolError> {
-        if raw.is_empty() {
-            return Err(ToolError::InvalidArguments("path vazio".into()));
-        }
-        // join() com path absoluto SUBSTITUI a raiz — o prefix check abaixo
-        // é o que nega o escape ("/etc/passwd" nunca começa com a raiz).
-        let candidate = self.root.join(raw);
-
-        if must_exist || candidate.symlink_metadata().is_ok() {
-            let canon = candidate.canonicalize().map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    ToolError::NotFound(raw.to_string())
-                } else {
-                    ToolError::Io(e)
-                }
-            })?;
-            return self.check_within(canon, raw);
-        }
-
-        // Arquivo novo: o pai precisa existir e estar dentro da raiz.
-        let parent = candidate
-            .parent()
-            .ok_or_else(|| ToolError::InvalidArguments(format!("path inválido: '{raw}'")))?;
-        let canon_parent = parent.canonicalize().map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ToolError::NotFound(format!("diretório pai de '{raw}'"))
-            } else {
-                ToolError::Io(e)
-            }
-        })?;
-        let canon_parent = self.check_within(canon_parent, raw)?;
-        let file_name = candidate.file_name().ok_or_else(|| {
-            ToolError::InvalidArguments(format!("path sem nome de arquivo: '{raw}'"))
-        })?;
-        Ok(canon_parent.join(file_name))
-    }
-
-    /// Prefix check: `canon` (já canonicalizado) precisa estar sob a raiz.
-    fn check_within(&self, canon: PathBuf, raw: &str) -> Result<PathBuf, ToolError> {
-        if canon.starts_with(&self.root) {
-            Ok(canon)
-        } else {
-            Err(ToolError::PathTraversal(raw.to_string()))
-        }
+        self.root.display_path()
     }
 
     async fn read_file(&self, arguments_json: &str) -> Result<String, ToolError> {
         let args: PathArgs = parse_args(arguments_json)?;
-        let path = self.resolve(&args.path, true)?;
-        let meta = tokio::fs::metadata(&path).await?;
-        if meta.is_dir() {
-            return Err(ToolError::InvalidArguments(format!(
-                "'{}' é um diretório (use {})",
-                args.path,
-                Self::LIST_DIRECTORY
-            )));
-        }
-        if meta.len() > self.limits.max_read_bytes {
-            return Err(ToolError::TooLarge {
-                size: meta.len(),
-                max: self.limits.max_read_bytes,
-            });
-        }
-        let bytes = tokio::fs::read(&path).await?;
-        Ok(String::from_utf8_lossy(&bytes).into_owned())
+        self.root.read(&args.path, self.limits.max_read_bytes)
     }
 
     async fn write_file(&self, arguments_json: &str) -> Result<String, ToolError> {
@@ -189,41 +120,14 @@ impl FilesystemTool {
                 max: self.limits.max_write_bytes,
             });
         }
-        let path = self.resolve(&args.path, false)?;
-        tokio::fs::write(&path, &args.content).await?;
+        self.root.write(&args.path, args.content.as_bytes())?;
         // Mensagem idêntica à do servidor MCP oficial de filesystem.
         Ok(format!("Successfully wrote to {}", args.path))
     }
 
     async fn list_directory(&self, arguments_json: &str) -> Result<String, ToolError> {
         let args: PathArgs = parse_args(arguments_json)?;
-        let path = self.resolve(&args.path, true)?;
-        let meta = tokio::fs::metadata(&path).await?;
-        if !meta.is_dir() {
-            return Err(ToolError::InvalidArguments(format!(
-                "'{}' não é um diretório",
-                args.path
-            )));
-        }
-        let mut entries = Vec::new();
-        let mut rd = tokio::fs::read_dir(&path).await?;
-        while let Some(entry) = rd.next_entry().await? {
-            let file_type = entry.file_type().await?;
-            // Formato do servidor MCP oficial: "[FILE] nome" / "[DIR] nome".
-            let tag = if file_type.is_dir() {
-                "[DIR]"
-            } else {
-                "[FILE]"
-            };
-            entries.push(format!("{tag} {}", entry.file_name().to_string_lossy()));
-        }
-        entries.sort();
-        if entries.len() > self.limits.max_list_entries {
-            let omitted = entries.len() - self.limits.max_list_entries;
-            entries.truncate(self.limits.max_list_entries);
-            entries.push(format!("... ({omitted} entradas omitidas)"));
-        }
-        Ok(entries.join("\n"))
+        self.root.list(&args.path, self.limits.max_list_entries)
     }
 }
 
@@ -245,14 +149,6 @@ impl ToolHandler for FilesystemTool {
             }
         })
     }
-}
-
-/// Cria a raiz (se ausente) e a canonicaliza.
-fn canonical_root(root: &Path) -> Result<PathBuf, ToolError> {
-    if !root.exists() {
-        std::fs::create_dir_all(root)?;
-    }
-    Ok(root.canonicalize()?)
 }
 
 /// Parse de `arguments_json` com erro padronizado.

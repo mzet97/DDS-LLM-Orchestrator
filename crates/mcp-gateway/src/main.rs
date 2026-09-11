@@ -4,24 +4,35 @@
 //! ```bash
 //! CYCLONEDDS_STATIC=1 cargo run -p mcp-gateway --features dds -- \
 //!     --dds-domain 0 --filesystem-root /tmp/sandbox
-//! # com política de nível máximo (default: permissiva):
-//! CYCLONEDDS_STATIC=1 cargo run -p mcp-gateway --features dds -- --max-security-level 1
 //! ```
 
 use anyhow::{Context, Result};
-use mcp_gateway::policy::{PermissivePolicy, PolicyHook, SecurityPolicy};
-use std::sync::Arc;
+use std::path::PathBuf;
 
 struct Args {
     dds_domain: u32,
+    dds_secure: bool,
+    dds_security_dir: Option<String>,
     filesystem_root: String,
-    max_security_level: Option<i32>,
+}
+
+#[cfg(feature = "security")]
+fn security_config_from_dir(dir: &std::path::Path) -> Result<dds_dataspace::SecurityConfig> {
+    let p = |name: &str| dir.join(name).to_string_lossy().into_owned();
+    Ok(dds_dataspace::SecurityConfig::new()
+        .identity_ca(p("identity_ca_cert.pem"))
+        .identity_certificate(p("participant_cert.pem"))
+        .identity_private_key(p("participant_key.pem"))
+        .governance(p("governance.xml"))
+        .permissions(p("permissions.xml"))
+        .permissions_ca(p("permissions_ca_cert.pem")))
 }
 
 fn parse_args() -> Result<Args> {
     let mut dds_domain = 0u32;
+    let mut dds_secure = false;
+    let mut dds_security_dir: Option<String> = None;
     let mut filesystem_root = "/tmp/sandbox".to_string();
-    let mut max_security_level = None;
 
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -30,20 +41,21 @@ fn parse_args() -> Result<Args> {
                 let v = it.next().context("--dds-domain requer um valor")?;
                 dds_domain = v.parse().context("--dds-domain inválido")?;
             }
+            "--dds-secure" => {
+                dds_secure = true;
+            }
+            "--dds-security-dir" => {
+                dds_security_dir = Some(it.next().context("--dds-security-dir requer um valor")?);
+            }
             // --sandbox-dir é o nome histórico do Python; --filesystem-root é o alias.
             "--filesystem-root" | "--sandbox-dir" => {
                 filesystem_root = it.next().context("--filesystem-root requer um valor")?;
             }
-            "--max-security-level" => {
-                let v = it.next().context("--max-security-level requer um valor")?;
-                max_security_level = Some(v.parse().context("--max-security-level inválido")?);
-            }
             "-h" | "--help" => {
                 eprintln!(
                     "mcp-gateway — DDS <-> ferramentas MCP\n\
-                     Uso: mcp-gateway [--dds-domain N] [--filesystem-root DIR]\n\
-                     \x20       [--max-security-level 0..3]\n\
-                     Default: domínio 0, raiz /tmp/sandbox, política permissiva."
+                     Uso: mcp-gateway [--dds-domain N] [--filesystem-root DIR] [--dds-secure] [--dds-security-dir DIR]\n\
+                     Default: domínio 0, raiz /tmp/sandbox, deny até snapshot válido."
                 );
                 std::process::exit(0);
             }
@@ -53,26 +65,55 @@ fn parse_args() -> Result<Args> {
 
     Ok(Args {
         dds_domain,
+        dds_secure,
+        dds_security_dir,
         filesystem_root,
-        max_security_level,
     })
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = parse_args()?;
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .json()
+        .init();
 
-    // Default permissivo (como o gateway Python sem policy carregada); com
-    // --max-security-level, aplica o fast-path do PolicyEngine Python.
-    let policy: Arc<dyn PolicyHook> = match args.max_security_level {
-        Some(max) => Arc::new(SecurityPolicy {
-            max_security_level: max,
-            ..Default::default()
-        }),
-        None => Arc::new(PermissivePolicy),
+    if args.dds_secure {
+        #[cfg(not(feature = "security"))]
+        anyhow::bail!("--dds-secure requires the security feature to be enabled at build time");
+    } else {
+        tracing::warn!(
+            "DDS running in local-only mode without authentication or encryption; \
+             do not expose this deployment to untrusted networks"
+        );
+    }
+
+    #[cfg(feature = "security")]
+    let service = {
+        let security = if args.dds_secure {
+            let dir = args
+                .dds_security_dir
+                .as_deref()
+                .map(PathBuf::from)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("--dds-security-dir is required when --dds-secure is set")
+                })?;
+            Some(security_config_from_dir(&dir)?)
+        } else {
+            None
+        };
+        mcp_gateway::dds::build_service_with_security(
+            args.dds_domain,
+            &args.filesystem_root,
+            security,
+        )?
     };
-
-    let service = mcp_gateway::dds::build_service(args.dds_domain, &args.filesystem_root, policy)?;
+    #[cfg(not(feature = "security"))]
+    let service = mcp_gateway::dds::build_service(args.dds_domain, &args.filesystem_root)?;
     eprintln!(
         "mcp-gateway: dominio={} raiz={} tools={:?} — aguardando ToolCall.Request",
         args.dds_domain,

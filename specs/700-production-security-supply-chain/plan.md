@@ -111,7 +111,6 @@ Depois do primeiro PASS dos Gates A–G, publicar a prerelease, trocar o runtime
 para a versão publicada e repetir B–G no artefato do registry. O fechamento exige
 `REPORT.md`, matriz de evidência e cinco lanes independentes. A release não substitui
 nenhum teste anterior; ela adiciona o smoke final do consumidor externo.
-
 ## Cronograma recomendando de execução (semanal)
 
 ### Semana 1

@@ -7,9 +7,9 @@ license.workspace = true
 description = "Agente/proxy: assume tasks via DDS e faz ponte com o llama-server C++. 1º alvo da migração."
 
 [dependencies]
-dds-dataspace = { path = "../dds-dataspace" }
-dds-contract = { path = "../dds-contract" }
-orch-common = { path = "../orch-common" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+orch-common = { version = "=0.1.0", path = "../orch-common" }
 cyclonedds = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
@@ -28,6 +28,7 @@ serde_json = { workspace = true }
 [features]
 default = []
 dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
+security = ["dds", "cyclonedds/security", "dds-dataspace/security", "dds-contract/security"]
 
 [[bin]]
 name = "agent"

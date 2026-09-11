@@ -9,14 +9,15 @@
 //! `InMemoryDataSpace` (sem CycloneDDS); com a feature `dds` ele roda sobre o
 //! `DataSpace` real (ver `crate::dds`).
 
+use crate::claim::{ClaimDecision, ClaimError, ClaimStore, MemoryClaimStore, OwnerId};
 use crate::handler::ToolRegistry;
-use crate::policy::PolicyHook;
-use dds_contract::generated::dds_llm_orchestrator::ToolCallRequest;
+use crate::policy::{DistributedPolicy, PolicyDecision};
+use dds_contract::generated::dds_llm_orchestrator::{
+    SecurityPolicySnapshot, SecurityPolicyUpdate, ToolCallRequest,
+};
 use dds_dataspace::api::{DataSpaceApi, DataSpaceError};
-use std::process;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `ToolCallStatus` (espelha `models.py` Python / valores gravados no IDL).
@@ -44,9 +45,13 @@ pub enum ServiceError {
     /// Falha de escrita/assinatura no DataSpace.
     #[error("dataspace: {0}")]
     DataSpace(#[from] DataSpaceError),
+    /// A persistent ownership claim failed.
+    #[error("claim: {0}")]
+    Claim(#[from] ClaimError),
+    /// Another gateway already owns this call; dispatch is forbidden.
+    #[error("call_id already claimed")]
+    AlreadyClaimed,
 }
-
-static GATEWAY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
 /// Relógio em ns (mesma unidade dos campos `*_at_ns` do IDL).
 fn now_ns() -> u64 {
@@ -70,27 +75,45 @@ pub async fn next_tool_call(stream: &mut ToolCallStream) -> Option<ToolCallReque
 pub struct ToolCallService<D: DataSpaceApi> {
     data_space: D,
     registry: ToolRegistry,
-    policy: Arc<dyn PolicyHook>,
-    gateway_id: String,
+    policy: Arc<DistributedPolicy>,
+    claims: Arc<dyn ClaimStore>,
+    owner: OwnerId,
 }
 
 impl<D: DataSpaceApi + 'static> ToolCallService<D> {
     /// Cria o serviço com DataSpace, registry de ferramentas e política.
-    pub fn new(data_space: D, registry: ToolRegistry, policy: Arc<dyn PolicyHook>) -> Self {
-        Self::new_with_id(data_space, registry, policy, generate_gateway_id())
+    pub fn new(data_space: D, registry: ToolRegistry) -> Self {
+        Self::with_policy(data_space, registry, Arc::new(DistributedPolicy::default()))
     }
 
-    pub fn new_with_id(
+    pub fn with_policy(
         data_space: D,
         registry: ToolRegistry,
-        policy: Arc<dyn PolicyHook>,
-        gateway_id: impl Into<String>,
+        policy: Arc<DistributedPolicy>,
+    ) -> Self {
+        Self::with_policy_and_claims(
+            data_space,
+            registry,
+            policy,
+            Arc::new(MemoryClaimStore::default()),
+            next_owner_id(),
+        )
+    }
+
+    /// Creates a service with an explicit cross-instance claim store (REQ-706).
+    pub fn with_policy_and_claims(
+        data_space: D,
+        registry: ToolRegistry,
+        policy: Arc<DistributedPolicy>,
+        claims: Arc<dyn ClaimStore>,
+        owner: OwnerId,
     ) -> Self {
         Self {
             data_space,
             registry,
             policy,
-            gateway_id: gateway_id.into(),
+            claims,
+            owner,
         }
     }
 
@@ -104,43 +127,8 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
         &self.data_space
     }
 
-    fn claim_marker(&self, call_id: &str) -> String {
-        format!("claim:{}:{}", self.gateway_id, call_id)
-    }
-
-    async fn claim_execute_right(&self, request: &ToolCallRequest) -> Result<bool, ServiceError> {
-        let mut claim = request.clone();
-        let marker = self.claim_marker(&claim.call_id);
-        claim.status = status::EXECUTING;
-        claim.error_message = marker.clone();
-        self.data_space.write_tool_call(claim.clone()).await?;
-
-        for _ in 0..10 {
-            match self.data_space.read_tool_call(&claim.call_id).await? {
-                Some(current) => {
-                    if current.status == status::EXECUTING && current.error_message == marker {
-                        return Ok(true);
-                    }
-                    if current.status != status::PENDING {
-                        return Ok(false);
-                    }
-                }
-                None => {
-                    tracing::warn!(
-                        call_id = %claim.call_id,
-                        "claim não confirmado no cache; assumindo propriedade local"
-                    );
-                    return Ok(true);
-                }
-            }
-            tokio::time::sleep(Duration::from_millis(5)).await;
-        }
-
-        tracing::warn!(
-            call_id = %claim.call_id,
-            "timeout de confirmação de claim; assumindo propriedade local"
-        );
-        Ok(true)
+    pub fn policy(&self) -> &DistributedPolicy {
+        &self.policy
     }
 
     /// Processa UM `ToolCall.Request` (ciclo completo, paridade com o Python):
@@ -164,23 +152,45 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
         );
 
         // 1. Governança (fast path local — policy.evaluate do Python).
-        if !self
-            .policy
-            .check(&call.tool_name, call.security_level, &call.arguments_json)
-        {
-            call.status = status::DENIED;
-            call.error_message = DENIED_MESSAGE.to_string();
-            call.completed_at_ns = now_ns();
-            self.data_space.write_tool_call(call.clone()).await?;
-            tracing::warn!(call_id = %call.call_id, tool = %call.tool_name, "ToolCall negado pela politica local");
-            return Ok(call);
+        let version = match self.policy.evaluate(&call) {
+            PolicyDecision::Denied { reason } => {
+                call.status = status::DENIED;
+                call.error_message = DENIED_MESSAGE.to_string();
+                call.completed_at_ns = now_ns();
+                self.data_space.write_tool_call(call.clone()).await?;
+                tracing::warn!(
+                    audit = true,
+                    call_id = %call.call_id,
+                    tool = %call.tool_name,
+                    security_level = call.security_level,
+                    requester_id_len = call.requester_id.len(),
+                    decision = "deny",
+                    reason = reason.as_str(),
+                    "MCP policy decision"
+                );
+                return Ok(call);
+            }
+            PolicyDecision::Allowed { version } => version,
+        };
+        tracing::info!(
+            audit = true,
+            call_id = %call.call_id,
+            tool = %call.tool_name,
+            security_level = call.security_level,
+            requester_id_len = call.requester_id.len(),
+            policy_version = version,
+            decision = "allow",
+            "MCP policy decision"
+        );
+
+        match self.claims.try_claim(&call.call_id, &self.owner)? {
+            ClaimDecision::Won => {}
+            ClaimDecision::AlreadyClaimed => return Err(ServiceError::AlreadyClaimed),
         }
 
-        if !self.claim_execute_right(&call).await? {
-            return Ok(call);
-        }
+        // 2. EXECUTING visível no mesh antes do dispatch (como o Python).
         call.status = status::EXECUTING;
-        call.error_message = String::new();
+        self.data_space.write_tool_call(call.clone()).await?;
 
         // 3. Dispatch para o handler registrado.
         match self
@@ -214,31 +224,106 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
     ///
     /// Retorna quando a stream fecha (shutdown do DataSpace).
     pub async fn run(self: Arc<Self>) -> Result<(), ServiceError> {
-        let mut stream = self.data_space.subscribe_tool_calls();
+        let mut tool_calls = self.data_space.subscribe_tool_calls();
+        let mut snapshots = self.data_space.subscribe_security_snapshots();
+        let mut updates = self.data_space.subscribe_security_updates();
+        let mut jobs = tokio::task::JoinSet::new();
         tracing::info!("mcp-gateway: aguardando ToolCall.Request (status=PENDING)");
 
-        while let Some(request) = next_tool_call(&mut stream).await {
-            // Eco das próprias escritas (EXECUTING/COMPLETED/...) é ignorado,
-            // como o filtro `request.status != PENDING: return` do Python.
-            if request.status != status::PENDING {
-                continue;
-            }
-            let svc = Arc::clone(&self);
-            tokio::spawn(async move {
-                if let Err(e) = svc.process_one(&request).await {
-                    tracing::error!(call_id = %request.call_id, error = %e, "falha ao processar ToolCall");
+        loop {
+            tokio::select! {
+                maybe_request = next_tool_call(&mut tool_calls), if jobs.len() < 64 => {
+                    let Some(request) = maybe_request else { break };
+                    if request.status == status::PENDING {
+                        let svc = Arc::clone(&self);
+                        jobs.spawn(async move { svc.process_one(&request).await });
+                    }
                 }
-            });
+                maybe_snapshot = next_security_snapshot(&mut snapshots) => {
+                    let Some(snapshot) = maybe_snapshot else { break };
+                    self.accept_snapshot(&snapshot);
+                }
+                maybe_update = next_security_update(&mut updates) => {
+                    let Some(update) = maybe_update else { break };
+                    self.accept_update(&update);
+                }
+                Some(joined) = jobs.join_next(), if !jobs.is_empty() => {
+                    match joined {
+                        Ok(Ok(_)) => {}
+                        Ok(Err(error)) => tracing::error!(error = %error, "ToolCall processing failed"),
+                        Err(error) => tracing::error!(error = %error, "ToolCall task failed"),
+                    }
+                }
+            }
+        }
+        while let Some(joined) = jobs.join_next().await {
+            match joined {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::error!(error = %error, "ToolCall processing failed"),
+                Err(error) => tracing::error!(error = %error, "ToolCall task failed"),
+            }
         }
         Ok(())
     }
+
+    fn accept_snapshot(&self, snapshot: &SecurityPolicySnapshot) {
+        match self.policy.ingest_snapshot(snapshot) {
+            Ok(()) => tracing::info!(
+                audit = true,
+                policy_id = %snapshot.policy_id,
+                version = snapshot.version,
+                decision = "accept",
+                "MCP policy snapshot"
+            ),
+            Err(error) => tracing::warn!(
+                audit = true,
+                policy_id = %snapshot.policy_id,
+                version = snapshot.version,
+                decision = "reject",
+                reason = %error,
+                "MCP policy snapshot"
+            ),
+        }
+    }
+
+    fn accept_update(&self, update: &SecurityPolicyUpdate) {
+        match self.policy.ingest_update(update) {
+            Ok(()) => tracing::info!(
+                audit = true,
+                policy_id = %update.policy_id,
+                version = update.new_version,
+                decision = "accept",
+                "MCP policy update"
+            ),
+            Err(error) => tracing::warn!(
+                audit = true,
+                policy_id = %update.policy_id,
+                version = update.new_version,
+                decision = "reject",
+                reason = %error,
+                "MCP policy update"
+            ),
+        }
+    }
 }
 
-fn generate_gateway_id() -> String {
-    format!(
-        "gw-{}-{}-{}",
-        process::id(),
-        now_ns(),
-        GATEWAY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
-    )
+fn next_owner_id() -> OwnerId {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    let sequence = NEXT.fetch_add(1, Ordering::Relaxed);
+    OwnerId::generated(std::process::id(), sequence)
+}
+
+type SecuritySnapshotStream =
+    std::pin::Pin<Box<dyn futures_core::Stream<Item = SecurityPolicySnapshot> + Send>>;
+type SecurityUpdateStream =
+    std::pin::Pin<Box<dyn futures_core::Stream<Item = SecurityPolicyUpdate> + Send>>;
+
+async fn next_security_snapshot(
+    stream: &mut SecuritySnapshotStream,
+) -> Option<SecurityPolicySnapshot> {
+    std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await
+}
+
+async fn next_security_update(stream: &mut SecurityUpdateStream) -> Option<SecurityPolicyUpdate> {
+    std::future::poll_fn(|cx| stream.as_mut().poll_next(cx)).await
 }

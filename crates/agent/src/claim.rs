@@ -8,25 +8,14 @@
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use std::collections::HashSet;
 
-/// Especialização do agente.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Specialization {
-    Text,
-    Vision,
-    Embedding,
-    Transcription,
-}
+/// Canonical model specialization shared by runtime consumers (REQ-708).
+pub use orch_common::ModelSpecialization as Specialization;
 
-impl Specialization {
-    /// Verifica se esta especialização pode atender a task requerida.
-    pub fn matches(&self, required: i32) -> bool {
-        match self {
-            Self::Text => true,                             // TEXT aceita qualquer coisa
-            Self::Vision => required == 0 || required == 1, // TEXT ou VISION
-            Self::Embedding => required == 2,
-            Self::Transcription => required == 3,
-        }
-    }
+fn specialization_matches(specialization: Specialization, required: i32) -> bool {
+    let Ok(required) = Specialization::try_from(required) else {
+        return false;
+    };
+    specialization.can_serve(required)
 }
 
 /// Configuração do agente para claim.
@@ -59,7 +48,7 @@ pub fn is_eligible(task: &Task, config: &ClaimConfig, claimed: &HashSet<String>)
     }
 
     // Especialização compatível?
-    if !config.specialization.matches(task.model_required) {
+    if !specialization_matches(config.specialization, task.model_required) {
         return false;
     }
 

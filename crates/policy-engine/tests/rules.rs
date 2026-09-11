@@ -70,18 +70,15 @@ fn llm_prefixo_de_role_herda_policy() {
 }
 
 #[test]
-fn llm_security_level_invalido_cai_em_public() {
-    // Fallback do Python: `except (ValueError, TypeError)` → "PUBLIC".
-    assert_eq!(
-        doc().check_llm_request("DocumentationAgent", 99),
-        PolicyDecision::Allowed
-    );
-    // E um agente sem PUBLIC na lista continuaria negando (EmbeddedSystemsAgent
-    // tem PUBLIC — então aqui testamos só que 99 se comporta como PUBLIC).
-    assert_eq!(
-        doc().check_llm_request("EmbeddedSystemsAgent", 99),
-        PolicyDecision::Allowed
-    );
+fn llm_security_level_invalido_nega() {
+    assert!(matches!(
+        doc().check_llm_request("DocumentationAgent", -1),
+        PolicyDecision::Denied(_)
+    ));
+    assert!(matches!(
+        doc().check_llm_request("DocumentationAgent", 4),
+        PolicyDecision::Denied(_)
+    ));
 }
 
 #[test]

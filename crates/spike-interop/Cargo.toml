@@ -8,7 +8,7 @@ description = "Spike de interoperabilidade Rust↔Python↔C++ via DDS (Fase 0b)
 
 [dependencies]
 cyclonedds = { workspace = true, optional = true }
-dds-contract = { path = "../dds-contract" }
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

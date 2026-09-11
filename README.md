@@ -50,7 +50,7 @@ Client → orchestrator (HTTP API) → DDS topics → agent → llama-server (C+
 ## Project Structure
 
 ```
-src/rust/
+.
 ├── Cargo.toml                 # workspace manifest (14 members)
 ├── MIGRATION_PLAN.md          # design rationale and hardware target
 ├── PLANO_EXECUCAO.md          # detailed build/validation log with measured numbers
@@ -73,11 +73,13 @@ src/rust/
     └── benchmarks/             # load generator + workload driver
 ```
 
+> **Migration note:** this is the Rust migration workspace. The legacy Python runtime lives in the main project under `src/orchestrator/`. The two runtimes share the same DDS topic namespace and IDL contract.
+
 ## Prerequisites
 
 - Rust 1.85+ (`rustup show`)
 - CMake 3.20+ (builds the CycloneDDS C library when the `dds` feature is enabled)
-- The `cyclonedds` crate at `../../third_party/cyclonedds-rust` (path dependency, vendored)
+- The `cyclonedds` crate pinned from `https://github.com/mzet97/cyclonedds-rust.git` at the audited revision declared in `Cargo.lock`
 - A cargo target dir **outside any SMB/CIFS mount** — the DDS C build fails
   `cmake_symlink_library` on CIFS:
   ```bash
@@ -87,8 +89,6 @@ src/rust/
 ## Quick Start
 
 ```bash
-cd src/rust
-
 # Fast path — no DDS, mocks only
 cargo check --workspace
 cargo test --workspace
@@ -113,6 +113,29 @@ see `src/llama_cpp/`):
 CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds
 ```
 
+### DDS Security (local-only)
+
+The runtime supports OMG DDS Security via the `security` feature. This is
+**intentionally local-only for now** — it authenticates participants with
+X.509 certificates and encrypts discovery/user data, but it does not replace
+network-level segmentation and is not exposed as a multi-host deployment option.
+
+```bash
+# Run the security smoke test (uses separate processes because CycloneDDS
+# skips the security handshake for in-process participants).
+CYCLONEDDS_STATIC=1 cargo test -p dds-dataspace --features dds,security \
+  --test security_smoke -- --test-threads=1
+
+# Run a component with DDS Security enabled (uses certificates under
+# config/dds/security/ by default).
+CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds,security -- \
+  --dds-secure --dds-security-dir ./config/dds/security
+```
+
+See `config/dds/security/generate-certs.sh` for regenerating the local test
+artefacts (identity/permissions CAs, governance and permissions P7S). These
+certificates are test fixtures only; do not reuse them in production.
+
 ## Crates
 
 | Crate | Role |
@@ -134,7 +157,7 @@ CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds
 
 ## Configuration
 
-- DDS transport configs: `src/llama_cpp/dds/cyclonedds-*.xml`
+- DDS transport configs live in the main project at `src/llama_cpp/dds/cyclonedds-*.xml` and `config/dds/`; this Rust workspace consumes the same topic namespace but does not ship the C++ server configs
 - Set transport via: `CYCLONEDDS_URI=file://path/to/cyclonedds-*.xml`
 - Build target dir (required off SMB/CIFS): `CARGO_TARGET_DIR=$HOME/.cache/tese-rust-target`
 - Static CycloneDDS link (required on SMB/CIFS): `CYCLONEDDS_STATIC=1`
