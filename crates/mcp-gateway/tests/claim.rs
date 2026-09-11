@@ -130,7 +130,25 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
         OwnerId::parse("claim-gw-2").expect("owner 2"),
     ));
 
+    // Coletor em polling ANTES das escritas: o tópico é keyless com
+    // KeepLast(5), então um reader tardio veria só o backlog final.
+    // Polling concorrente captura as conclusões ao vivo, determinístico.
+    let seen = Arc::new(tokio::sync::Mutex::new(HashSet::new()));
     let mut stream = Box::pin(observer.subscribe_tool_calls());
+    let collector = {
+        let seen = Arc::clone(&seen);
+        tokio::spawn(async move {
+            while seen.lock().await.len() < total {
+                let Some(call) = next_tool_call(&mut stream).await else {
+                    break;
+                };
+                if call.status == status::COMPLETED {
+                    assert_eq!(call.error_message, "");
+                    seen.lock().await.insert(call.call_id);
+                }
+            }
+        })
+    };
     let run_one = tokio::spawn({
         let service_one = Arc::clone(&service_one);
         async move { service_one.run().await.expect("gateway-1") }
@@ -156,22 +174,15 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
             .expect("duplicate delivery");
     }
 
-    let seen = tokio::time::timeout(Duration::from_secs(30), async {
-        let mut ids = HashSet::new();
-        while ids.len() < total {
-            let Some(call) = next_tool_call(&mut stream).await else {
-                break;
-            };
-            if call.status == status::COMPLETED {
-                assert_eq!(call.error_message, "");
-                ids.insert(call.call_id);
-            }
+    tokio::time::timeout(Duration::from_secs(30), async {
+        while seen.lock().await.len() < total {
+            tokio::time::sleep(Duration::from_millis(50)).await;
         }
-        ids
     })
     .await
     .expect("100 tool calls concluídos antes do timeout");
-    assert_eq!(seen.len(), total);
+    collector.abort();
+    assert_eq!(seen.lock().await.len(), total);
 
     run_one.abort();
     run_two.abort();
