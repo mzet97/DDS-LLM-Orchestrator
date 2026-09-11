@@ -1063,20 +1063,24 @@ impl DataSpace {
         let subscriber = Arc::clone(&self.subscriber);
         let topic = Arc::clone(&self.server_status_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(ServerStatus) falhou; stream encerrado");
-                    return;
-                }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
+        // Eager como `stream_tasks`: o reader precisa existir antes do
+        // primeiro write num tópico Volatile (ex.: subscribe → write → poll).
+        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
+            Ok(reader) => match waitset.register(&reader) {
+                Ok(registration) => Some((reader, registration)),
                 Err(e) => {
                     tracing::error!(error = %e, "waitset.register(ServerStatus) falhou; stream encerrado");
-                    return;
+                    None
                 }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "DataReader::with_qos(ServerStatus) falhou; stream encerrado");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let n = registration.notified();
@@ -1466,32 +1470,35 @@ impl DataSpace {
     }
 
     /// Streams `SystemMetrics` using the shared event-driven WaitSet (REQ-708).
+    /// Setup eager como `stream_tasks`: o reader precisa existir antes do
+    /// primeiro write num tópico Volatile (ex.: subscribe → write → poll).
     pub fn stream_system_metrics(&self) -> impl Stream<Item = cache::ArcSystemMetric> {
         let caches = self.caches();
         let subscriber = Arc::clone(&self.subscriber);
         let topic = Arc::clone(&self.system_metrics_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let profile = match qos::profiles::system_metrics() {
-                Ok(profile) => profile,
-                Err(error) => {
-                    tracing::error!(%error, "SystemMetrics reader QoS failed");
-                    return;
-                }
-            };
-            let reader = match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
-                Ok(reader) => reader,
+        let setup = match qos::profiles::system_metrics() {
+            Ok(profile) => match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
+                Ok(reader) => match waitset.register(&reader) {
+                    Ok(registration) => Some((reader, registration)),
+                    Err(error) => {
+                        tracing::error!(%error, "waitset.register(SystemMetrics) failed");
+                        None
+                    }
+                },
                 Err(error) => {
                     tracing::error!(%error, "DataReader::with_qos(SystemMetrics) failed");
-                    return;
+                    None
                 }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(registration) => registration,
-                Err(error) => {
-                    tracing::error!(%error, "waitset.register(SystemMetrics) failed");
-                    return;
-                }
+            },
+            Err(error) => {
+                tracing::error!(%error, "SystemMetrics reader QoS failed");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let notified = registration.notified();
@@ -1518,32 +1525,35 @@ impl DataSpace {
     }
 
     /// Streams `ServerStatus` using the shared event-driven WaitSet (REQ-708).
+    /// Setup eager como `stream_tasks`: o reader precisa existir antes do
+    /// primeiro write num tópico Volatile (ex.: subscribe → write → poll).
     pub fn stream_server_status(&self) -> impl Stream<Item = cache::ArcServerStatus> {
         let caches = self.caches();
         let subscriber = Arc::clone(&self.subscriber);
         let topic = Arc::clone(&self.server_status_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let profile = match qos::profiles::server_status() {
-                Ok(profile) => profile,
-                Err(error) => {
-                    tracing::error!(%error, "ServerStatus reader QoS failed");
-                    return;
-                }
-            };
-            let reader = match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
-                Ok(reader) => reader,
+        let setup = match qos::profiles::server_status() {
+            Ok(profile) => match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
+                Ok(reader) => match waitset.register(&reader) {
+                    Ok(registration) => Some((reader, registration)),
+                    Err(error) => {
+                        tracing::error!(%error, "waitset.register(ServerStatus) failed");
+                        None
+                    }
+                },
                 Err(error) => {
                     tracing::error!(%error, "DataReader::with_qos(ServerStatus) failed");
-                    return;
+                    None
                 }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(registration) => registration,
-                Err(error) => {
-                    tracing::error!(%error, "waitset.register(ServerStatus) failed");
-                    return;
-                }
+            },
+            Err(error) => {
+                tracing::error!(%error, "ServerStatus reader QoS failed");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let notified = registration.notified();

@@ -531,30 +531,38 @@ mod dds_tests {
         // build.rs; `src/llama_cpp/dds/` é espelho. Autoridade contratual:
         // Entendimento §§11–12 (o .md traz o dicionário, não a listagem
         // integral — os .idl são a renderização mecânica).
-        let canonical_dds = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../../third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl"
-        ));
-        let mirror_dds = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../llama_cpp/dds/idl/OrchestratorDDS.idl"
-        ));
-        assert_eq!(
-            canonical_dds, mirror_dds,
-            "OrchestratorDDS.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)"
-        );
-        let canonical_v4 = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../../third_party/llama.cpp_dds/dds/v4/idl/OrchestratorV4.idl"
-        ));
-        let mirror_v4 = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../llama_cpp/dds/v4/idl/OrchestratorV4.idl"
-        ));
-        assert_eq!(
-            canonical_v4, mirror_v4,
-            "OrchestratorV4.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)"
-        );
+        //
+        // Leitura em runtime (não `include_str!`): num checkout isolado do
+        // runtime (CI do repo standalone) o monorepo pai não existe — o gate
+        // é pulado em vez de quebrar a compilação.
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let pairs = [
+            (
+                "../../../../third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl",
+                "../../../llama_cpp/dds/idl/OrchestratorDDS.idl",
+                "OrchestratorDDS.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)",
+            ),
+            (
+                "../../../../third_party/llama.cpp_dds/dds/v4/idl/OrchestratorV4.idl",
+                "../../../llama_cpp/dds/v4/idl/OrchestratorV4.idl",
+                "OrchestratorV4.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)",
+            ),
+        ];
+        for (canonical_rel, mirror_rel, msg) in pairs {
+            let canonical = manifest.join(canonical_rel);
+            let mirror = manifest.join(mirror_rel);
+            let (Ok(canonical_idl), Ok(mirror_idl)) = (
+                std::fs::read_to_string(&canonical),
+                std::fs::read_to_string(&mirror),
+            ) else {
+                eprintln!(
+                    "idl_mirror_copies_are_in_sync: pulado (sem monorepo pai em {})",
+                    manifest.display()
+                );
+                return;
+            };
+            assert_eq!(canonical_idl, mirror_idl, "{msg}");
+        }
     }
 
     #[test]

@@ -8,8 +8,8 @@ description = "Respondedor determinístico de benchmark: consome LLM.InferenceRe
 
 [dependencies]
 cyclonedds = { workspace = true }
-dds-contract = { path = "../dds-contract", features = ["dds"] }
-dds-dataspace = { path = "../dds-dataspace", features = ["dds"] }
+dds-contract = { version = "=0.1.0", path = "../dds-contract", features = ["dds"] }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace", features = ["dds"] }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
