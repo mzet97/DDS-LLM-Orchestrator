@@ -20,3 +20,6 @@ ahash = { workspace = true }
 [features]
 default = []
 dds = ["dds-dataspace/dds", "dds-contract/dds"]
+
+[lints]
+workspace = true

@@ -43,18 +43,25 @@ pub struct WriterPool {
 impl WriterPool {
     /// Cria o pool com `n_workers` drenando um canal bounded de `capacity`.
     /// `write_fn` recebe o pedido e escreve no DDS (closure sobre os DataWriters).
-    pub fn new(n_workers: usize, capacity: usize, write_fn: WriteFn) -> Self {
+    /// Falível: spawn de thread pode falhar (exaustão de recursos) — `Err`
+    /// em vez de panic na inicialização.
+    pub fn new(
+        n_workers: usize,
+        capacity: usize,
+        write_fn: WriteFn,
+    ) -> Result<Self, DataSpaceError> {
         let (tx, rx) = crossbeam_channel::bounded(capacity);
         let submitted = Arc::new(AtomicU64::new(0));
         let completed = Arc::new(AtomicU64::new(0));
         let failed = Arc::new(AtomicU64::new(0));
 
-        let workers = (0..n_workers)
-            .map(|i| {
-                let rx: Receiver<WriteRequest> = rx.clone();
-                let write_fn = Arc::clone(&write_fn);
-                let completed = Arc::clone(&completed);
-                let failed = Arc::clone(&failed);
+        let mut workers = Vec::with_capacity(n_workers);
+        for i in 0..n_workers {
+            let rx: Receiver<WriteRequest> = rx.clone();
+            let write_fn = Arc::clone(&write_fn);
+            let completed = Arc::clone(&completed);
+            let failed = Arc::clone(&failed);
+            workers.push(
                 std::thread::Builder::new()
                     .name(format!("dds-writer-{i}"))
                     .spawn(move || {
@@ -65,17 +72,19 @@ impl WriterPool {
                         // canal fechado + drenado → sai
                         let _ = failed;
                     })
-                    .expect("spawn dds-writer")
-            })
-            .collect();
+                    .map_err(|e| {
+                        DataSpaceError::WriteFailed(format!("spawn dds-writer-{i}: {e}"))
+                    })?,
+            );
+        }
 
-        Self {
+        Ok(Self {
             tx,
             workers,
             submitted,
             completed,
             failed,
-        }
+        })
     }
 
     /// Enfileira uma escrita. Falha rápido se a fila estiver cheia (backpressure).
@@ -145,32 +154,39 @@ pub fn make_write_fn(
     outputs_writer: DataWriter<TaskOutput>,
 ) -> WriteFn {
     Arc::new(move |req| {
-        // Variante com confirmação: o resultado REAL do dds_write vai para o
-        // canal de ack (RUST-PROTO-005). Se o receiver já desistiu (timeout/
-        // cancelamento), o send falha sem custo — o erro continua logado.
-        if let WriteRequest::OutputAck(o, ack) = req {
-            let result = write_output_loan(&outputs_writer, &o)
-                .map_err(|e| DataSpaceError::WriteFailed(e.to_string()));
-            if let Err(e) = &result {
-                tracing::error!(error = %e, "writer_pool: falha no write FINAL do DDS");
+        // Match único por valor: cada variante é tratada no próprio braço,
+        // sem pré-checagem + `unreachable!`.
+        match req {
+            // Variante com confirmação: o resultado REAL do dds_write vai para o
+            // canal de ack (RUST-PROTO-005). Se o receiver já desistiu (timeout/
+            // cancelamento), o send falha sem custo — o erro continua logado.
+            WriteRequest::OutputAck(o, ack) => {
+                let result = write_output_loan(&outputs_writer, &o)
+                    .map_err(|e| DataSpaceError::WriteFailed(e.to_string()));
+                if let Err(e) = &result {
+                    tracing::error!(error = %e, "writer_pool: falha no write FINAL do DDS");
+                }
+                let _ = ack.send(result);
             }
-            let _ = ack.send(result);
-            return;
-        }
-        let result = match &req {
             WriteRequest::Task(t) => {
                 let idx = crate::select_task_writer_slot(&t.task_id, tasks_writers.len());
-                tasks_writers[idx].write(t)
+                if let Err(e) = tasks_writers[idx].write(&t) {
+                    tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                }
             }
-            WriteRequest::Agent(a) => agents_writer.write(a),
+            WriteRequest::Agent(a) => {
+                if let Err(e) = agents_writer.write(&a) {
+                    tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                }
+            }
             // Zero-copy: TaskOutput é o tópico de maior volume de samples (um
             // por chunk de streaming de inferência) — T-616. Ver
             // `write_output_loan` para o porquê do loan em vez de `.write()`.
-            WriteRequest::Output(o) => write_output_loan(&outputs_writer, o),
-            WriteRequest::OutputAck(..) => unreachable!("tratado acima"),
-        };
-        if let Err(e) = result {
-            tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+            WriteRequest::Output(o) => {
+                if let Err(e) = write_output_loan(&outputs_writer, &o) {
+                    tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                }
+            }
         }
     })
 }
@@ -194,9 +210,15 @@ pub fn make_write_fn(
 /// `DataWriter::write`.
 pub fn write_output_loan(writer: &DataWriter<TaskOutput>, o: &TaskOutput) -> DdsResult<()> {
     let mut loan = writer.request_loan()?;
-    // SAFETY: `request_loan` allocates the IDL-generated `TaskOutput::Native` layout;
-    // below we assign only scalar fields and `DdsString` values created by its checked
-    // constructor, so no raw pointer or invalid enum discriminant is introduced.
+    // SAFETY (`WriteLoan::get_mut` exige preservar os invariantes de `Native`):
+    // (1) o buffer foi alocado e zerado pelo CycloneDDS com exatamente
+    // `size_of::<Native>()` bytes, e o estado zerado é válido (ponteiro nulo
+    // para `DdsString`, zero válido para primitivos) — ver `request_loan`;
+    // (2) abaixo TODOS os 8 campos são atribuídos: escalares por cópia e
+    // strings via `DdsString::new` (construtor checado — NUL vira `Err`);
+    // (3) `Native` não tem enums (discriminantes) nem opcionais com
+    // proveniência — nada além do atribuído precisa ser preservado.
+    // Miri é inviável aqui (exige participant DDS vivo + FFI C).
     let native = unsafe { loan.get_mut() };
     native.task_id = DdsString::new(&o.task_id)?;
     native.seq_num = o.seq_num;

@@ -72,3 +72,6 @@ required-features = ["dds"]
 name = "diag-knobs"
 path = "src/bin/diag_knobs.rs"
 required-features = ["dds"]
+
+[lints]
+workspace = true

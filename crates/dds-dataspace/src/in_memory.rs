@@ -8,11 +8,11 @@ use async_stream::stream;
 use dashmap::DashMap;
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, Task,
-    TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
+    Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
-    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
+    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
 };
 use futures_core::Stream;
 use std::pin::Pin;
@@ -46,6 +46,10 @@ pub struct InMemoryDataSpace {
     context_updates: DashMap<String, Vec<ContextUpdate>>,
     context_snapshot_tx: broadcast::Sender<ContextSnapshot>,
     context_update_tx: broadcast::Sender<ContextUpdate>,
+    system_metrics: DashMap<String, SystemMetric>,
+    server_statuses: DashMap<String, ServerStatus>,
+    system_metric_tx: broadcast::Sender<SystemMetric>,
+    server_status_tx: broadcast::Sender<ServerStatus>,
 
     // Tópicos ToolCall
     tool_calls: DashMap<String, ToolCallRequest>,
@@ -88,6 +92,8 @@ impl InMemoryDataSpace {
         let (llm_error_tx, _) = broadcast::channel(1024);
         let (context_snapshot_tx, _) = broadcast::channel(1024);
         let (context_update_tx, _) = broadcast::channel(1024);
+        let (system_metric_tx, _) = broadcast::channel(1024);
+        let (server_status_tx, _) = broadcast::channel(1024);
         let (tool_call_tx, _) = broadcast::channel(1024);
         let (execution_trace_tx, _) = broadcast::channel(1024);
         let (security_snapshot_tx, _) = broadcast::channel(1024);
@@ -116,6 +122,10 @@ impl InMemoryDataSpace {
             context_updates: DashMap::new(),
             context_snapshot_tx,
             context_update_tx,
+            system_metrics: DashMap::new(),
+            server_statuses: DashMap::new(),
+            system_metric_tx,
+            server_status_tx,
 
             tool_calls: DashMap::new(),
             tool_call_tx,
@@ -162,6 +172,12 @@ macro_rules! impl_subscribe {
 impl DataSpaceApi for InMemoryDataSpace {
     // === Tasks ===
 
+    /// DIVERGÊNCIA DOCUMENTADA vs DDS real (H2): `Tasks` usa EXCLUSIVE
+    /// ownership (STRENGTH_CLIENT=10 < STRENGTH_AGENT=100 <
+    /// STRENGTH_ORCHESTRATOR=200) e o writer mais fraco perde a arbitragem.
+    /// O mock não recebe strength por escrita (`DataSpaceApi::write_task`
+    /// não tem o parâmetro) e aplica last-write-wins puro. Não usar o mock
+    /// para validar arbitragem de ownership (relevante para EXP1a).
     async fn write_task(&self, task: Task) -> Result<(), DataSpaceError> {
         let arc = Arc::new(task);
         self.tasks.insert(arc.task_id.clone(), arc.clone());
@@ -276,12 +292,55 @@ impl DataSpaceApi for InMemoryDataSpace {
     );
     impl_subscribe!(subscribe_context_updates, context_update_tx, ContextUpdate);
 
+    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), DataSpaceError> {
+        let key = format!("{}:{}", metric.metric_name, metric.component_id);
+        self.system_metrics.insert(key, metric.clone());
+        let _ = self.system_metric_tx.send(metric);
+        Ok(())
+    }
+
+    async fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Result<Option<SystemMetric>, DataSpaceError> {
+        let key = format!("{metric_name}:{component_id}");
+        Ok(self.system_metrics.get(&key).map(|metric| metric.clone()))
+    }
+
+    async fn write_server_status(&self, status: ServerStatus) -> Result<(), DataSpaceError> {
+        self.server_statuses
+            .insert(status.server_id.clone(), status.clone());
+        let _ = self.server_status_tx.send(status);
+        Ok(())
+    }
+
+    async fn read_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<ServerStatus>, DataSpaceError> {
+        Ok(self
+            .server_statuses
+            .get(server_id)
+            .map(|status| status.clone()))
+    }
+
+    impl_subscribe!(subscribe_system_metrics, system_metric_tx, SystemMetric);
+    impl_subscribe!(subscribe_server_statuses, server_status_tx, ServerStatus);
+
     // === ToolCall ===
 
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), DataSpaceError> {
         self.tool_calls.insert(call.call_id.clone(), call.clone());
         let _ = self.tool_call_tx.send(call);
         Ok(())
+    }
+
+    async fn read_tool_call(
+        &self,
+        call_id: &str,
+    ) -> Result<Option<ToolCallRequest>, DataSpaceError> {
+        Ok(self.tool_calls.get(call_id).map(|c| c.clone()))
     }
 
     impl_subscribe!(subscribe_tool_calls, tool_call_tx, ToolCallRequest);
@@ -395,10 +454,49 @@ impl DataSpaceApi for InMemoryDataSpace {
         self.execution_traces.clear();
         self.security_snapshots.clear();
         self.security_updates.clear();
+        self.system_metrics.clear();
+        self.server_statuses.clear();
         self.qos_routing.clear();
         self.qos_metrics.clear();
         self.qos_violations.clear();
         self.discovery_events.clear();
         Ok(())
+    }
+}
+
+// Prova em tempo de compilação da ordem dos strengths que o DDS real
+// arbitra e o mock ignora (last-write-wins).
+const _: () = {
+    assert!(
+        crate::DataSpace::STRENGTH_CLIENT < crate::DataSpace::STRENGTH_AGENT
+            && crate::DataSpace::STRENGTH_AGENT < crate::DataSpace::STRENGTH_ORCHESTRATOR
+    );
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task_with_status(id: &str, status: i32) -> Task {
+        Task {
+            task_id: id.into(),
+            status,
+            ..Task::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn write_task_is_last_write_wins_without_ownership_arbitration() {
+        // Given: duas escritas sequenciais da mesma task (sem strength por
+        // escrita — ver doc de `write_task`)
+        let ds = InMemoryDataSpace::new();
+        ds.write_task(task_with_status("t", 1)).await.unwrap();
+        // When: segunda escrita / Then: última vence (DDS real arbitraría por strength)
+        ds.write_task(task_with_status("t", 2)).await.unwrap();
+        let back = ds.read_task("t").await.unwrap().expect("task presente");
+        assert_eq!(back.status, 2);
+
+        // O contrato que o DDS real impõe e o mock NÃO: cliente<agente<orq
+        // (prova em tempo de compilação no const acima do módulo de testes).
     }
 }

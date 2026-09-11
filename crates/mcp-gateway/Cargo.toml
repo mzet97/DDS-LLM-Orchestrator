@@ -25,7 +25,13 @@ futures-core = "0.3"
 default = []
 dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
 
+[dev-dependencies]
+futures = { workspace = true }
+
 [[bin]]
 name = "mcp-gateway"
 path = "src/main.rs"
 required-features = ["dds"]
+
+[lints]
+workspace = true

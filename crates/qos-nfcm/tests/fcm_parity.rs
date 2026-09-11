@@ -108,7 +108,7 @@ fn scenarios() -> Vec<(&'static str, [f64; 8], Expected)> {
 
 #[test]
 fn paridade_fcm_com_python() {
-    let fcm = build_qos_fcm();
+    let fcm = build_qos_fcm().expect("semente v1 válida");
     let decision = [
         "QoS_Critical",
         "QoS_Failover",
@@ -119,7 +119,7 @@ fn paridade_fcm_com_python() {
 
     for (name, vals, exp) in scenarios() {
         let metrics = state(&vals);
-        let (winner, score, r) = decide_qos(&fcm, &metrics);
+        let (winner, score, r) = decide_qos(&fcm, &metrics).expect("cenários canônicos decidem");
         assert_eq!(
             winner, exp.winner,
             "cenário {name}: vencedor diverge do Python"
@@ -157,7 +157,7 @@ fn divergencia_fcm_vs_linear_em_lote_barato() {
     let lowcost = [0.05, 0.10, 0.20, 0.15, 0.05, 0.70, 0.05, 0.05];
 
     let zadeh = ZadehDecider::new();
-    let fcm = FcmDecider::new();
+    let fcm = FcmDecider::new().expect("semente v1 válida");
 
     let dz = zadeh.decide(&qm(&lowcost));
     let df = fcm.decide(&qm(&lowcost));
@@ -184,7 +184,7 @@ fn dhl_converge_para_correlacao_observada() {
     // acompanha (Δ≈±0.15) → produto médio ≈ 0.7·0.15 ≈ 0.105.
     // O DHL deve CONVERGIR o peso error_rate→QoS_Failover para ~0.105
     // (fórmula de Kosko: w → média de Δi·Δj; validado empiricamente em probe).
-    let dhl = FcmDhlDecider::new(0.1);
+    let dhl = FcmDhlDecider::new(0.1).expect("semente v1 válida");
     let hi = [0.30, 0.30, 0.60, 0.30, 0.90, 0.40, 0.30, 0.10];
     let lo = [0.30, 0.30, 0.40, 0.30, 0.20, 0.40, 0.30, 0.10];
 
@@ -204,7 +204,9 @@ fn dhl_converge_para_correlacao_observada() {
 
     // A decisão no input fronteiriço muda de confiança coerentemente
     let x = [0.30, 0.30, 0.50, 0.30, 0.35, 0.50, 0.30, 0.10];
-    let plain = FcmDecider::new().decide(&qm(&x));
+    let plain = FcmDecider::new()
+        .expect("semente v1 válida")
+        .decide(&qm(&x));
     let learned = dhl.decide(&qm(&x));
     assert_eq!(
         plain.profile, learned.profile,

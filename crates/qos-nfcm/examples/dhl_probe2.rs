@@ -1,5 +1,5 @@
 use qos_nfcm::decider::{QoSMetrics, QosDecider};
-use qos_nfcm::fcm::FcmDhlDecider;
+use qos_nfcm::fcm::{FcmDhlDecider, FcmError};
 
 fn qm(v: &[f64; 8]) -> QoSMetrics {
     QoSMetrics {
@@ -14,8 +14,8 @@ fn qm(v: &[f64; 8]) -> QoSMetrics {
     }
 }
 
-fn main() {
-    let dhl = FcmDhlDecider::new(0.1);
+fn main() -> Result<(), FcmError> {
+    let dhl = FcmDhlDecider::new(0.1)?;
     let hi = [0.70, 0.30, 0.50, 0.30, 0.10, 0.80, 0.90, 0.10];
     let lo = [0.70, 0.30, 0.50, 0.30, 0.10, 0.80, 0.10, 0.10];
     for _ in 0..8 {
@@ -31,4 +31,5 @@ fn main() {
         "peso error_rate→QoS_Failover: {:.4} (inicial 0.250)",
         dhl.weight_of("error_rate", "QoS_Failover").unwrap()
     );
+    Ok(())
 }

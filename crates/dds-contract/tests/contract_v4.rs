@@ -163,6 +163,7 @@ fn roundtrip_platform_types_xcdr1() {
     roundtrip(&ToolCallRequest {
         call_id: "call-1".into(),
         request_id: "req-1".into(),
+        requester_id: "agent-1".into(),
         tool_name: "filesystem.read".into(),
         arguments_json: "{\"path\":\"/tmp/x\"}".into(),
         security_level: 2,

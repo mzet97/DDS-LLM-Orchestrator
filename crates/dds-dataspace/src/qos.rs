@@ -99,6 +99,14 @@ pub mod profiles {
             .build()
     }
 
+    /// `ServerStatus`: BestEffort, Volatile, KeepLast(1), Shared.
+    ///
+    /// Reúso do perfil de `SystemMetrics` para manter compatibilidade com
+    /// o contrato canônico de telemetria de operação leve do agente.
+    pub fn server_status() -> DdsResult<Qos> {
+        system_metrics()
+    }
+
     /// `QoS.Metric`: Reliable(5s), TransientLocal, KeepLast(100), tprio 7.
     /// Espelha `qos_qos_metric()` do `dds_data_space.py`.
     pub fn qos_metric() -> DdsResult<Qos> {

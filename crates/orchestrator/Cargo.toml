@@ -35,3 +35,6 @@ dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
 [[bin]]
 name = "orchestrator"
 path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -59,7 +59,7 @@ fn make_task(id: &str) -> Task {
 async fn writer_pool_throughput_5k() {
     let ds_pub = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
     let ds_sub = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
-    let pool = ds_pub.new_writer_pool(4, 8_192);
+    let pool = ds_pub.new_writer_pool(4, 8_192).expect("spawn do pool");
 
     const N: usize = 5000;
     const CACHE_CAP: usize = 2048; // MAX_TASKS_IN_CACHE (cache.rs)
@@ -175,7 +175,7 @@ async fn writer_pool_backpressure_fail_fast() {
     let slow = Arc::new(|_req: WriteRequest| {
         std::thread::sleep(Duration::from_millis(50));
     });
-    let pool = WriterPool::new(1, 4, slow);
+    let pool = WriterPool::new(1, 4, slow).expect("spawn do pool");
 
     let mut failed = 0;
     for i in 0..16 {
@@ -217,7 +217,7 @@ async fn ack_write_final_confirma_sucesso() {
             let _ = ack.send(Ok(()));
         }
     });
-    let pool = WriterPool::new(1, 8, write_fn);
+    let pool = WriterPool::new(1, 8, write_fn).expect("spawn do pool");
 
     let rx = pool
         .submit_with_ack(make_final_output("ack-ok"))
@@ -240,7 +240,7 @@ async fn ack_write_final_propaga_falha_pos_enqueue() {
             let _ = ack.send(Err(DataSpaceError::WriteFailed("falha injetada".into())));
         }
     });
-    let pool = WriterPool::new(1, 8, write_fn);
+    let pool = WriterPool::new(1, 8, write_fn).expect("spawn do pool");
 
     // enqueue tem sucesso; o fracasso aparece somente no ack.
     let rx = pool
@@ -266,7 +266,7 @@ async fn drain_responde_acks_pendentes() {
             let _ = ack.send(Ok(()));
         }
     });
-    let pool = WriterPool::new(1, 8, write_fn);
+    let pool = WriterPool::new(1, 8, write_fn).expect("spawn do pool");
 
     let rx1 = pool.submit_with_ack(make_final_output("drain-1")).unwrap();
     let rx2 = pool.submit_with_ack(make_final_output("drain-2")).unwrap();

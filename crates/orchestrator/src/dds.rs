@@ -77,7 +77,7 @@ impl OrchestratorDds {
             qos_profile,
         )?);
         let api_qos = dds_dataspace::qos::profiles::tasks(Some(DataSpace::STRENGTH_CLIENT))?;
-        let api_tasks_writer = dataspace.tasks_writer_with(&api_qos);
+        let api_tasks_writer = dataspace.tasks_writer_with(&api_qos)?;
         Ok(Self {
             dataspace,
             api_tasks_writer,

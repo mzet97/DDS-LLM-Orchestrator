@@ -86,11 +86,13 @@ async fn liveliness_changed_fires_on_join_and_drop() {
     let qos = agents_qos_short_lease();
     // O Listener precisa sobreviver ao reader: o C chama os callbacks via ponteiro;
     // dropar o Listener cedo = use-after-free (SIGSEGV).
-    let agents_listener = mon.agents_listener();
-    let _reader = ds_a.agents_reader_with(&qos, &agents_listener);
+    let agents_listener = mon.agents_listener().unwrap();
+    let _reader = ds_a
+        .agents_reader_with(&qos, &agents_listener)
+        .expect("reader do monitor");
 
     let ds_b = DataSpace::new(DOMAIN, DataSpace::STRENGTH_AGENT).unwrap();
-    let writer_b = ds_b.agents_writer_with(&qos);
+    let writer_b = ds_b.agents_writer_with(&qos).expect("writer do monitor");
 
     tokio::time::sleep(Duration::from_millis(1500)).await; // settle/match
 
@@ -153,11 +155,13 @@ async fn requested_deadline_missed_detectado() {
     let mon = QosMonitor::new();
     let mut rx = mon.subscribe();
     let qos = outputs_qos_short_deadline();
-    let outputs_listener = mon.outputs_listener();
-    let _reader = ds_a.outputs_reader_with(&qos, &outputs_listener);
+    let outputs_listener = mon.outputs_listener().unwrap();
+    let _reader = ds_a
+        .outputs_reader_with(&qos, &outputs_listener)
+        .expect("reader do monitor");
 
     let ds_b = DataSpace::new(DOMAIN + 1, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
-    let writer_b = ds_b.outputs_writer_with(&qos);
+    let writer_b = ds_b.outputs_writer_with(&qos).expect("writer do monitor");
 
     tokio::time::sleep(Duration::from_millis(1500)).await;
 

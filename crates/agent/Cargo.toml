@@ -32,3 +32,6 @@ dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
 [[bin]]
 name = "agent"
 path = "src/main.rs"
+
+[lints]
+workspace = true

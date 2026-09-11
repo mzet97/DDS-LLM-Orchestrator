@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
-description = "Neuro-Fuzzy Cognitive Map para seleção adaptativa de QoS (porte Rust do neuro_fuzzy Python)."
+description = "[LEGADO — disciplina] Neuro-Fuzzy Cognitive Map para seleção adaptativa de QoS (porte Rust do neuro_fuzzy Python)."
 
 [dependencies]
 rayon = { workspace = true }
@@ -17,3 +17,6 @@ thiserror = { workspace = true }
 
 [lib]
 name = "qos_nfcm"
+
+[lints]
+workspace = true

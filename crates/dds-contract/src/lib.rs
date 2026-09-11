@@ -1,6 +1,11 @@
 //! # dds-contract
 //!
 //! O **contrato DDS único**: tipos de tópico (gerados do IDL) e perfis de QoS.
+//! Autoridade contratual: `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md`
+//! §§11–12 (18 tópicos, dicionário de campos/chaves, divergências §12.8).
+//! Os arquivos `.idl` são a renderização mecânica desse contrato; a fonte de
+//! geração é `third_party/llama.cpp_dds/dds/{idl,v4/idl}/` (a cópia em
+//! `src/llama_cpp/dds/` é espelho sincronizado + gate anti-drift em testes).
 //! Substitui a manutenção manual de `dds_backend/dds_types.py` — os tipos vêm do
 //! **mesmo IDL** que o C++ (`OrchestratorDDS.idl`) e do V4 (`OrchestratorV4.idl`).
 //!
@@ -242,10 +247,15 @@ pub mod generated {
             pub updated_at_ns: u64,
         }
 
+        /// Espelho mock (build sem `--features dds`) — deve permanecer
+        /// campo-a-campo idêntico ao `ToolCallRequest` do
+        /// `OrchestratorV4.idl` (M2: o mock já divergiu uma vez, sem
+        /// `requester_id`, quebrando a compilação dos testes `dds`).
         #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
         pub struct ToolCallRequest {
             pub call_id: String,
             pub request_id: String,
+            pub requester_id: String,
             pub tool_name: String,
             pub arguments_json: String,
             pub security_level: i32,
@@ -472,10 +482,11 @@ mod dds_tests {
 
     #[test]
     fn idl_file_llm_structs_are_keyless_by_source() {
-        // Parse do IDL canônico (sem depender só do runtime).
+        // Parse do IDL canônico (fonte de geração do build.rs, sem depender
+        // só do runtime). Autoridade: Entendimento §§11–12; LLM.* keyless.
         let idl = include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/../../../llama_cpp/dds/idl/OrchestratorDDS.idl" // crates/dds-contract -> src/llama_cpp
+            "/../../../../third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl" // crates/dds-contract -> tese root
         ));
         for name in [
             "LLMInferenceRequest",
@@ -491,6 +502,38 @@ mod dds_tests {
                 "{name} must be keyless in IDL, body had @key"
             );
         }
+    }
+
+    #[test]
+    fn idl_mirror_copies_are_in_sync() {
+        // Anti-drift: `third_party/llama.cpp_dds/` é a fonte de geração do
+        // build.rs; `src/llama_cpp/dds/` é espelho. Autoridade contratual:
+        // Entendimento §§11–12 (o .md traz o dicionário, não a listagem
+        // integral — os .idl são a renderização mecânica).
+        let canonical_dds = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl"
+        ));
+        let mirror_dds = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../llama_cpp/dds/idl/OrchestratorDDS.idl"
+        ));
+        assert_eq!(
+            canonical_dds, mirror_dds,
+            "OrchestratorDDS.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)"
+        );
+        let canonical_v4 = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../../third_party/llama.cpp_dds/dds/v4/idl/OrchestratorV4.idl"
+        ));
+        let mirror_v4 = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../../llama_cpp/dds/v4/idl/OrchestratorV4.idl"
+        ));
+        assert_eq!(
+            canonical_v4, mirror_v4,
+            "OrchestratorV4.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)"
+        );
     }
 
     #[test]

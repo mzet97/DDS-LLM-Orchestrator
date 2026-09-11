@@ -1,7 +1,7 @@
 use qos_nfcm::decider::{QoSMetrics, QosDecider};
-use qos_nfcm::fcm::FcmDecider;
-fn main() {
-    let fcm = FcmDecider::new();
+use qos_nfcm::fcm::{FcmDecider, FcmError};
+fn main() -> Result<(), FcmError> {
+    let fcm = FcmDecider::new()?;
     for (nome, m) in [
         ("ocioso", [0.10, 0.05, 0.15, 0.10, 0.05, 0.90, 0.20, 0.05]),
         ("urgencia", [0.95, 0.90, 0.30, 0.35, 0.10, 0.85, 0.50, 0.10]),
@@ -28,4 +28,5 @@ fn main() {
         let d = fcm.decide(&q);
         println!("{nome}: {:?} (conf {:.3})", d.profile, d.confidence);
     }
+    Ok(())
 }

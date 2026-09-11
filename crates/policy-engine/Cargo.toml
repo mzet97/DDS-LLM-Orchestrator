@@ -29,3 +29,6 @@ dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
 [[bin]]
 name = "policy-engine"
 path = "src/main.rs"
+
+[lints]
+workspace = true

@@ -67,7 +67,7 @@ uma fronteira operacional planejada.
 ## Gates executados
 
 Os comandos, ambientes e limitações estão registrados em
-`/var/mnt/HD1TB/tese/.omo/evidence/final-core-gates-20260818.md`.
+`/var/home/mzet/projetos/tese/.omo/evidence/final-core-gates-20260818.md`.
 
 - Biblioteca: `cargo check` e `cargo clippy -D warnings` para o workspace inteiro;
   `cargo test --workspace -- --test-threads=1` verde, incluindo stress de um milhão de

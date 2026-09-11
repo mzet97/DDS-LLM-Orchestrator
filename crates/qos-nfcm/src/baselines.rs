@@ -357,7 +357,7 @@ impl Ucb1Decider {
         let Some(arm) = arm_index(profile) else {
             return;
         };
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         inner.counts[arm] += 1;
         inner.total += 1;
         let n = inner.counts[arm] as f64;
@@ -366,7 +366,7 @@ impl Ucb1Decider {
 
     /// Reseta estatísticas (`ucb1_baseline.py:76-80`).
     pub fn reset(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         inner.counts = [0; 5];
         inner.values = [0.0; 5];
         inner.total = 0;
@@ -374,7 +374,7 @@ impl Ucb1Decider {
 
     /// Contagens por braço (observabilidade/testes).
     pub fn counts(&self) -> [u64; 5] {
-        self.inner.lock().unwrap().counts
+        crate::lock(&self.inner).counts
     }
 }
 
@@ -386,7 +386,7 @@ impl Default for Ucb1Decider {
 
 impl QosDecider for Ucb1Decider {
     fn decide(&self, _metrics: &QoSMetrics) -> QoSDecision {
-        let inner = self.inner.lock().unwrap();
+        let inner = crate::lock(&self.inner);
 
         // Primeira rodada: explorar cada braço uma vez (ordem de PROFILES).
         for (i, &c) in inner.counts.iter().enumerate() {
@@ -469,7 +469,7 @@ impl SwUcbDecider {
         let Some(arm) = arm_index(profile) else {
             return;
         };
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         let window_size = inner.window_size;
         let w = &mut inner.windows[arm];
         if w.len() >= window_size {
@@ -481,7 +481,7 @@ impl SwUcbDecider {
 
     /// Reseta estatísticas (`sw_ucb_baseline.py:82-85`).
     pub fn reset(&self) {
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
         for w in &mut inner.windows {
             w.clear();
         }
@@ -490,7 +490,7 @@ impl SwUcbDecider {
 
     /// Tamanhos das janelas por braço (observabilidade/testes).
     pub fn window_lens(&self) -> [usize; 5] {
-        let inner = self.inner.lock().unwrap();
+        let inner = crate::lock(&self.inner);
         std::array::from_fn(|i| inner.windows[i].len())
     }
 }
@@ -503,7 +503,7 @@ impl Default for SwUcbDecider {
 
 impl QosDecider for SwUcbDecider {
     fn decide(&self, _metrics: &QoSMetrics) -> QoSDecision {
-        let inner = self.inner.lock().unwrap();
+        let inner = crate::lock(&self.inner);
 
         // Explorar cada braço uma vez (janela vazia), na ordem de PROFILES.
         for (i, w) in inner.windows.iter().enumerate() {

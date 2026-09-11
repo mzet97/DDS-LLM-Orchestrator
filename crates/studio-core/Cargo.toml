@@ -1,0 +1,13 @@
+[package]
+name = "studio-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Domínio administrativo do DDS Orchestrator Studio: revisões, gerações e catálogo (fase 800)."
+
+[dependencies]
+thiserror = { workspace = true }
+
+[lints]
+workspace = true

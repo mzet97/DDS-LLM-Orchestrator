@@ -128,3 +128,68 @@ impl QosCollector {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dds_dataspace::api::DataSpaceApi;
+    use dds_dataspace::in_memory::InMemoryDataSpace;
+    use futures::StreamExt;
+
+    struct NullSink;
+
+    impl crate::sink::EventSink for NullSink {
+        fn emit(
+            &self,
+            _event: &crate::events::ObservabilityEvent,
+        ) -> Result<(), crate::sink::SinkError> {
+            Ok(())
+        }
+
+        fn query(
+            &self,
+            _task_id: &str,
+            _event_type: Option<crate::events::EventType>,
+            _limit: usize,
+        ) -> Result<Vec<crate::events::ObservabilityEvent>, crate::sink::SinkError> {
+            Ok(vec![])
+        }
+
+        fn flush(&self) -> Result<(), crate::sink::SinkError> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn discovery_ingestion_end_to_end_via_dataspace() {
+        // Given: coletor + dataspace em memória (sem produtor nativo Rust —
+        // o evento entra por escrita direta, como faz o qos_monitor Python)
+        let collector = Arc::new(QosCollector::new(
+            Arc::new(QosStore::new()),
+            Arc::new(NullSink),
+        ));
+        let ds = InMemoryDataSpace::new();
+        let mut stream = Box::pin(ds.subscribe_discovery_events());
+
+        // When: evento publicado em QoS.Discovery
+        ds.write_discovery_event(DiscoveryEvent {
+            event_id: "d1".into(),
+            event_type: "participant_joined".into(),
+            topic_name: "Tasks".into(),
+            local_entity: "a".into(),
+            remote_entity: "b".into(),
+            count_change: 1,
+            timestamp_ns: 7,
+        })
+        .await
+        .unwrap();
+
+        // Then: stream entrega e a ingestão agrega
+        let got = tokio::time::timeout(std::time::Duration::from_secs(2), stream.next())
+            .await
+            .expect("evento chega")
+            .expect("stream aberta");
+        collector.ingest_discovery(&got);
+        assert_eq!(collector.stats().total_discoveries, 1);
+    }
+}

@@ -10,11 +10,11 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, Task,
-    TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
+    Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
-    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
+    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
 };
 use std::ops::Deref;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -58,6 +58,8 @@ pub type ArcQoSRoutingProfile = Arc<QoSRoutingProfile>;
 pub type ArcQoSMetric = Arc<QoSMetric>;
 pub type ArcQoSViolation = Arc<QoSViolation>;
 pub type ArcDiscoveryEvent = Arc<DiscoveryEvent>;
+pub type ArcSystemMetric = Arc<SystemMetric>;
+pub type ArcServerStatus = Arc<ServerStatus>;
 
 /// Resultado explícito do upsert de task (RUST-CACHE-006).
 ///
@@ -118,6 +120,8 @@ pub struct TopicCaches {
     // Tópicos Context (2)
     pub context_snapshots: FastMap<String, ArcContextSnapshot>,
     pub context_updates: FastMap<String, Vec<ArcContextUpdate>>,
+    pub system_metrics: FastMap<String, ArcSystemMetric>,
+    pub server_status: FastMap<String, ArcServerStatus>,
 
     // Tópicos ToolCall (1)
     pub tool_calls: FastMap<String, ArcToolCallRequest>,
@@ -243,6 +247,10 @@ impl TopicCaches {
             .get(task_id)
             .map(|o| o.clone())
             .unwrap_or_default()
+    }
+
+    pub fn read_tool_call(&self, call_id: &str) -> Option<ArcToolCallRequest> {
+        self.tool_calls.get(call_id).map(|c| c.clone())
     }
 
     // ── LLM caches ──────────────────────────────────────────────────────
@@ -453,6 +461,46 @@ impl TopicCaches {
             .clone()
     }
 
+    pub fn upsert_system_metric(&self, metric: SystemMetric) -> ArcSystemMetric {
+        if !cache_accepts_key(&self.system_metrics, &metric.metric_name) {
+            return Arc::new(metric);
+        }
+        let key = format!("{}:{}", metric.metric_name, metric.component_id);
+        self.system_metrics
+            .entry(key)
+            .and_modify(|cur| {
+                if metric.timestamp_ns >= cur.timestamp_ns {
+                    *cur = Arc::new(metric.clone());
+                }
+            })
+            .or_insert_with(|| Arc::new(metric))
+            .clone()
+    }
+
+    pub fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Option<ArcSystemMetric> {
+        let key = format!("{metric_name}:{component_id}");
+        self.system_metrics.get(&key).map(|m| m.clone())
+    }
+
+    pub fn upsert_server_status(&self, status: ServerStatus) -> ArcServerStatus {
+        if !cache_accepts_key(&self.server_status, &status.server_id) {
+            return Arc::new(status);
+        }
+        self.server_status
+            .entry(status.server_id.clone())
+            .and_modify(|cur| *cur = Arc::new(status.clone()))
+            .or_insert_with(|| Arc::new(status))
+            .clone()
+    }
+
+    pub fn read_server_status(&self, server_id: &str) -> Option<ArcServerStatus> {
+        self.server_status.get(server_id).map(|s| s.clone())
+    }
+
     /// Remove dados associados a tasks em estado terminal (DONE/FAILED) completadas
     /// há mais de `max_age`. Evita crescimento indefinido dos caches Vec.
     pub fn evict_terminal_tasks(&self, max_age: std::time::Duration) {
@@ -533,6 +581,8 @@ impl TopicCaches {
         for e in self.security_updates.iter() {
             total += e.value().len();
         }
+        total += self.system_metrics.len();
+        total += self.server_status.len();
         total
     }
 }

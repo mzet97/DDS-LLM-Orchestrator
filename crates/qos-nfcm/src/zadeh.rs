@@ -11,6 +11,7 @@
 
 use crate::decider::{QoSDecision, QoSMetrics, QosDecider};
 use crate::QoSProfile;
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 
 // ── Erros ──────────────────────────────────────────────────────────────────
@@ -29,6 +30,10 @@ pub enum FuzzyError {
     AlphaOutOfRange(f64),
     #[error("triangular requer a <= b <= c")]
     BadTriangular,
+    #[error("seletor sem perfis configurados")]
+    NoProfiles,
+    #[error("valor não-finito (NaN/inf) rejeitado na fronteira: {0}")]
+    NotFinite(f64),
 }
 
 // ── AlphaCut / FuzzyNumber ─────────────────────────────────────────────────
@@ -51,7 +56,14 @@ impl FuzzyNumber {
         if cuts.is_empty() {
             return Err(FuzzyError::Empty);
         }
-        cuts.sort_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap());
+        for ac in &cuts {
+            for v in [ac.alpha, ac.lower, ac.upper] {
+                if !v.is_finite() {
+                    return Err(FuzzyError::NotFinite(v));
+                }
+            }
+        }
+        cuts.sort_by(|a, b| a.alpha.total_cmp(&b.alpha));
         {
             let mut seen = std::collections::HashSet::new();
             for ac in &cuts {
@@ -88,20 +100,28 @@ impl FuzzyNumber {
         if cuts.is_empty() {
             return Err(FuzzyError::Empty);
         }
+        // Valida ANTES da extrapolação (que ordena/compara alphas abaixo).
+        for ac in &cuts {
+            for v in [ac.alpha, ac.lower, ac.upper] {
+                if !v.is_finite() {
+                    return Err(FuzzyError::NotFinite(v));
+                }
+            }
+        }
         let mut by_alpha: HashMap<i64, AlphaCut> = HashMap::new();
         for ac in &cuts {
             by_alpha.insert((ac.alpha * 1e12) as i64, *ac);
         }
 
         let key = |a: f64| (a * 1e12) as i64;
-        by_alpha.entry(key(0.0)).or_insert_with(|| {
+        if let Entry::Vacant(slot) = by_alpha.entry(key(0.0)) {
             let ac0 = cuts
                 .iter()
-                .min_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap())
-                .unwrap();
+                .min_by(|a, b| a.alpha.total_cmp(&b.alpha))
+                .ok_or(FuzzyError::Empty)?;
             let (lower0, upper0) = if cuts.len() >= 2 {
                 let mut sorted = cuts.to_vec();
-                sorted.sort_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap());
+                sorted.sort_by(|a, b| a.alpha.total_cmp(&b.alpha));
                 let ac_next = sorted[1];
                 let t = -ac0.alpha / (ac_next.alpha - ac0.alpha);
                 (
@@ -111,21 +131,21 @@ impl FuzzyNumber {
             } else {
                 (ac0.lower, ac0.upper)
             };
-            AlphaCut {
+            slot.insert(AlphaCut {
                 alpha: 0.0,
                 lower: lower0,
                 upper: upper0,
-            }
-        });
+            });
+        }
 
-        by_alpha.entry(key(1.0)).or_insert_with(|| {
+        if let Entry::Vacant(slot) = by_alpha.entry(key(1.0)) {
             let ac1 = cuts
                 .iter()
-                .max_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap())
-                .unwrap();
+                .max_by(|a, b| a.alpha.total_cmp(&b.alpha))
+                .ok_or(FuzzyError::Empty)?;
             let (lower1, upper1) = if cuts.len() >= 2 {
                 let mut sorted = cuts.to_vec();
-                sorted.sort_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap());
+                sorted.sort_by(|a, b| a.alpha.total_cmp(&b.alpha));
                 let ac_prev = sorted[sorted.len() - 2];
                 let t = (1.0 - ac_prev.alpha) / (ac1.alpha - ac_prev.alpha);
                 (
@@ -135,17 +155,19 @@ impl FuzzyNumber {
             } else {
                 (ac1.lower, ac1.upper)
             };
-            AlphaCut {
+            slot.insert(AlphaCut {
                 alpha: 1.0,
                 lower: lower1,
                 upper: upper1,
-            }
-        });
+            });
+        }
 
         Self::new(by_alpha.into_values().collect())
     }
 
-    pub fn from_crisp(v: f64) -> Self {
+    /// Construtor total: `NaN`/`inf` viram `Err`, nunca panic (H1 — o
+    /// decisor roda em task detached no control-loop).
+    pub fn from_crisp(v: f64) -> Result<Self, FuzzyError> {
         Self::new(vec![
             AlphaCut {
                 alpha: 0.0,
@@ -158,10 +180,10 @@ impl FuzzyNumber {
                 upper: v,
             },
         ])
-        .expect("crisp sempre válido")
     }
 
-    pub fn from_interval(lower: f64, upper: f64) -> Self {
+    /// Construtor total (ver [`FuzzyNumber::from_crisp`]).
+    pub fn from_interval(lower: f64, upper: f64) -> Result<Self, FuzzyError> {
         Self::new(vec![
             AlphaCut {
                 alpha: 0.0,
@@ -174,7 +196,25 @@ impl FuzzyNumber {
                 upper,
             },
         ])
-        .expect("intervalo sempre válido")
+    }
+
+    /// Constante 0.5 para defaults internos (literal finito por construção —
+    /// único caminho infalível do módulo, sem `expect`).
+    fn crisp_mid() -> Self {
+        Self {
+            cuts: vec![
+                AlphaCut {
+                    alpha: 0.0,
+                    lower: 0.5,
+                    upper: 0.5,
+                },
+                AlphaCut {
+                    alpha: 1.0,
+                    lower: 0.5,
+                    upper: 0.5,
+                },
+            ],
+        }
     }
 
     pub fn triangular(a: f64, b: f64, c: f64) -> Result<Self, FuzzyError> {
@@ -234,7 +274,14 @@ impl FuzzyNumber {
                 return v1 + t * (v2 - v1);
             }
         }
-        unreachable!()
+        // Inalcançável por construção (`new` ordena por alpha; os clamps acima
+        // cobrem fora-da-faixa) — fallback coerente com np.interp em vez de panic.
+        let last = cuts[cuts.len() - 1];
+        if take_lower {
+            last.lower
+        } else {
+            last.upper
+        }
     }
 
     pub fn lower_bound(&self, alpha: f64) -> Result<f64, FuzzyError> {
@@ -281,11 +328,12 @@ impl FuzzyNumber {
                 return (ac.lower, ac.upper);
             }
         }
-        let ac0 = self
-            .cuts
-            .iter()
-            .min_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap())
-            .unwrap();
+        // `cuts` nunca é vazio (`new` rejeita) — o `None` é inalcançável por
+        // construção; o valor neutro existe só para manter a função total.
+        let ac0 = match self.cuts.iter().min_by(|a, b| a.alpha.total_cmp(&b.alpha)) {
+            Some(ac) => ac,
+            None => return (0.0, 0.0),
+        };
         (ac0.lower, ac0.upper)
     }
 
@@ -295,15 +343,14 @@ impl FuzzyNumber {
                 return (ac.lower, ac.upper);
             }
         }
-        let ac = self
+        let ac = match self
             .cuts
             .iter()
-            .min_by(|a, b| {
-                (a.upper - a.lower)
-                    .partial_cmp(&(b.upper - b.lower))
-                    .unwrap()
-            })
-            .unwrap();
+            .min_by(|a, b| (a.upper - a.lower).total_cmp(&(b.upper - b.lower)))
+        {
+            Some(ac) => ac,
+            None => return (0.0, 0.0),
+        };
         (ac.lower, ac.upper)
     }
 }
@@ -386,7 +433,8 @@ impl<F: Fn(&[f64]) -> f64> ExtensionPrincipleEvaluator<F> {
         }
 
         // Aninhamento: o cut mais largo contém os mais estreitos (como o Python).
-        out.sort_by(|a, b| a.alpha.partial_cmp(&b.alpha).unwrap());
+        // `total_cmp` (ordem total, sem panic) — `new` já garante finitude.
+        out.sort_by(|a, b| a.alpha.total_cmp(&b.alpha));
         for i in (0..out.len().saturating_sub(1)).rev() {
             let inner = out[i + 1];
             let outer = out[i];
@@ -495,7 +543,7 @@ impl ZadehSelector {
         &self,
         weights: &[(&str, f64)],
         inputs: &HashMap<&'static str, FuzzyNumber>,
-    ) -> ProfileScore {
+    ) -> Result<ProfileScore, FuzzyError> {
         let keys: Vec<&str> = weights.iter().map(|(k, _)| *k).collect();
         let wmap: HashMap<&str, f64> = weights.iter().cloned().collect();
         // Peso negativo ⇒ |w|·(1−val); positivo ⇒ w·val (como _make_score_func do Python)
@@ -520,57 +568,65 @@ impl ZadehSelector {
                 inputs
                     .get(*k)
                     .cloned()
-                    .unwrap_or_else(|| FuzzyNumber::from_crisp(0.5)) // default Python (warn)
+                    .unwrap_or_else(FuzzyNumber::crisp_mid)
+                // default Python (warn): entrada ausente ⇒ 0.5
             })
             .collect();
 
         let evaluator = ExtensionPrincipleEvaluator::new(score_func, self.alphas.clone());
-        let fuzzy_score = evaluator.evaluate(&input_list).expect("evaluate");
+        let fuzzy_score = evaluator.evaluate(&input_list)?;
         let centroid = fuzzy_score.centroid();
-        let lower_08 = fuzzy_score.lower_bound(0.8).expect("lower 0.8");
-        let upper_08 = fuzzy_score.upper_bound(0.8).expect("upper 0.8");
+        let lower_08 = fuzzy_score.lower_bound(0.8)?;
+        let upper_08 = fuzzy_score.upper_bound(0.8)?;
 
-        ProfileScore {
+        Ok(ProfileScore {
             profile: QoSProfile::Balanced, // sobrescrito pelo caller
             fuzzy_score,
             centroid,
             lower_08,
             upper_08,
-        }
+        })
     }
 
     /// Avalia todos os perfis (como `evaluate_all`).
-    pub fn evaluate_all(&self, inputs: &HashMap<&'static str, FuzzyNumber>) -> Vec<ProfileScore> {
+    pub fn evaluate_all(
+        &self,
+        inputs: &HashMap<&'static str, FuzzyNumber>,
+    ) -> Result<Vec<ProfileScore>, FuzzyError> {
         self.profiles
             .iter()
             .map(|(profile, weights)| {
-                let mut s = self.score_of(weights, inputs);
-                s.profile = profile.clone();
-                s
+                self.score_of(weights, inputs).map(|mut s| {
+                    s.profile = profile.clone();
+                    s
+                })
             })
             .collect()
     }
 
     /// Seleciona o melhor perfil. `conservative=true` (default do Python):
     /// critério (lower_0.8, centroid); senão (centroid, lower_0.8).
+    /// Total (sem panic): comparação por `total_cmp`, vazio ⇒ `Err`.
     pub fn select(
         &self,
         inputs: &HashMap<&'static str, FuzzyNumber>,
         conservative: bool,
-    ) -> ProfileScore {
-        let scores = self.evaluate_all(inputs);
-        let cmp = |a: &ProfileScore, b: &ProfileScore| {
-            let (ka, kb) = if conservative {
-                ((a.lower_08, a.centroid), (b.lower_08, b.centroid))
-            } else {
-                ((a.centroid, a.lower_08), (b.centroid, b.lower_08))
-            };
-            ka.partial_cmp(&kb).unwrap()
-        };
+    ) -> Result<ProfileScore, FuzzyError> {
+        let scores = self.evaluate_all(inputs)?;
         scores
             .into_iter()
-            .max_by(|a, b| cmp(a, b))
-            .expect("profiles não vazio")
+            .max_by(|a, b| {
+                if conservative {
+                    a.lower_08
+                        .total_cmp(&b.lower_08)
+                        .then(a.centroid.total_cmp(&b.centroid))
+                } else {
+                    a.centroid
+                        .total_cmp(&b.centroid)
+                        .then(a.lower_08.total_cmp(&b.lower_08))
+                }
+            })
+            .ok_or(FuzzyError::NoProfiles)
     }
 }
 
@@ -589,6 +645,48 @@ impl ZadehDecider {
         }
     }
 
+    fn decide_inner(&self, metrics: &QoSMetrics) -> Result<QoSDecision, FuzzyError> {
+        let inputs: HashMap<&'static str, FuzzyNumber> = [
+            ("urgency", FuzzyNumber::from_crisp(metrics.urgency)?),
+            (
+                "deadline_pressure",
+                FuzzyNumber::from_crisp(metrics.deadline_pressure)?,
+            ),
+            (
+                "recent_latency",
+                FuzzyNumber::from_crisp(metrics.recent_latency)?,
+            ),
+            ("agent_load", FuzzyNumber::from_crisp(metrics.agent_load)?),
+            ("error_rate", FuzzyNumber::from_crisp(metrics.error_rate)?),
+            (
+                "historical_confidence",
+                FuzzyNumber::from_crisp(metrics.historical_confidence)?,
+            ),
+            (
+                "estimated_complexity",
+                FuzzyNumber::from_crisp(metrics.estimated_complexity)?,
+            ),
+            (
+                "streaming_need",
+                FuzzyNumber::from_crisp(metrics.streaming_need)?,
+            ),
+        ]
+        .into_iter()
+        .collect();
+
+        let best = self.selector.select(&inputs, true)?;
+        Ok(QoSDecision {
+            profile: best.profile,
+            confidence: best.centroid,
+            explanation: format!(
+                "zadeh(ext): centroid={:.3}, α0.8=[{:.3},{:.3}]",
+                best.centroid, best.lower_08, best.upper_08
+            ),
+            converged: true,
+            runner_up: 0.0,
+        })
+    }
+
     pub fn selector(&self) -> &ZadehSelector {
         &self.selector
     }
@@ -601,49 +699,57 @@ impl Default for ZadehDecider {
 }
 
 impl QosDecider for ZadehDecider {
+    /// Total (sem panic): qualquer entrada inválida ou falha de avaliação
+    /// vira fallback `Balanced` com `converged=false` — o control-loop já
+    /// trata `!converged` mantendo o perfil efetivo atual (H1).
     fn decide(&self, metrics: &QoSMetrics) -> QoSDecision {
-        let inputs: HashMap<&'static str, FuzzyNumber> = [
-            ("urgency", FuzzyNumber::from_crisp(metrics.urgency)),
-            (
-                "deadline_pressure",
-                FuzzyNumber::from_crisp(metrics.deadline_pressure),
-            ),
-            (
-                "recent_latency",
-                FuzzyNumber::from_crisp(metrics.recent_latency),
-            ),
-            ("agent_load", FuzzyNumber::from_crisp(metrics.agent_load)),
-            ("error_rate", FuzzyNumber::from_crisp(metrics.error_rate)),
-            (
-                "historical_confidence",
-                FuzzyNumber::from_crisp(metrics.historical_confidence),
-            ),
-            (
-                "estimated_complexity",
-                FuzzyNumber::from_crisp(metrics.estimated_complexity),
-            ),
-            (
-                "streaming_need",
-                FuzzyNumber::from_crisp(metrics.streaming_need),
-            ),
-        ]
-        .into_iter()
-        .collect();
-
-        let best = self.selector.select(&inputs, true);
-        QoSDecision {
-            profile: best.profile,
-            confidence: best.centroid,
-            explanation: format!(
-                "zadeh(ext): centroid={:.3}, α0.8=[{:.3},{:.3}]",
-                best.centroid, best.lower_08, best.upper_08
-            ),
-            converged: true,
-            runner_up: 0.0,
+        match self.decide_inner(metrics) {
+            Ok(d) => d,
+            // Sem nova dependência de log: o motivo vai na `explanation`,
+            // que o control-loop já registra em cada `qos_decision`.
+            Err(e) => QoSDecision {
+                profile: QoSProfile::Balanced,
+                confidence: 0.0,
+                explanation: format!("zadeh: fallback ({e})"),
+                converged: false,
+                runner_up: 0.0,
+            },
         }
     }
 
     fn name(&self) -> &str {
         "zadeh"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cut(alpha: f64, lower: f64, upper: f64) -> AlphaCut {
+        AlphaCut {
+            alpha,
+            lower,
+            upper,
+        }
+    }
+
+    #[test]
+    fn canonical_extrapolates_missing_alpha_0_and_1() {
+        // Given: cortes sem α=0 e sem α=1
+        let cuts = vec![cut(0.25, 1.0, 4.0), cut(0.75, 2.0, 3.0)];
+        // When: canonicaliza
+        let num = FuzzyNumber::canonical(cuts).expect("cortes finitos devem canonicalizar");
+        // Then: chaves 0.0 e 1.0 existem por extrapolação linear
+        let has = |a: f64| num.cuts.iter().any(|c| c.alpha == a);
+        assert!(has(0.0), "α=0 extrapolado ausente");
+        assert!(has(1.0), "α=1 extrapolado ausente");
+    }
+
+    #[test]
+    fn canonical_rejects_empty_input() {
+        // Given: entrada vazia / When: canonicaliza / Then: erro Empty
+        let err = FuzzyNumber::canonical(vec![]).unwrap_err();
+        assert!(matches!(err, FuzzyError::Empty));
     }
 }

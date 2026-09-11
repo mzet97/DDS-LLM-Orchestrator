@@ -13,7 +13,10 @@ use crate::handler::ToolRegistry;
 use crate::policy::PolicyHook;
 use dds_contract::generated::dds_llm_orchestrator::ToolCallRequest;
 use dds_dataspace::api::{DataSpaceApi, DataSpaceError};
+use std::process;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// `ToolCallStatus` (espelha `models.py` Python / valores gravados no IDL).
@@ -43,6 +46,8 @@ pub enum ServiceError {
     DataSpace(#[from] DataSpaceError),
 }
 
+static GATEWAY_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
 /// Relógio em ns (mesma unidade dos campos `*_at_ns` do IDL).
 fn now_ns() -> u64 {
     SystemTime::now()
@@ -66,15 +71,26 @@ pub struct ToolCallService<D: DataSpaceApi> {
     data_space: D,
     registry: ToolRegistry,
     policy: Arc<dyn PolicyHook>,
+    gateway_id: String,
 }
 
 impl<D: DataSpaceApi + 'static> ToolCallService<D> {
     /// Cria o serviço com DataSpace, registry de ferramentas e política.
     pub fn new(data_space: D, registry: ToolRegistry, policy: Arc<dyn PolicyHook>) -> Self {
+        Self::new_with_id(data_space, registry, policy, generate_gateway_id())
+    }
+
+    pub fn new_with_id(
+        data_space: D,
+        registry: ToolRegistry,
+        policy: Arc<dyn PolicyHook>,
+        gateway_id: impl Into<String>,
+    ) -> Self {
         Self {
             data_space,
             registry,
             policy,
+            gateway_id: gateway_id.into(),
         }
     }
 
@@ -86,6 +102,45 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
     /// DataSpace subjacente.
     pub fn data_space(&self) -> &D {
         &self.data_space
+    }
+
+    fn claim_marker(&self, call_id: &str) -> String {
+        format!("claim:{}:{}", self.gateway_id, call_id)
+    }
+
+    async fn claim_execute_right(&self, request: &ToolCallRequest) -> Result<bool, ServiceError> {
+        let mut claim = request.clone();
+        let marker = self.claim_marker(&claim.call_id);
+        claim.status = status::EXECUTING;
+        claim.error_message = marker.clone();
+        self.data_space.write_tool_call(claim.clone()).await?;
+
+        for _ in 0..10 {
+            match self.data_space.read_tool_call(&claim.call_id).await? {
+                Some(current) => {
+                    if current.status == status::EXECUTING && current.error_message == marker {
+                        return Ok(true);
+                    }
+                    if current.status != status::PENDING {
+                        return Ok(false);
+                    }
+                }
+                None => {
+                    tracing::warn!(
+                        call_id = %claim.call_id,
+                        "claim não confirmado no cache; assumindo propriedade local"
+                    );
+                    return Ok(true);
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        tracing::warn!(
+            call_id = %claim.call_id,
+            "timeout de confirmação de claim; assumindo propriedade local"
+        );
+        Ok(true)
     }
 
     /// Processa UM `ToolCall.Request` (ciclo completo, paridade com o Python):
@@ -121,9 +176,11 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
             return Ok(call);
         }
 
-        // 2. EXECUTING visível no mesh antes do dispatch (como o Python).
+        if !self.claim_execute_right(&call).await? {
+            return Ok(call);
+        }
         call.status = status::EXECUTING;
-        self.data_space.write_tool_call(call.clone()).await?;
+        call.error_message = String::new();
 
         // 3. Dispatch para o handler registrado.
         match self
@@ -175,4 +232,13 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
         }
         Ok(())
     }
+}
+
+fn generate_gateway_id() -> String {
+    format!(
+        "gw-{}-{}-{}",
+        process::id(),
+        now_ns(),
+        GATEWAY_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    )
 }

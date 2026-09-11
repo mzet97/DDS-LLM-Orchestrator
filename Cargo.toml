@@ -20,6 +20,9 @@ members = [
     "crates/mcp-gateway",
     "crates/observability",
     "crates/benchmarks",
+    "crates/det-responder",
+    "crates/studio-core",
+    "crates/orchestrator-studio",
 ]
 
 [workspace.package]
@@ -30,8 +33,8 @@ authors = ["Matheus Zeitune <matheus.zeitune.developer@gmail.com>"]
 license = "MIT"
 
 [workspace.dependencies]
-cyclonedds = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds" }
-cyclonedds-rust-sys = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust/cyclonedds-rust-sys" }
+cyclonedds = { path = "../../third_party/cyclonedds-rust/cyclonedds" }
+cyclonedds-rust-sys = { path = "../../third_party/cyclonedds-rust/cyclonedds-rust-sys" }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)
@@ -47,6 +50,12 @@ parking_lot = "0.12"             # locks rápidos (substitui threading.Lock)
 dashmap = "6"                    # caches concorrentes lock-free (substitui dicts+lock)
 crossbeam-channel = "0.5"        # filas MPMC (substitui a fila de escrita única)
 ahash = "0.8"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+warnings = "deny"
 
 [profile.release]
 lto = "thin"

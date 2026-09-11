@@ -51,7 +51,7 @@ fn make_output(seq: u32) -> TaskOutput {
 async fn task_output_loan_roundtrip_1000_chunks_no_gaps() {
     let ds_pub = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
     let ds_sub = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
-    let pool = ds_pub.new_writer_pool(2, 4096);
+    let pool = ds_pub.new_writer_pool(2, 4096).expect("spawn do pool");
 
     let mut stream = Box::pin(ds_sub.stream_task_outputs());
     tokio::time::sleep(Duration::from_millis(1500)).await; // settle/match

@@ -168,7 +168,10 @@ impl Drop for SharedWaitSet {
         // WaitSet nativo vivo mesmo depois do `DataSpace` cair. `abort()`
         // cancela a task no próximo ponto de suspensão (`.await` dentro do
         // loop), que solta seu `Arc<WaitSet>` ao ser dropada.
-        if let Some(handle) = self.driver.lock().unwrap().take() {
+        // Sem `unwrap`: se o mutex envenenou (panic anterior com o lock
+        // preso), ainda precisamos abortar o driver — `Drop` durante unwind
+        // com `unwrap` aqui seria double-panic = abort do processo.
+        if let Some(handle) = self.driver.lock().unwrap_or_else(|e| e.into_inner()).take() {
             handle.abort();
         }
     }

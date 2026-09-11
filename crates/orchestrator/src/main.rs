@@ -305,8 +305,8 @@ mod app {
                 qos_nfcm::QoSProfile::Balanced,
             )),
             "zadeh" => std::sync::Arc::new(qos_nfcm::zadeh::ZadehDecider::new()),
-            "fcm" => std::sync::Arc::new(qos_nfcm::fcm::FcmDecider::new()),
-            "fcm-dhl" => std::sync::Arc::new(qos_nfcm::fcm::FcmDhlDecider::default()),
+            "fcm" => std::sync::Arc::new(qos_nfcm::fcm::FcmDecider::new()?),
+            "fcm-dhl" => std::sync::Arc::new(qos_nfcm::fcm::FcmDhlDecider::new(0.1)?),
             _ => std::sync::Arc::new(qos_nfcm::Nfcm::qos_default()),
         };
 

@@ -27,6 +27,7 @@ use futures::{Stream, StreamExt};
 use tokio::sync::Mutex;
 
 use crate::metrics::{JsonlWriter, RequestRecord, RequestStatus};
+use crate::regimes::WorkloadConfig;
 use crate::rng::Rng;
 use crate::scenarios::{Scenario, WorkloadPattern};
 
@@ -276,8 +277,8 @@ impl BenchmarkDriver {
     /// Executa a corrida conforme o padrão do cenário.
     pub async fn run(self) -> Result<RunSummary, BenchError> {
         match self.shared.scenario.pattern.clone() {
-            WorkloadPattern::Open { .. } => self.open_loop(false).await,
-            WorkloadPattern::Streaming { .. } => self.open_loop(true).await,
+            WorkloadPattern::Open { regime } => self.open_loop(false, regime).await,
+            WorkloadPattern::Streaming { regime } => self.open_loop(true, regime).await,
             WorkloadPattern::Closed { .. } => self.closed_loop().await,
             WorkloadPattern::Priority {
                 background_rps,
@@ -426,12 +427,9 @@ impl BenchmarkDriver {
     }
 
     /// Open-loop Poisson (porte de `run_workload`): inter-arrival exponencial
-    /// (com burst), requests sequenciais até `duration_s`.
-    async fn open_loop(&self, stream: bool) {
-        let regime = match &self.shared.scenario.pattern {
-            WorkloadPattern::Open { regime } | WorkloadPattern::Streaming { regime } => *regime,
-            _ => unreachable!("open_loop só roda padrões Open/Streaming"),
-        };
+    /// (com burst), requests sequenciais até `duration_s`. O `regime` vem do
+    /// dispatch em `run` — sem segundo match, sem `unreachable!`.
+    async fn open_loop(&self, stream: bool, regime: WorkloadConfig) {
         let mut gen = crate::generator::WorkloadGenerator::new(regime, self.shared.cfg.seed);
 
         while !self.shared.deadline_reached() {

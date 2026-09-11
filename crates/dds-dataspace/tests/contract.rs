@@ -5,7 +5,10 @@
 //! Rodar: `cargo test -p dds-dataspace` (mock)
 //!        `CYCLONEDDS_STATIC=1 cargo test -p dds-dataspace --features dds -- --test-threads=1`
 
-use dds_contract::generated::dds_llm_orchestrator::{AgentState, Task, TaskOutput};
+use dds_contract::generated::dds_llm_orchestrator::{
+    AgentState, SystemMetric, Task, TaskOutput, ToolCallRequest,
+};
+use dds_contract::generated::orchestrator::ServerStatus;
 use dds_dataspace::api::DataSpaceApi;
 use dds_dataspace::in_memory::InMemoryDataSpace;
 use futures::StreamExt;
@@ -98,6 +101,43 @@ pub fn make_output(task_id: &str, seq: u32, is_final: bool) -> TaskOutput {
     }
 }
 
+pub fn make_tool_call(id: &str) -> ToolCallRequest {
+    ToolCallRequest {
+        call_id: id.into(),
+        request_id: "request-1".into(),
+        tool_name: "filesystem.read_file".into(),
+        arguments_json: "{\"path\":\"x.txt\"}".into(),
+        security_level: 0,
+        status: 0,
+        result_json: String::new(),
+        error_message: String::new(),
+        created_at_ns: now_ns(),
+        completed_at_ns: 0,
+        ..Default::default()
+    }
+}
+
+fn make_system_metric(metric_name: &str, component_id: &str, value: f32) -> SystemMetric {
+    SystemMetric {
+        metric_name: metric_name.to_owned(),
+        component_id: component_id.to_owned(),
+        component_type: 1,
+        value,
+        unit: "ms".into(),
+        timestamp_ns: now_ns(),
+    }
+}
+
+fn make_server_status(server_id: &str) -> ServerStatus {
+    ServerStatus {
+        server_id: server_id.to_owned(),
+        slots_idle: 2,
+        slots_processing: 0,
+        model_loaded: "qwen3.5-0.8b".into(),
+        ready: true,
+    }
+}
+
 /// Bateria mínima de contrato (aceite T-301; base do A/B T-307).
 pub async fn contract_battery(ds: &impl DataSpaceApi) {
     // No DataSpace real, os caches são alimentados APENAS pelas streams (visão do
@@ -105,9 +145,15 @@ pub async fn contract_battery(ds: &impl DataSpaceApi) {
     let mut f1 = ds.subscribe_tasks();
     let mut f2 = ds.subscribe_agent_states();
     let mut f3 = ds.subscribe_task_outputs();
+    let mut f4 = ds.subscribe_tool_calls();
+    let mut f5 = ds.subscribe_system_metrics();
+    let mut f6 = ds.subscribe_server_statuses();
     let h1 = tokio::spawn(async move { while f1.next().await.is_some() {} });
     let h2 = tokio::spawn(async move { while f2.next().await.is_some() {} });
     let h3 = tokio::spawn(async move { while f3.next().await.is_some() {} });
+    let h4 = tokio::spawn(async move { while f4.next().await.is_some() {} });
+    let h5 = tokio::spawn(async move { while f5.next().await.is_some() {} });
+    let h6 = tokio::spawn(async move { while f6.next().await.is_some() {} });
 
     // --- Tasks: write/read/all ---
     ds.write_task(make_task("task-a")).await.unwrap();
@@ -213,6 +259,72 @@ pub async fn contract_battery(ds: &impl DataSpaceApi) {
     }
     assert!(got_99, "output seq 99 não chegou via subscribe");
 
+    ds.write_tool_call(make_tool_call("call-a")).await.unwrap();
+    let call = eventually(|| async { ds.read_tool_call("call-a").await.unwrap() })
+        .await
+        .expect("ToolCallRequest call-a existe");
+    assert_eq!(call.call_id, "call-a");
+    assert_eq!(call.status, 0);
+
+    ds.write_system_metric(make_system_metric("gpu_temp", "agent-1", 67.2))
+        .await
+        .unwrap();
+    let metric = eventually(|| async {
+        ds.read_system_metric("gpu_temp", "agent-1")
+            .await
+            .ok()
+            .flatten()
+    })
+    .await
+    .expect("system metric existe");
+    assert_eq!(metric.metric_name, "gpu_temp");
+    assert_eq!(metric.component_id, "agent-1");
+    assert_eq!(metric.value, 67.2);
+
+    let mut sys_sub = ds.subscribe_system_metrics();
+    let qps_metric = make_system_metric("qps", "agent-2", 142.0);
+    ds.write_system_metric(qps_metric.clone()).await.unwrap();
+    let mut got_qps = false;
+    for _ in 0..10 {
+        match tokio::time::timeout(Duration::from_secs(2), sys_sub.next()).await {
+            Ok(Some(m)) if m.metric_name == "qps" && m.component_id == "agent-2" => {
+                got_qps = true;
+                assert!((m.value - 142.0).abs() < f32::EPSILON);
+                break;
+            }
+            Ok(Some(_)) => continue,
+            _ => panic!("subscribe_system_metrics deveria receber métrica"),
+        }
+    }
+    assert!(got_qps, "system metric recebida via subscribe");
+
+    ds.write_server_status(make_server_status("llm-gpu-1"))
+        .await
+        .unwrap();
+    let status = eventually(|| async { ds.read_server_status("llm-gpu-1").await.ok().flatten() })
+        .await
+        .expect("server status existe");
+    assert_eq!(status.server_id, "llm-gpu-1");
+    assert!(status.ready);
+
+    let mut status_sub = ds.subscribe_server_statuses();
+    let status = make_server_status("llm-gpu-2");
+    ds.write_server_status(status).await.unwrap();
+    let mut got_status2 = false;
+    for _ in 0..10 {
+        match tokio::time::timeout(Duration::from_secs(2), status_sub.next()).await {
+            Ok(Some(s)) if s.server_id == "llm-gpu-2" => {
+                got_status2 = true;
+                assert_eq!(s.slots_idle, 2);
+                assert!(s.ready);
+                break;
+            }
+            Ok(Some(_)) => continue,
+            _ => panic!("subscribe_server_statuses deveria receber status"),
+        }
+    }
+    assert!(got_status2, "server status recebido via subscribe");
+
     // --- shutdown ---
     ds.shutdown().await.unwrap();
     assert!(ds.all_tasks().await.unwrap().is_empty());
@@ -220,6 +332,9 @@ pub async fn contract_battery(ds: &impl DataSpaceApi) {
     h1.abort();
     h2.abort();
     h3.abort();
+    h4.abort();
+    h5.abort();
+    h6.abort();
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

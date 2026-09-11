@@ -5,11 +5,11 @@
 
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, Task,
-    TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
+    Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
-    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult,
+    LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
 };
 use futures_core::Stream;
 use std::pin::Pin;
@@ -109,10 +109,44 @@ pub trait DataSpaceApi: Send + Sync {
     /// Retorna um stream de updates de contexto.
     fn subscribe_context_updates(&self) -> Pin<Box<dyn Stream<Item = ContextUpdate> + Send>>;
 
+    // === Telemetria de sistema ===
+
+    /// Publica uma métrica de sistema.
+    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), DataSpaceError>;
+
+    /// Lê a métrica de sistema por nome e componente.
+    async fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Result<Option<SystemMetric>, DataSpaceError>;
+
+    /// Retorna um stream de métricas de sistema.
+    fn subscribe_system_metrics(&self) -> Pin<Box<dyn Stream<Item = SystemMetric> + Send>>;
+
+    /// Publica status do servidor.
+    async fn write_server_status(&self, status: ServerStatus) -> Result<(), DataSpaceError>;
+
+    /// Lê status do servidor por id.
+    async fn read_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<ServerStatus>, DataSpaceError>;
+
+    /// Retorna um stream de status do servidor.
+    fn subscribe_server_statuses(&self) -> Pin<Box<dyn Stream<Item = ServerStatus> + Send>>;
+
     // === ToolCall ===
 
     /// Publica um request de tool call.
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), DataSpaceError>;
+
+    /// Lê um tool call por ID. Sem default: `Ok(None)` silencioso escondia
+    /// implementador incompleto (M2) — todo backend declara o seu.
+    async fn read_tool_call(
+        &self,
+        call_id: &str,
+    ) -> Result<Option<ToolCallRequest>, DataSpaceError>;
 
     /// Retorna um stream de tool calls.
     fn subscribe_tool_calls(&self) -> Pin<Box<dyn Stream<Item = ToolCallRequest> + Send>>;
@@ -163,6 +197,10 @@ pub trait DataSpaceApi: Send + Sync {
     async fn write_qos_violation(&self, violation: QoSViolation) -> Result<(), DataSpaceError>;
 
     /// Publica um evento de discovery.
+    ///
+    /// Sem produtor nativo em Rust (M3): hoje os eventos chegam via
+    /// `qos_monitor` Python ou escrita direta (testes). O lado Rust
+    /// consome via `subscribe_discovery_events` → `qos_collector`.
     async fn write_discovery_event(&self, event: DiscoveryEvent) -> Result<(), DataSpaceError>;
 
     /// Retorna um stream de perfis de roteamento QoS.

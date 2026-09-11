@@ -16,7 +16,7 @@ fn main() {
         // Default location
         let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
         manifest_dir.join(
-            "../../../third_party/cyclonedds-rust/cyclonedds-rust/vendor/cyclonedds/build/lib",
+            "../../../third_party/cyclonedds-rust/vendor/cyclonedds/build/lib",
         )
     };
 
