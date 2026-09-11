@@ -1,11 +1,11 @@
 #![cfg(feature = "dds")]
 
-use dds_contract::generated::dds_llm_orchestrator::ToolCallRequest;
+use dds_contract::generated::dds_llm_orchestrator::{SecurityPolicySnapshot, ToolCallRequest};
 use dds_dataspace::{api::DataSpaceApi, DataSpace};
 use futures::StreamExt;
 use mcp_gateway::handler::ToolHandler;
-use mcp_gateway::policy::PermissivePolicy;
-use mcp_gateway::{ToolCallService, ToolRegistry};
+use mcp_gateway::policy::DistributedPolicy;
+use mcp_gateway::{MemoryClaimStore, OwnerId, ToolCallService, ToolRegistry};
 use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::{
@@ -27,6 +27,7 @@ fn make_tool_call(id: usize) -> ToolCallRequest {
     ToolCallRequest {
         call_id: format!("tool-call-{id}"),
         request_id: format!("request-{id}"),
+        requester_id: "agent-a".into(),
         tool_name: "echo.tool".into(),
         arguments_json: format!("{{\"i\":{id}}}"),
         security_level: 0,
@@ -34,6 +35,36 @@ fn make_tool_call(id: usize) -> ToolCallRequest {
         created_at_ns: now_ns(),
         ..Default::default()
     }
+}
+
+fn allowed_policy() -> Arc<DistributedPolicy> {
+    let policy = Arc::new(DistributedPolicy::new("claim-dds", Duration::from_secs(60)));
+    let document = serde_json::json!({
+        "version": 1,
+        "rules": {
+            "llm_inference": {
+                "allowed_agents": ["agent-a"],
+                "agent_policies": {
+                    "agent-a": {"allowed_security_levels": ["PUBLIC"]}
+                }
+            },
+            "tool_call": {
+                "agent_tool_allowlist": {"agent-a": ["echo.tool"]},
+                "high_risk_tools": [],
+                "default_action": "DENY"
+            }
+        }
+    });
+    policy
+        .ingest_snapshot(&SecurityPolicySnapshot {
+            policy_id: "claim-dds".into(),
+            version: 1,
+            policy_json: document.to_string(),
+            published_by: "test".into(),
+            timestamp_ns: now_ns(),
+        })
+        .expect("valid policy");
+    policy
 }
 
 #[derive(Default)]
@@ -77,17 +108,20 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
         registry
     };
 
-    let service_one = Arc::new(ToolCallService::new_with_id(
+    let policy = allowed_policy();
+    let service_one = Arc::new(ToolCallService::with_policy_and_claims(
         data_space_one,
         registry_one,
-        Arc::new(PermissivePolicy),
-        "claim-gw-1",
+        Arc::clone(&policy),
+        Arc::new(MemoryClaimStore::default()),
+        OwnerId::parse("claim-gw-1").expect("owner 1"),
     ));
-    let service_two = Arc::new(ToolCallService::new_with_id(
+    let service_two = Arc::new(ToolCallService::with_policy_and_claims(
         data_space_two,
         registry_two,
-        Arc::new(PermissivePolicy),
-        "claim-gw-2",
+        policy,
+        Arc::new(MemoryClaimStore::default()),
+        OwnerId::parse("claim-gw-2").expect("owner 2"),
     ));
 
     let run_one = tokio::spawn({
