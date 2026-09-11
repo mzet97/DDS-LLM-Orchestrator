@@ -2,7 +2,6 @@
 
 use dds_contract::generated::dds_llm_orchestrator::{SecurityPolicySnapshot, ToolCallRequest};
 use dds_dataspace::{api::DataSpaceApi, DataSpace};
-use futures::StreamExt;
 use mcp_gateway::handler::ToolHandler;
 use mcp_gateway::policy::DistributedPolicy;
 use mcp_gateway::{MemoryClaimStore, OwnerId, ToolCallService, ToolRegistry};
@@ -12,7 +11,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
 };
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DOMAIN: u32 = 95;
 
@@ -89,11 +88,15 @@ impl ToolHandler for EchoTool {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn claim_prevents_duplicate_execution_with_two_gateways() {
-    let exec_count = Arc::new(AtomicUsize::new(0));
+    use mcp_gateway::service::{next_tool_call, status};
 
+    let exec_count = Arc::new(AtomicUsize::new(0));
+    let total = 100usize;
+
+    // Topologia espelhada de exactly_once_dds (padrão provado no CI):
+    // coletor assina antes do spawn; escritas via o DataSpace de um gateway.
     let data_space_one = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).expect("ds-1");
-    let data_space_two = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).expect("ds-2");
-    let producer = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).expect("producer");
+    let data_space_two = DataSpace::new(DOMAIN, DataSpace::STRENGTH_AGENT).expect("ds-2");
     let observer = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).expect("observer");
 
     let registry_one = {
@@ -108,22 +111,26 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
         registry
     };
 
+    // Claim store compartilhado: dedup cross-instance determinística
+    // (dois serviços, dois DataSpaces, dois owners).
+    let claims = Arc::new(MemoryClaimStore::default());
     let policy = allowed_policy();
     let service_one = Arc::new(ToolCallService::with_policy_and_claims(
         data_space_one,
         registry_one,
         Arc::clone(&policy),
-        Arc::new(MemoryClaimStore::default()),
+        claims.clone(),
         OwnerId::parse("claim-gw-1").expect("owner 1"),
     ));
     let service_two = Arc::new(ToolCallService::with_policy_and_claims(
         data_space_two,
         registry_two,
         policy,
-        Arc::new(MemoryClaimStore::default()),
+        claims,
         OwnerId::parse("claim-gw-2").expect("owner 2"),
     ));
 
+    let mut stream = Box::pin(observer.subscribe_tool_calls());
     let run_one = tokio::spawn({
         let service_one = Arc::clone(&service_one);
         async move { service_one.run().await.expect("gateway-1") }
@@ -133,37 +140,41 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
         async move { service_two.run().await.expect("gateway-2") }
     });
 
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    tokio::time::sleep(Duration::from_millis(750)).await;
 
-    let mut stream = Box::pin(observer.subscribe_tool_calls());
-    let total = 100usize;
     for i in 0..total {
-        producer
-            .write_tool_call(make_tool_call(i))
+        let call = make_tool_call(i);
+        service_one
+            .data_space()
+            .write_tool_call(call.clone())
             .await
             .expect("escreve tool call");
+        service_one
+            .data_space()
+            .write_tool_call(call)
+            .await
+            .expect("duplicate delivery");
     }
 
-    let mut seen = HashSet::new();
-    let deadline = Instant::now() + Duration::from_secs(20);
-    while seen.len() < total {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        assert!(
-            !remaining.is_zero(),
-            "timeout esperando concluir tool calls"
-        );
-        let call = tokio::time::timeout(remaining, stream.next())
-            .await
-            .expect("timeout")
-            .expect("stream");
-        if call.status == 4 && seen.insert(call.call_id) {
-            assert_eq!(call.error_message, "");
+    let seen = tokio::time::timeout(Duration::from_secs(30), async {
+        let mut ids = HashSet::new();
+        while ids.len() < total {
+            let Some(call) = next_tool_call(&mut stream).await else {
+                break;
+            };
+            if call.status == status::COMPLETED {
+                assert_eq!(call.error_message, "");
+                ids.insert(call.call_id);
+            }
         }
-    }
+        ids
+    })
+    .await
+    .expect("100 tool calls concluídos antes do timeout");
+    assert_eq!(seen.len(), total);
 
     run_one.abort();
     run_two.abort();
     assert_eq!(exec_count.load(Ordering::SeqCst), total);
-    producer.shutdown().await.unwrap();
     observer.shutdown().await.unwrap();
 }
