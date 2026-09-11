@@ -8,3 +8,5 @@
 
 pub mod catalog;
 pub mod revision;
+
+pub use catalog::Catalog;

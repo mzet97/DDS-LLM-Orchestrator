@@ -24,11 +24,11 @@ impl StudioApp {
 }
 
 impl eframe::App for StudioApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        egui::Panel::bottom("status").show(ui, |ui| {
             ui.label(self.state.status());
         });
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             ui.heading("DDS Orchestrator Studio");
             if ui.button("Atualizar").clicked() {
                 let snapshot = self.catalog.snapshot();

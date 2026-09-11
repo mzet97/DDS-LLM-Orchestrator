@@ -94,7 +94,6 @@ async fn main() -> Result<()> {
     use agent::dds::AgentDds;
     use agent::engine::MockEngine;
     use agent::engine_dds::DdsEngine;
-    use std::path::PathBuf;
 
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -137,6 +136,7 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "security")]
     let runtime = {
+        use std::path::PathBuf;
         let security = if args.dds_secure {
             let dir = args
                 .dds_security_dir
@@ -177,21 +177,6 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cli_defaults_to_local_only_and_accepts_cloud_only() {
-        let defaults = Args::try_parse_from(["agent"]).unwrap();
-        assert_eq!(defaults.provider_constraint, ProviderConstraint::LocalOnly);
-
-        let explicit =
-            Args::try_parse_from(["agent", "--provider-constraint", "cloud-only"]).unwrap();
-        assert_eq!(explicit.provider_constraint, ProviderConstraint::CloudOnly);
-    }
-}
-
 #[cfg(not(feature = "dds"))]
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -216,11 +201,28 @@ async fn main() -> Result<()> {
 
     let agent = Agent::new(config);
     let engine = MockEngine::new("chunk", 5, 100);
-    let mut task = dds_contract::generated::dds_llm_orchestrator::Task::default();
-    task.task_id = "mock-task-001".into();
-    task.status = 1;
-    task.messages_json = r#"[{"role":"user","content":"Hello"}]"#.into();
+    let task = dds_contract::generated::dds_llm_orchestrator::Task {
+        task_id: "mock-task-001".into(),
+        status: 1,
+        messages_json: r#"[{"role":"user","content":"Hello"}]"#.into(),
+        ..Default::default()
+    };
     agent.process_task(&task, &engine).await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cli_defaults_to_local_only_and_accepts_cloud_only() {
+        let defaults = Args::try_parse_from(["agent"]).unwrap();
+        assert_eq!(defaults.provider_constraint, ProviderConstraint::LocalOnly);
+
+        let explicit =
+            Args::try_parse_from(["agent", "--provider-constraint", "cloud-only"]).unwrap();
+        assert_eq!(explicit.provider_constraint, ProviderConstraint::CloudOnly);
+    }
 }

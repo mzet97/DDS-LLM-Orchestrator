@@ -76,7 +76,7 @@ impl AgentDds {
     }
 
     fn build(config: AgentConfig, dataspace: DataSpace) -> Result<Self> {
-        let writer_pool = dataspace.new_writer_pool(2, 4096);
+        let writer_pool = dataspace.new_writer_pool(2, 4096)?;
         Ok(Self {
             claim_permits: Arc::new(Semaphore::new(config.slots as usize)),
             agent: Agent::new(config),

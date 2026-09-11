@@ -51,10 +51,6 @@ pub struct InMemoryDataSpace {
     context_updates: DashMap<String, Vec<ContextUpdate>>,
     context_snapshot_tx: broadcast::Sender<ContextSnapshot>,
     context_update_tx: broadcast::Sender<ContextUpdate>,
-    system_metrics: DashMap<String, SystemMetric>,
-    server_statuses: DashMap<String, ServerStatus>,
-    system_metric_tx: broadcast::Sender<SystemMetric>,
-    server_status_tx: broadcast::Sender<ServerStatus>,
 
     // Tópicos ToolCall
     tool_calls: DashMap<String, ToolCallRequest>,
@@ -99,8 +95,6 @@ impl InMemoryDataSpace {
         let (llm_error_tx, _) = broadcast::channel(1024);
         let (context_snapshot_tx, _) = broadcast::channel(1024);
         let (context_update_tx, _) = broadcast::channel(1024);
-        let (system_metric_tx, _) = broadcast::channel(1024);
-        let (server_status_tx, _) = broadcast::channel(1024);
         let (tool_call_tx, _) = broadcast::channel(1024);
         let (execution_trace_tx, _) = broadcast::channel(1024);
         let (security_snapshot_tx, _) = broadcast::channel(1024);
@@ -133,10 +127,6 @@ impl InMemoryDataSpace {
             context_updates: DashMap::new(),
             context_snapshot_tx,
             context_update_tx,
-            system_metrics: DashMap::new(),
-            server_statuses: DashMap::new(),
-            system_metric_tx,
-            server_status_tx,
 
             tool_calls: DashMap::new(),
             tool_call_tx,
@@ -344,40 +334,6 @@ impl DataSpaceApi for InMemoryDataSpace {
     );
     impl_subscribe!(subscribe_context_updates, context_update_tx, ContextUpdate);
 
-    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), DataSpaceError> {
-        let key = format!("{}:{}", metric.metric_name, metric.component_id);
-        self.system_metrics.insert(key, metric.clone());
-        let _ = self.system_metric_tx.send(metric);
-        Ok(())
-    }
-
-    async fn read_system_metric(
-        &self,
-        metric_name: &str,
-        component_id: &str,
-    ) -> Result<Option<SystemMetric>, DataSpaceError> {
-        let key = format!("{metric_name}:{component_id}");
-        Ok(self.system_metrics.get(&key).map(|metric| metric.clone()))
-    }
-
-    async fn write_server_status(&self, status: ServerStatus) -> Result<(), DataSpaceError> {
-        self.server_statuses
-            .insert(status.server_id.clone(), status.clone());
-        let _ = self.server_status_tx.send(status);
-        Ok(())
-    }
-
-    async fn read_server_status(
-        &self,
-        server_id: &str,
-    ) -> Result<Option<ServerStatus>, DataSpaceError> {
-        Ok(self
-            .server_statuses
-            .get(server_id)
-            .map(|status| status.clone()))
-    }
-
-    impl_subscribe!(subscribe_system_metrics, system_metric_tx, SystemMetric);
     impl_subscribe!(subscribe_server_statuses, server_status_tx, ServerStatus);
 
     // === ToolCall ===
@@ -509,7 +465,7 @@ impl DataSpaceApi for InMemoryDataSpace {
         self.security_snapshots.clear();
         self.security_updates.clear();
         self.system_metrics.clear();
-        self.server_statuses.clear();
+        self.server_status.clear();
         self.qos_routing.clear();
         self.qos_metrics.clear();
         self.qos_violations.clear();

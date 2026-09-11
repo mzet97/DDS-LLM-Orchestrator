@@ -124,8 +124,6 @@ pub struct TopicCaches {
     // Tópicos Context (2)
     pub context_snapshots: FastMap<String, ArcContextSnapshot>,
     pub context_updates: FastMap<String, Vec<ArcContextUpdate>>,
-    pub system_metrics: FastMap<String, ArcSystemMetric>,
-    pub server_status: FastMap<String, ArcServerStatus>,
 
     // Tópicos ToolCall (1)
     pub tool_calls: FastMap<String, ArcToolCallRequest>,
@@ -255,41 +253,6 @@ impl TopicCaches {
 
     pub fn read_tool_call(&self, call_id: &str) -> Option<ArcToolCallRequest> {
         self.tool_calls.get(call_id).map(|c| c.clone())
-    }
-
-    pub fn upsert_system_metric(&self, metric: SystemMetric) -> ArcSystemMetric {
-        let key = format!("{}\u{1f}{}", metric.metric_name, metric.component_id);
-        self.system_metrics
-            .entry(key)
-            .and_modify(|current| {
-                if metric.timestamp_ns >= current.timestamp_ns {
-                    *current = Arc::new(metric.clone());
-                }
-            })
-            .or_insert_with(|| Arc::new(metric))
-            .clone()
-    }
-
-    pub fn read_system_metric(
-        &self,
-        metric_name: &str,
-        component_id: &str,
-    ) -> Option<ArcSystemMetric> {
-        let key = format!("{metric_name}\u{1f}{component_id}");
-        self.system_metrics.get(&key).map(|metric| metric.clone())
-    }
-
-    pub fn upsert_server_status(&self, status: ServerStatus) -> ArcServerStatus {
-        let status = Arc::new(status);
-        self.server_status
-            .insert(status.server_id.clone(), Arc::clone(&status));
-        status
-    }
-
-    pub fn read_server_status(&self, server_id: &str) -> Option<ArcServerStatus> {
-        self.server_status
-            .get(server_id)
-            .map(|status| status.clone())
     }
 
     // ── LLM caches ──────────────────────────────────────────────────────

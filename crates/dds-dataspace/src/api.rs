@@ -136,31 +136,10 @@ pub trait DataSpaceApi: Send + Sync {
     /// Retorna um stream de updates de contexto.
     fn subscribe_context_updates(&self) -> Pin<Box<dyn Stream<Item = ContextUpdate> + Send>>;
 
-    // === Telemetria de sistema ===
+    // === Telemetria de sistema (plural preservado: chamadores em
+    // contract.rs usam `subscribe_server_statuses`; t808 usa o singular) ===
 
-    /// Publica uma métrica de sistema.
-    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), DataSpaceError>;
-
-    /// Lê a métrica de sistema por nome e componente.
-    async fn read_system_metric(
-        &self,
-        metric_name: &str,
-        component_id: &str,
-    ) -> Result<Option<SystemMetric>, DataSpaceError>;
-
-    /// Retorna um stream de métricas de sistema.
-    fn subscribe_system_metrics(&self) -> Pin<Box<dyn Stream<Item = SystemMetric> + Send>>;
-
-    /// Publica status do servidor.
-    async fn write_server_status(&self, status: ServerStatus) -> Result<(), DataSpaceError>;
-
-    /// Lê status do servidor por id.
-    async fn read_server_status(
-        &self,
-        server_id: &str,
-    ) -> Result<Option<ServerStatus>, DataSpaceError>;
-
-    /// Retorna um stream de status do servidor.
+    /// Retorna um stream de status do servidor (forma plural).
     fn subscribe_server_statuses(&self) -> Pin<Box<dyn Stream<Item = ServerStatus> + Send>>;
 
     // === ToolCall ===
@@ -177,11 +156,6 @@ pub trait DataSpaceApi: Send + Sync {
 
     /// Retorna um stream de tool calls.
     fn subscribe_tool_calls(&self) -> Pin<Box<dyn Stream<Item = ToolCallRequest> + Send>>;
-
-    async fn read_tool_call(
-        &self,
-        call_id: &str,
-    ) -> Result<Option<ToolCallRequest>, DataSpaceError>;
 
     // === ExecutionTrace ===
 

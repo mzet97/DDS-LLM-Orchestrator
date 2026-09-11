@@ -89,12 +89,6 @@ pub struct DataSpace {
     context_snapshot_topic: Arc<Topic<ContextSnapshot>>,
     context_update_topic: Arc<Topic<ContextUpdate>>,
 
-    // Tópicos System (2)
-    system_metric_writer: DataWriter<SystemMetric>,
-    server_status_writer: DataWriter<ServerStatus>,
-    system_metric_topic: Arc<Topic<SystemMetric>>,
-    server_status_topic: Arc<Topic<ServerStatus>>,
-
     // Tópicos ToolCall (1)
     tool_call_writer: DataWriter<ToolCallRequest>,
     tool_call_topic: Arc<Topic<ToolCallRequest>>,
@@ -336,8 +330,6 @@ impl DataSpace {
         let q_llm_result = qos::profiles::llm_result().map_err(err)?;
         let q_ctx_snap = qos::profiles::context_snapshot().map_err(err)?;
         let q_ctx_upd = qos::profiles::context_update().map_err(err)?;
-        let q_system_metric = qos::profiles::system_metrics().map_err(err)?;
-        let q_server_status = qos::profiles::server_status().map_err(err)?;
         let q_tool = qos::profiles::tool_call().map_err(err)?;
         let q_trace = qos::profiles::execution_trace().map_err(err)?;
         let q_sec_snap = qos::profiles::security_snapshot().map_err(err)?;
@@ -392,19 +384,6 @@ impl DataSpace {
             &participant,
             topics::CONTEXT_UPDATE,
             Some(&q_ctx_upd),
-        )
-        .map_err(err)?;
-
-        let system_metric_topic = Topic::<SystemMetric>::with_qos(
-            &participant,
-            topics::SYSTEM_METRICS,
-            Some(&q_system_metric),
-        )
-        .map_err(err)?;
-        let server_status_topic = Topic::<ServerStatus>::with_qos(
-            &participant,
-            topics::SERVER_STATUS,
-            Some(&q_server_status),
         )
         .map_err(err)?;
 
@@ -478,13 +457,6 @@ impl DataSpace {
             DataWriter::with_qos(&publisher, &context_update_topic, Some(&q_ctx_upd))
                 .map_err(err)?;
 
-        let system_metric_writer =
-            DataWriter::with_qos(&publisher, &system_metric_topic, Some(&q_system_metric))
-                .map_err(err)?;
-        let server_status_writer =
-            DataWriter::with_qos(&publisher, &server_status_topic, Some(&q_server_status))
-                .map_err(err)?;
-
         let tool_call_writer =
             DataWriter::with_qos(&publisher, &tool_call_topic, Some(&q_tool)).map_err(err)?;
         let execution_trace_writer =
@@ -552,11 +524,6 @@ impl DataSpace {
             context_update_writer,
             context_snapshot_topic: Arc::new(context_snapshot_topic),
             context_update_topic: Arc::new(context_update_topic),
-
-            system_metric_writer,
-            server_status_writer,
-            system_metric_topic: Arc::new(system_metric_topic),
-            server_status_topic: Arc::new(server_status_topic),
 
             tool_call_writer,
             tool_call_topic: Arc::new(tool_call_topic),
@@ -1081,50 +1048,6 @@ impl DataSpace {
                         Ok(_) => break,
                         Err(e) => {
                             tracing::warn!(error = %e, "take_async(ContextUpdate) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                            break;
-                        }
-                    }
-                }
-                n.await;
-            }
-        }
-    }
-
-    pub fn stream_system_metrics(&self) -> impl Stream<Item = cache::ArcSystemMetric> {
-        let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.system_metric_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(SystemMetric) falhou; stream encerrado");
-                    return;
-                }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(SystemMetric) falhou; stream encerrado");
-                    return;
-                }
-            };
-            loop {
-                let n = registration.notified();
-                tokio::pin!(n);
-                n.as_mut().enable();
-                loop {
-                    match reader.take_async().await {
-                        Ok(metrics) if !metrics.is_empty() => {
-                        for m in metrics {
-                            yield caches.upsert_system_metric(m);
-                        }
-                    }
-                        Ok(_) => break,
-                        Err(e) => {
-                            tracing::warn!(error = %e, "take_async(SystemMetric) falhou; retry");
                             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                             break;
                         }
@@ -1822,42 +1745,6 @@ impl api::DataSpaceApi for DataSpace {
         Box::pin(self.stream_task_outputs())
     }
 
-    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), api::DataSpaceError> {
-        self.system_metrics_writer.write(&metric).map_err(err)
-    }
-
-    async fn read_system_metric(
-        &self,
-        metric_name: &str,
-        component_id: &str,
-    ) -> Result<Option<SystemMetric>, api::DataSpaceError> {
-        Ok(self
-            .caches
-            .read_system_metric(metric_name, component_id)
-            .map(|metric| (*metric).clone()))
-    }
-
-    fn subscribe_system_metrics(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Stream<Item = SystemMetric> + Send>> {
-        use futures::StreamExt;
-        Box::pin(self.stream_system_metrics().map(|metric| (*metric).clone()))
-    }
-
-    async fn write_server_status(&self, status: ServerStatus) -> Result<(), api::DataSpaceError> {
-        self.server_status_writer.write(&status).map_err(err)
-    }
-
-    async fn read_server_status(
-        &self,
-        server_id: &str,
-    ) -> Result<Option<ServerStatus>, api::DataSpaceError> {
-        Ok(self
-            .caches
-            .read_server_status(server_id)
-            .map(|status| (*status).clone()))
-    }
-
     fn subscribe_server_status(
         &self,
     ) -> std::pin::Pin<Box<dyn Stream<Item = ServerStatus> + Send>> {
@@ -1956,7 +1843,7 @@ impl api::DataSpaceApi for DataSpace {
     }
 
     async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), api::DataSpaceError> {
-        self.system_metric_writer.write(&metric).map_err(err)
+        self.system_metrics_writer.write(&metric).map_err(err)
     }
 
     async fn read_system_metric(
