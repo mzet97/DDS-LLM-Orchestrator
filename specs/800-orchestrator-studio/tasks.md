@@ -61,3 +61,14 @@
   Instância viva em 127.0.0.1:4317 reimplantada com o endpoint novo:
   `/operations` retorna o `manual-1` persistido do processo anterior.
   Sem commit (§29).
+- [x] **T-800-09 · Painel de inferência viva no GUI** (P5; G-12/13)
+  `inference.rs`: `Role`/`Message`/`ChatRequest` (temperatura e máx. tokens
+  atravessam o corpo do `POST /v1/chat/completions`), `list_models`,
+  `InferenceState` (painel com URL, combo de modelos, sliders, prompt e
+  resposta; erro vira texto, nunca vazio mudo). GUI com seção recolhível
+  "Inferência". 4 testes de fio verdes (stub HTTP real em porta efêmera:
+  travessia de parâmetros capturada no corpo) + smoke vivo gated por
+  `STUDIO_LIVE_LLAMA=1` contra llama-server 8082 (Qwen3.5-0.8B): modelos +
+  geração OK. Lio: modelo reasoning com budget curto retorna `content`
+  vazio (`reasoning_content` consome tokens) — asserção corrigida p/ o que
+  o contrato garante. 26 testes verdes `--locked`, clippy/fmt limpos.

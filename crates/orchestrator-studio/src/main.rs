@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use eframe::egui;
+use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::state::AppState;
 use studio_core::catalog::Catalog;
 
@@ -12,6 +13,7 @@ struct StudioApp {
     state: AppState,
     catalog: Catalog,
     node_url: String,
+    inference: InferenceState,
 }
 
 impl StudioApp {
@@ -20,6 +22,7 @@ impl StudioApp {
             state: AppState::new(),
             catalog: Catalog::new(),
             node_url: String::from("http://127.0.0.1:4317"),
+            inference: InferenceState::new(),
         }
     }
 }
@@ -51,6 +54,36 @@ impl eframe::App for StudioApp {
                     node.operations.len()
                 ));
             }
+            ui.collapsing("Inferência (servidor llama ao vivo)", |ui| {
+                let infer = &mut self.inference;
+                ui.horizontal(|ui| {
+                    ui.label("servidor:");
+                    ui.text_edit_singleline(&mut infer.server_url);
+                    if ui.button("Modelos").clicked() {
+                        infer.refresh_models();
+                    }
+                });
+                if infer.models.is_empty() {
+                    ui.text_edit_singleline(&mut infer.model);
+                } else {
+                    egui::ComboBox::from_label("modelo")
+                        .selected_text(&infer.model)
+                        .show_ui(ui, |ui| {
+                            for candidate in infer.models.clone() {
+                                ui.selectable_value(&mut infer.model, candidate.clone(), candidate);
+                            }
+                        });
+                }
+                ui.add(egui::Slider::new(&mut infer.temperature, 0.0..=2.0).text("temperatura"));
+                ui.add(egui::Slider::new(&mut infer.max_tokens, 1..=4096).text("máx. tokens"));
+                ui.label("prompt:");
+                ui.text_edit_multiline(&mut infer.prompt);
+                if ui.button("Enviar").clicked() {
+                    infer.send();
+                }
+                ui.separator();
+                ui.label(&infer.reply);
+            });
             if self.state.rows().is_empty() {
                 ui.label("Nenhum item no catálogo. Use \"Conectar ao nó\" para ler a origem viva.");
             } else {

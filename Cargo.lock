@@ -3301,6 +3301,8 @@ dependencies = [
  "axum",
  "eframe",
  "reqwest",
+ "serde",
+ "serde_json",
  "studio-core",
  "studio-node",
  "thiserror 1.0.69",
