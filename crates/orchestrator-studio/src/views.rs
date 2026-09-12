@@ -13,6 +13,7 @@ pub mod node;
 pub mod operations;
 pub mod orchestrators;
 pub mod overview;
+pub mod preview;
 pub mod review;
 pub mod services;
 pub mod shared_catalog;

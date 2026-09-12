@@ -32,9 +32,9 @@ não existência de arquivo.
 
 ## UI-5 — Integrações e preview
 
-- [ ] UI-5.1 Modo demonstração rotulado + fixtures + cenários §20. (UI-R20 · UI-G43)
-- [ ] UI-5.2 Matriz integração real × simulada × indisponível. (UI-R21 · UI-G42)
-- [ ] UI-5.3 `integration-gaps.md` mantido (tela, entrada, dado externo, fallback). (UI-R28)
+- [x] UI-5.1 Modo demonstração rotulado (`preview.rs`: 16 cenários §20, fixtures estáveis, selo persistente). (UI-R20 · UI-G43)
+- [x] UI-5.2 Matriz real × simulada × indisponível em `integration-gaps.md`. (UI-R21 · UI-G42)
+- [x] UI-5.3 `integration-gaps.md` mantido (G-INT-01…10). (UI-R28)
 
 ## UI-6 — Acessibilidade, performance, revisão
 

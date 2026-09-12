@@ -23,6 +23,7 @@ pub mod orchestrators;
 pub mod origin;
 pub mod overview;
 pub mod pickers;
+pub mod preview;
 pub mod review;
 pub mod services;
 pub mod shell;

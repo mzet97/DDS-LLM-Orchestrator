@@ -40,3 +40,9 @@
 - `--lib`: 57+ verdes (incl. `workflows` 2, `operations` 5, `review` 3).
 - `--test review_kittest`: 1 verde (exemplo rotulado → conflito → decisão).
 - Total do crate: 83 passed, 0 failed; build, clippy e fmt limpos.
+
+### UI-5 — preview e matriz (nesta execução, `cargo --offline`)
+
+- `--lib`: 61 verdes (incl. `preview` 3: 16 cenários, fixtures estáveis, selo).
+- Seção Demonstração no binário; matriz em `integration-gaps.md`.
+- Build, clippy e fmt limpos.

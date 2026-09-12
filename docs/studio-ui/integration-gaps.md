@@ -18,3 +18,24 @@ necessário → fallback da UI → evidência com simulação.
 
 Regra: adapter ao vivo nunca retorna fixture em falha; nunca migrar
 silenciosamente de conexão real para demonstração.
+
+## Matriz real × simulada × indisponível (UI-5.2)
+
+| Capacidade | Estado | Fonte na UI |
+|---|---|---|
+| Leitura do nó (version/apply/operations) | real | `origin.rs` → nó HTTP |
+| SSH dedicado (handshake, trust, exec) | real | `studio-ssh` (loopback validado; VM pendente) |
+| Inventário GGUF local + SHA-256 | real | `models.rs` (diretório + máquina rotulados) |
+| Lista de agentes vivos | real | `agents.rs` → orquestrador |
+| Chat contra llama-server | real | `inference.rs` → servidor |
+| Adoção/inventário de máquinas | indisponível | G-INT-01 |
+| Aceite versionado de definições | parcial | rascunho local; G-INT-02 |
+| Executor de ferramentas por tipo | parcial | só suportados; G-INT-03 |
+| Transferência de GGUF | indisponível | G-INT-04 |
+| Progresso de carga de modelo | indisponível | G-INT-05 |
+| Aplicação remota do monitor | indisponível | G-INT-06 |
+| Execução de workflow | parcial | intenção; G-INT-07 |
+| Cancelamento de operação | parcial | "Parar de acompanhar"; G-INT-08 |
+| Telemetria de atenção | indisponível | G-INT-09 ("Não medido") |
+| Catálogo compartilhado vivo | parcial | G-INT-10 + preview |
+| Multi-GUI simultâneo | simulado | `preview.rs` (cenários §20, rotulados) |
