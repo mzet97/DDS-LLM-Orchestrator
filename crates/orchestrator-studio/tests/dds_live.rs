@@ -10,6 +10,13 @@ fn live_domain42_shows_agents_when_requested() {
     }
     let snapshot = orchestrator_studio::dds_observe::observe(42, std::time::Duration::from_secs(5))
         .expect("dominio 42 deve ser observavel");
+    eprintln!(
+        "fio vivo: {} agentes, {} tools, {} metricas, {} descobertas",
+        snapshot.agents.len(),
+        snapshot.tools.len(),
+        snapshot.metrics.len(),
+        snapshot.discoveries.len()
+    );
     assert!(
         !snapshot.agents.is_empty(),
         "domínio vivo tem agentes com heartbeat"

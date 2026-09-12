@@ -19,10 +19,11 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState) {
             ui.label(&dds.error);
         }
         ui.label(format!(
-            "{} agente(s) · {} tool call(s) · {} métrica(s)",
+            "{} agente(s) · {} tool call(s) · {} métrica(s) · {} descoberta(s)",
             dds.snapshot.agents.len(),
             dds.snapshot.tools.len(),
-            dds.snapshot.metrics.len()
+            dds.snapshot.metrics.len(),
+            dds.snapshot.discoveries.len()
         ));
         if !dds.snapshot.agents.is_empty() {
             egui::Grid::new("dds_agents_grid").show(ui, |ui| {
@@ -48,6 +49,20 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState) {
                     ui.label(&tool.call_id);
                     ui.label(&tool.tool_name);
                     ui.label(tool.status.to_string());
+                    ui.end_row();
+                }
+            });
+        }
+        if !dds.snapshot.discoveries.is_empty() {
+            egui::Grid::new("dds_discovery_grid").show(ui, |ui| {
+                ui.label("evento");
+                ui.label("tópico");
+                ui.label("entidade remota");
+                ui.end_row();
+                for event in dds.snapshot.discoveries.iter().take(20) {
+                    ui.label(&event.event_type);
+                    ui.label(&event.topic_name);
+                    ui.label(&event.remote_entity);
                     ui.end_row();
                 }
             });

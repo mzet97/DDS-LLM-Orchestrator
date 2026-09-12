@@ -8,7 +8,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use dds_contract::generated::dds_llm_orchestrator::{AgentState, SystemMetric, ToolCallRequest};
+use dds_contract::generated::dds_llm_orchestrator::{
+    AgentState, DiscoveryEvent, SystemMetric, ToolCallRequest,
+};
 use dds_dataspace::DataSpace;
 use futures::StreamExt;
 use thiserror::Error;
@@ -36,6 +38,14 @@ pub struct MetricRow {
     pub source: String,
     pub name: String,
     pub value: f64,
+}
+
+/// Evento de descoberta exibido na GUI (P3a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveryRow {
+    pub event_type: String,
+    pub topic_name: String,
+    pub remote_entity: String,
 }
 
 /// Erros da observação DDS.
@@ -119,12 +129,24 @@ pub fn metric_row(metric: &SystemMetric) -> MetricRow {
     }
 }
 
-/// Foto do domínio: agentes, tool calls e métricas drenados na mesma janela.
+/// Mapeamento puro: `DiscoveryEvent` do fio → linha da GUI.
+#[must_use]
+pub fn discovery_row(event: &DiscoveryEvent) -> DiscoveryRow {
+    DiscoveryRow {
+        event_type: event.event_type.clone(),
+        topic_name: event.topic_name.clone(),
+        remote_entity: event.remote_entity.clone(),
+    }
+}
+
+/// Foto do domínio: agentes, tool calls, métricas e descoberta drenados na
+/// mesma janela.
 #[derive(Debug, Clone, Default)]
 pub struct DdsSnapshot {
     pub agents: Vec<AgentRow>,
     pub tools: Vec<ToolRow>,
     pub metrics: Vec<MetricRow>,
+    pub discoveries: Vec<DiscoveryRow>,
 }
 
 fn sorted<K: Ord, V>(rows: HashMap<K, V>) -> Vec<V> {
@@ -141,7 +163,7 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
     let rt = runtime(domain)?;
     rt.block_on(async {
         let space = dataspace(domain)?;
-        let (agents, tools, metrics) = tokio::join!(
+        let (agents, tools, metrics, discoveries) = tokio::join!(
             drain(space.stream_agent_states(), window, |state: &AgentState| {
                 state.agent_id.clone()
             }),
@@ -155,11 +177,17 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
                 window,
                 |metric: &SystemMetric| format!("{}:{}", metric.component_id, metric.metric_name)
             ),
+            drain(
+                space.stream_discovery_events(),
+                window,
+                |event: &DiscoveryEvent| event.event_id.clone()
+            ),
         );
         Ok(DdsSnapshot {
             agents: sorted(agents).iter().map(agent_row).collect(),
             tools: sorted(tools).iter().map(tool_row).collect(),
             metrics: sorted(metrics).iter().map(metric_row).collect(),
+            discoveries: sorted(discoveries).iter().map(discovery_row).collect(),
         })
     })
 }
@@ -245,6 +273,25 @@ mod tests {
                 call_id: String::from("c-1"),
                 tool_name: String::from("ler_arquivo"),
                 status: 3,
+            }
+        );
+    }
+
+    #[test]
+    fn discovery_row_maps_contract_fields() {
+        let event = DiscoveryEvent {
+            event_type: String::from("novo"),
+            topic_name: String::from("Tasks"),
+            remote_entity: String::from("guid-1"),
+            ..DiscoveryEvent::default()
+        };
+
+        assert_eq!(
+            discovery_row(&event),
+            DiscoveryRow {
+                event_type: String::from("novo"),
+                topic_name: String::from("Tasks"),
+                remote_entity: String::from("guid-1"),
             }
         );
     }

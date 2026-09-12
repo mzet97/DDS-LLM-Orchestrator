@@ -140,3 +140,12 @@
   formulário id/valor/base. Teste contra o **router real** do nó
   (multi-GUI: cria→409 com vigente→snapshot→delete→410→2 eventos).
   46 testes verdes, gates limpos, binário DDS rebuiltado.
+- [x] **T-800-19 · Descoberta DDS + packaging desktop** (P3a/P10; G-43)
+  `discovery_row` + 4º dreno no `observe` (dedup por `event_id`) + grade
+  Descoberta na Topologia; `.desktop` instalado em
+  `~/.local/share/applications` validado por `desktop-file-validate`.
+  Ao vivo: 2 agentes, 0 tools/métricas/descobertas em malha estável
+  (descoberta só trafega em join/leave — painel honesto vazio).
+  Evidência GPU (G-14 parcial): `rocm-smi --showpidgpus` mostra o
+  llama-server (PID 1001835, build ROCm) com GPU[1] e 7.4GB VRAM em uso;
+  geração real de 64 tokens OK. 26 testes do Studio, gates limpos.
