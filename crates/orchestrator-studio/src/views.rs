@@ -7,5 +7,6 @@ pub mod inference;
 pub mod models;
 pub mod node;
 pub mod services;
+pub mod shared_catalog;
 #[cfg(feature = "dds")]
 pub mod topology;

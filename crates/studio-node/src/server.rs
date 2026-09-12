@@ -85,11 +85,14 @@ pub struct ServiceStatus {
     pub active: bool,
 }
 
-/// Corpo de erro tipado do fio (código estável, mensagem humana).
+/// Corpo de erro tipado do fio (código estável, mensagem humana e detalhe
+/// estruturado opcional — aditivo: clientes antigos ignoram `details`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApiErrorBody {
     pub code: &'static str,
     pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<serde_json::Value>,
 }
 
 type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiErrorBody>)>;
@@ -99,7 +102,30 @@ fn api_error(
     code: &'static str,
     message: String,
 ) -> (StatusCode, Json<ApiErrorBody>) {
-    (status, Json(ApiErrorBody { code, message }))
+    (
+        status,
+        Json(ApiErrorBody {
+            code,
+            message,
+            details: None,
+        }),
+    )
+}
+
+fn api_error_details(
+    status: StatusCode,
+    code: &'static str,
+    message: String,
+    details: serde_json::Value,
+) -> (StatusCode, Json<ApiErrorBody>) {
+    (
+        status,
+        Json(ApiErrorBody {
+            code,
+            message,
+            details: Some(details),
+        }),
+    )
 }
 
 fn domain_error(err: NodeError) -> (StatusCode, Json<ApiErrorBody>) {
@@ -202,10 +228,11 @@ async fn get_operation(
 
 fn authority_error(err: AuthorityError) -> (StatusCode, Json<ApiErrorBody>) {
     match err {
-        AuthorityError::Conflict { current } => api_error(
+        AuthorityError::Conflict { current } => api_error_details(
             StatusCode::CONFLICT,
             "revision_conflict",
             format!("base obsoleta; vigente: {current:?}"),
+            serde_json::json!({"current": current}),
         ),
         AuthorityError::Tombstoned { deleted_at } => api_error(
             StatusCode::GONE,

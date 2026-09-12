@@ -133,3 +133,10 @@
   410 tombstone→3 eventos). Vivo sob systemd: ciclo completo + replay do
   journal no restart (tombstone preservado). 32 testes node+core, gates
   limpos (só E0602 pré-existente).
+- [x] **T-800-18 · GUI publica no catálogo compartilhado** (P2a; G-44/45)
+  `catalog_remote.rs` (snapshot/publish/delete/events com `current`
+  estruturado no 409 — `details` aditivo no `ApiErrorBody` do nó) +
+  `SharedCatalog` (conflito relê snapshot, nunca silencia) + painel com
+  formulário id/valor/base. Teste contra o **router real** do nó
+  (multi-GUI: cria→409 com vigente→snapshot→delete→410→2 eventos).
+  46 testes verdes, gates limpos, binário DDS rebuiltado.
