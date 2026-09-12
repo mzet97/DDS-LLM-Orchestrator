@@ -1,4 +1,5 @@
 [toolchain]
-channel = "stable"
+channel = "1.95"
 components = ["rustfmt", "clippy"]
-# A crate cyclonedds exige Rust >= 1.85; o ambiente tem 1.95.
+# Versão homologada da tese (F1): cyclonedds exige >= 1.85; CI e imagem
+# usam esta mesma versão. Não voltar para "stable" sem re-homologar.

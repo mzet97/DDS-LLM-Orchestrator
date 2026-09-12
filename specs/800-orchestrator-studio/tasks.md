@@ -199,3 +199,21 @@
   `ssh_trust` do Studio virou reexport. 12 testes isolados (servidor
   descartável em processo): impressão real, persistência pós-reabertura,
   rotação bloqueada, auth errada sem tentativa de senha. Sem tocar nas VMs.
+- [x] **T-800-29 · GUI usa a bridge SSH (G-04, isolado + GUI)** (§34)
+  `ssh_session.rs`: gerar identidade, desbloqueio, aprovação da impressão
+  real exibida, execução em thread com `poll`, persistência no cofre e
+  volta a `Idle` (reconectar é explícito). Painel "SSH dedicado" na
+  navegação. 4 testes de fases com runner injetado. Prova contra host
+  real fica para o canário (exige cadastrar a `.pub` — a apresentar).
+- [x] **T-800-30 · Executor validado isolado (G-18+ parcial)**
+  `mcp-gateway/tests/executor_isolated.rs`: PENDING→COMPLETED real com
+  resultado na mesma instância, negação com mensagem, fuga de sandbox
+  como FAILED e PENDING intacto sem executor. 4 testes, sem malha real.
+- [x] **F1/F3 corrigidos (DRAFT)** — workflow sem `on: push`, caminhos da
+  raiz do repo, CycloneDDS do registro, empacotamento estrito, proveniência
+  por SHA imutável, aceite com testes negativos; playbooks com pull por
+  digest, backup explícito, hash==aprovado, domínio de teste obrigatório
+  (0/42 recusados), DDS fim a fim com PROMPT_VERSION:. Toolchain fixado
+  em 1.95. Imagem `tese-runner:0.1.0` construída e verificada no .51
+  (digest em `ci/REGISTRO-VALIDACAO.md`), SEM push. CA persistida em
+  `~/.config/dds-orchestrator/pki/` com impressão registrada.

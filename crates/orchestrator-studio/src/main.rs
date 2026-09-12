@@ -14,6 +14,7 @@ use orchestrator_studio::launch::LaunchState;
 use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::nodes::NodeRegistry;
 use orchestrator_studio::services::ServicesPanel;
+use orchestrator_studio::ssh_session::SshSession;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::workload::DispatchState;
 use studio_core::catalog::Catalog;
@@ -26,6 +27,7 @@ enum Section {
     Node,
     Inference,
     Launch,
+    Ssh,
     Agents,
     Dispatch,
     Models,
@@ -42,6 +44,7 @@ impl Section {
             Self::Node => "Nó studio-node",
             Self::Inference => "Inferência",
             Self::Launch => "Subir inferência",
+            Self::Ssh => "SSH dedicado",
             Self::Agents => "Agentes",
             Self::Dispatch => "Despacho",
             Self::Models => "Modelos GGUF",
@@ -58,6 +61,7 @@ impl Section {
             Self::Node,
             Self::Inference,
             Self::Launch,
+            Self::Ssh,
             Self::Agents,
             Self::Dispatch,
             Self::Models,
@@ -75,6 +79,7 @@ struct StudioApp {
     registry: NodeRegistry,
     inference: InferenceState,
     launch: LaunchState,
+    ssh: SshSession,
     agents: AgentsState,
     models: ModelsState,
     services: ServicesPanel,
@@ -93,6 +98,7 @@ impl StudioApp {
             registry: NodeRegistry::new(),
             inference: InferenceState::new(),
             launch: LaunchState::new(),
+            ssh: SshSession::new(),
             agents: AgentsState::new(),
             models: ModelsState::new(),
             services: ServicesPanel::new(),
@@ -158,6 +164,7 @@ impl eframe::App for StudioApp {
                         .collect();
                     views::launch::show(ui, &mut self.launch, &known);
                 }
+                Section::Ssh => views::ssh::show(ui, &mut self.ssh, &self.registry),
                 Section::Agents => views::agents::show(ui, &mut self.agents),
                 Section::Models => views::models::show(ui, &mut self.models),
                 Section::Services => views::services::show(ui, &mut self.services),

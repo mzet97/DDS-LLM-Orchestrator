@@ -1,0 +1,88 @@
+# Runner dedicado à tese (DRAFT — NÃO APLICAR sem aprovação + digest).
+#
+# Diferenças para o runner existente: label exclusiva `tese-rust:host`,
+# capacidade 1, imagem própria com toolchain, CA pública montada somente
+# leitura, sem hostPath/sem privileged/sem Docker socket. Token via Secret
+# `tese-runner-secret` (a criar SOMENTE na ativação aprovada).
+# Diff a apresentar: este arquivo inteiro (novo) + digest da imagem.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: tese-runner
+  namespace: ci-runners
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tese-runner
+  namespace: ci-runners
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tese-runner
+  template:
+    metadata:
+      labels:
+        app: tese-runner
+    spec:
+      serviceAccountName: tese-runner
+      securityContext:
+        runAsUser: 1001
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: runner
+          # Build bootstrap verificado no .51 (só local, SEM push):
+          # digest sha256:7b542446f6a54217098576759d293c3c4bb0e2356098339a701bd8fbc28386cc
+          # Na ativação aprovada: push ao Harbor e fixar aqui
+          # harbor.home.arpa/library/tese-runner@sha256:<digest>.
+          image: tese-runner:0.1.0
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: GITEA_INSTANCE_URL
+              value: http://gitea-http.gitea.svc.cluster.local:3000
+            - name: GITEA_RUNNER_REGISTRATION_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: tese-runner-secret
+                  key: token
+            - name: GITEA_RUNNER_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: GITEA_RUNNER_LABELS
+              value: "tese-rust:host"
+            - name: CURL_CA_BUNDLE
+              value: /etc/dds-orchestrator/pki/local-root-ca.crt
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: config
+              mountPath: /config.yaml
+              subPath: config.yaml
+            - name: ca-publica
+              mountPath: /etc/dds-orchestrator/pki
+              readOnly: true
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: config
+          configMap:
+            name: tese-runner-config
+        - name: ca-publica
+          configMap:
+            name: tese-ca-publica

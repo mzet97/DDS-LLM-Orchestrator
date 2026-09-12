@@ -7,6 +7,7 @@ pub mod bridge;
 pub mod identity;
 pub mod trust;
 
-pub use bridge::{run_command, BridgeError, SshTarget};
+pub use bridge::{run_command, run_command_blocking, BridgeError, SshTarget};
 pub use identity::{generate, public_fingerprint, unlock, IdentityError, IdentityPaths};
+pub use russh::keys::ssh_key;
 pub use trust::{Approval, KeyIdentity, TrustError, TrustFile, TrustStore};

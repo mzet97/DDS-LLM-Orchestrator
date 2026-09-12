@@ -1,89 +1,135 @@
-# CI da tese no Gitea Actions (F1 — DRAFT, ainda não executado).
+# CI da tese no Gitea Actions (F1 — DRAFT, sem gatilho automático).
 #
-# Espelha o workspace src/rust: fmt + clippy + testes + build release dos
-# binários de implantação e do artefato de validação, com os requisitos
-# reais do CONTEXTO.md (toolchain 1.95, --features dds, CycloneDDS
-# vendorizado + libddsc.a via cmake, submódulos registrados).
+# Repositório espelhado: mzet97/DDS-LLM-Orchestrator (este repo; raiz do
+# workspace, SEM prefixo src/rust). CycloneDDS vem do REGISTRO
+# (=3.0.1/=1.2.1, fixos no Cargo.toml + lockfile) — sem receita por caminho.
+# Toolchain homologado: rust-toolchain.toml (1.95) vale para CI e imagem.
 #
-# A publicação no Harbor (F1) está esboçada e DESABILITADA: exige robot
-# account + CA interna, pendências explícitas do F0. Nenhum segredo neste
-# arquivo. Sem auto-deploy (F2 = promoção explícita, fora daqui).
+# Sem `on: push` nesta etapa: só `workflow_dispatch` com `ref` opcional.
+# Todos os jobs usam a MESMA revisão imutável resolvida no job `pin`.
+# Prompts canônicos (PROMPT_VERSION:) vivem FORA deste repo (monorepo da
+# dissertação, não versionado aqui): o pacote de validação referencia a
+# origem com commit, sem presumir conteúdo — pendência explícita F1.
 
 name: tese-rust-ci
 
 on:
-  push:
-    paths:
-      - 'src/rust/**'
-      - '.gitea/workflows/ci.yml'
   workflow_dispatch:
     inputs:
       ref:
-        description: 'commit a compilar (padrão: o recebido)'
+        description: 'commit a compilar (vazio = HEAD do espelho)'
         required: false
         default: ''
 
 jobs:
-  check:
-    runs-on: ubuntu-latest
+  pin:
+    runs-on: tese-rust
+    outputs:
+      sha: "${{ steps.resolve.outputs.sha }}"
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
-          submodules: recursive
-      - name: Registrar commit compilado
-        run: echo "${{ inputs.ref || github.sha }}" > COMMIT_BUILT
+          ref: "${{ inputs.ref || github.sha }}"
+          persist-credentials: false
+      - id: resolve
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "$sha" > RESOLVED_SHA
+
+  check:
+    needs: pin
+    runs-on: tese-rust
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: "${{ needs.pin.outputs.sha }}"
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.pin.outputs.sha }}"
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.95'
           components: rustfmt, clippy
-      - name: Submódulo CycloneDDS (vendorizado)
-        run: |
-          git submodule status third_party/cyclonedds-rust || true
-          test -f third_party/cyclonedds-rust/vendor/cyclonedds/CMakeLists.txt \
-            || git submodule update --init third_party/cyclonedds-rust/vendor/cyclonedds
-      - working-directory: src/rust
-        run: cargo fmt --locked --check
-      - working-directory: src/rust
-        run: cargo clippy --locked --all-targets --features dds -- -D warnings
-      - working-directory: src/rust
-        run: cargo test --locked --features dds
+      - run: cargo fmt --locked --check
+      - run: cargo clippy --locked --all-targets --features dds -- -D warnings
+      - run: cargo test --locked --features dds
         env:
           CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
 
-  build-deploy:
-    needs: check
-    runs-on: ubuntu-latest
+  build:
+    needs: [pin, check]
+    runs-on: tese-rust
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.ref || github.sha }}
-          submodules: recursive
+          ref: "${{ needs.pin.outputs.sha }}"
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: '1.95'
       - name: Build release (implantação)
-        working-directory: src/rust
         run: cargo build --locked --release -p studio-node -p agent -p orchestrator --features dds
       - name: Build release (validação)
-        working-directory: src/rust
         run: cargo build --locked --release -p client -p det-responder --features dds
-      - name: Empacotar com manifesto
+      - name: "Empacotar com manifesto (estrito: ausente = falha)"
         run: |
-          ARCH="$(uname -m)"
-          OUT="dist/${ARCH}"
-          mkdir -p "$OUT"
+          set -euo pipefail
+          sha="${{ needs.pin.outputs.sha }}"
+          arch="$(uname -m)"
+          out="dist/$arch"
+          mkdir -p "$out"
           for bin in studio-noded agent orchestrator submit-one wf-run det-responder; do
-            cp "src/rust/target/release/$bin" "$OUT/" || echo "AUSENTE: $bin"
+            src="target/release/$bin"
+            test -x "$src" || { echo "BINARIO OBRIGATORIO AUSENTE: $bin"; exit 1; }
+            cp "$src" "$out/"
           done
-          cp benchmarks/orchestration/prompts "$OUT/" -r 2>/dev/null || true
-          ( cd "$OUT" && sha256sum * > SHA256SUMS 2>/dev/null || true )
-          printf '{"commit":"%s","arch":"%s"}\n' "${{ inputs.ref || github.sha }}" "$ARCH" > "$OUT/manifest.json"
-          tar -czf "tese-rust-${ARCH}.tar.gz" -C dist "$ARCH"
-      # TODO(F1): push para o Harbor como OCI artifact (mesmo digest testado):
-      #   oras push harbor.home.arpa/library/tese-rust:<commit>-<arch> \
-      #     --artifact-type application/vnd.tese.bundle \
-      #     tese-rust-<arch>.tar.gz
-      # Requer: robot account do Harbor (variáveis de ambiente do job, nunca
-      # em claro) + CA interna via --cacert. Sem isso, este passo segue
-      # desabilitado e a promoção (F2) não existe.
+          ( cd "$out" && sha256sum studio-noded agent orchestrator submit-one wf-run det-responder > SHA256SUMS )
+          toolchain="$(rustc --version)"
+          deps="$(cargo tree -p studio-node --prefix none 2>/dev/null | grep -E '^(cyclonedds|russh|tokio|axum|serde) ' | sort -u | tr '\n' ';')"
+          printf '{"commit":"%s","arch":"%s","toolchain":"%s","deps":"%s"}\n' "$sha" "$arch" "$toolchain" "$deps" > "$out/manifest.json"
+          ( cd "$out" && sha256sum -c SHA256SUMS )
+          tar -czf "tese-rust-$arch-$sha.tar.gz" -C dist "$arch"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: "tese-rust-${{ needs.pin.outputs.sha }}"
+          path: tese-rust-*.tar.gz
+          if-no-files-found: error
+
+  accept:
+    needs: [pin, build]
+    runs-on: tese-rust
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: "tese-rust-${{ needs.pin.outputs.sha }}"
+          path: pkg
+      - name: Aceite em diretório independente (inclui teste negativo)
+        run: |
+          set -euo pipefail
+          rm -rf accept && mkdir accept && cd accept
+          tar -xzf ../pkg/tese-rust-*.tar.gz
+          dir="$(ls -d */)"
+          ( cd "$dir" && sha256sum -c SHA256SUMS )
+          # Negativo 1: binário obrigatório removido deve falhar.
+          mkdir neg1 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg1
+          sub="$(ls -d neg1/*/)"
+          rm "$sub/submit-one"
+          if ( cd "$sub" && sha256sum -c SHA256SUMS ); then echo "NEGATIVO FALHOU: remocao passou"; exit 1; fi
+          # Negativo 2: checksum adulterado deve falhar.
+          mkdir neg2 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg2
+          sub="$(ls -d neg2/*/)"
+          echo adulterado >> "$sub/agent"
+          if ( cd "$sub" && sha256sum -c SHA256SUMS ); then echo "NEGATIVO FALHOU: adulteracao passou"; exit 1; fi
+          echo "ACEITE OK"
+
+# Publicação SEPARADA e explícita (não parte deste workflow):
+#   oras push --ca-file /etc/dds-orchestrator/pki/local-root-ca.crt \
+#     harbor.home.arpa/library/tese-rust:<sha>-<arch> \
+#     --artifact-type application/vnd.tese.bundle \
+#     tese-rust-<arch>-<sha>.tar.gz
+# Requer: robot account do Harbor (env do executor manual, nunca em claro)
+# + CA pública. Publicar NÃO promove nem implanta (F2/F3 separados).

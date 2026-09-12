@@ -10,5 +10,6 @@ pub mod node;
 pub mod overview;
 pub mod services;
 pub mod shared_catalog;
+pub mod ssh;
 #[cfg(feature = "dds")]
 pub mod topology;

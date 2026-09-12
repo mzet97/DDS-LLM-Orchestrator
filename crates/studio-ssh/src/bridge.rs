@@ -19,7 +19,7 @@ use russh::ChannelMsg;
 use thiserror::Error;
 
 use crate::identity::IdentityError;
-use crate::trust::{KeyIdentity, TrustError, TrustStore};
+use crate::trust::{KeyIdentity, TrustError, TrustFile, TrustStore};
 
 /// Alvo administrativo já autorizado pelo operador.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -166,6 +166,34 @@ pub async fn run_command(
         .disconnect(russh::Disconnect::ByApplication, "fim", "")
         .await;
     String::from_utf8(output).map_err(|err| fail(format!("saida nao-utf8: {err}")))
+}
+
+/// Caminho síncrono para a GUI (que não tem runtime async): desbloqueia a
+/// identidade dedicada com a senha informada na hora, abre o cofre e
+/// executa. Destinado a thread dedicada com `poll` — nunca na thread de UI.
+pub fn run_command_blocking(
+    target: &SshTarget,
+    private_pem: &std::path::Path,
+    passphrase: &str,
+    trust_path: &std::path::Path,
+    command: &str,
+) -> Result<String, BridgeError> {
+    let private_key = crate::identity::unlock(private_pem, passphrase)?;
+    let trust_file = TrustFile::open(trust_path)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| BridgeError::Transport {
+            host: target.host.clone(),
+            port: target.port,
+            detail: format!("runtime: {err}"),
+        })?;
+    runtime.block_on(run_command(
+        target,
+        private_key,
+        trust_file.store(),
+        command,
+    ))
 }
 
 /// Traduz falha de handshake em erro tipado usando a chave capturada.

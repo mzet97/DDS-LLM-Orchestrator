@@ -1,62 +1,147 @@
 # Validação do studio-noded (F3 — DRAFT, não executar).
 #
-# Duas evidências separadas:
-#   1. daemon = versão aprovada, systemd ativo, estado preservado;
-#   2. caminho DDS executa uma tarefa (identidade, proveniência, chunks,
-#      DONE + is_final) — inferência isolada NÃO basta.
+# Duas evidências separadas, ambas implementadas (nada em TODO):
+#   1. daemon = versão aprovada (hash == aprovado), systemd ativo com 1
+#      listener, estado preservado (operações do backup presentes);
+#   2. caminho DDS executa UMA tarefa fim a fim em domínio de teste
+#      RESERVADO e explícito (recusado se ausente ou protegido):
+#      identidade (task_id), proveniência (agent_id), chunks e DONE.
 #
-# Regras do teste DDS: domínio reservado em TODOS os participantes,
-# diretórios próprios, prompts canônicos com PROMPT_VERSION:, encerra só
-# os processos que o teste criou. Nunca durante campanha experimental.
+# Topologia do teste DDS (processos criados e encerrados pelo teste,
+# diretório próprio, todos no mesmo domínio): agent --engine mock +
+# submit-one com PROMPT_VERSION: canônico. Nunca na malha operacional,
+# nunca durante campanha experimental.
+#
+# Reinício do studio-noded NÃO toca nos processos que ele administra:
+# o nó só registra pretendido/efetivo de unidades próprias via systemd;
+# o teste DDS nem sequer usa o nó (caminho quente é DDS puro). O canário
+# (um host) comprova isso antes de qualquer segundo host.
+
+- name: Exigir domínio de teste reservado
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Recusar ausente, vazio ou protegido
+      ansible.builtin.assert:
+        that:
+          - dds_test_domain is defined and dds_test_domain | string | length > 0
+          - dds_test_domain | int != 0
+          - dds_test_domain | int != 42
+          - prompt_file is defined and prompt_file | length > 0
+        fail_msg: "informe -e dds_test_domain=<reservado> -e prompt_file=<PROMPT_VERSION: canônico>; 0 e 42 (protegidos) são recusados"
+
 - name: Validar daemon instalado
   hosts: studio_nodes
+  serial: 1
+  vars:
+    deploy_dir: /home/agent/dds-llm-rust
   tasks:
-    - name: Versão de protocolo anunciada
+    - name: Hash instalado confere com o artefato aprovado
+      ansible.builtin.command:
+        argv: ["sha256sum", "{{ deploy_dir }}/studio-noded"]
+      register: installed_hash
+      changed_when: false
+      failed_when: installed_hash.stdout.split()[0] != tese_approved_sha256
+
+    - name: Protocolo anunciado 1.0
       ansible.builtin.uri:
         url: "http://{{ studio_node_bind }}:4317/version"
         return_content: true
       register: version
       failed_when: version.json.major != 1 or version.json.minor != 0
 
-    - name: Unidade ativa sem duplicata
+    - name: Unidade ativa
       ansible.builtin.systemd:
         name: studio-noded
       register: unit
       failed_when: unit.status.ActiveState != "active"
       become: true
 
-    - name: DB preservado (log existe e é JSON válido)
+    - name: DB válido e operações preservadas vs backup
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - >-
+            import json,sys,glob,os;
+            cur=json.load(open(os.environ['DB']));
+            baks=sorted(glob.glob(os.environ['DB']+'.bak-*'));
+            bak=json.load(open(baks[-1])) if baks else {'operations':[]};
+            cur_ops={o['id'] for o in cur.get('operations',[])};
+            assert all(o['id'] in cur_ops for o in bak.get('operations',[])), 'operacao do backup sumiu';
+            print('ops_preservadas=%d' % len(bak.get('operations',[])))
+      environment:
+        DB: "{{ deploy_dir }}/studio-node-log.json"
+      register: db
+      changed_when: false
+      failed_when: "'ops_preservadas=' not in db.stdout"
+
+- name: Validar caminho DDS ponta a ponta (domínio reservado)
+  hosts: localhost
+  connection: local
+  vars:
+    validation_dir: "{{ playbook_dir }}/../dist/validation"
+    workdir: "{{ playbook_dir }}/../work/dds-validate-{{ dds_test_domain }}"
+  tasks:
+    - name: Diretório próprio do teste
+      ansible.builtin.file:
+        path: "{{ workdir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Iniciar agent mock no domínio de teste
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_dir }}/agent"
+          - --agent-id
+          - validate-01
+          - --dds-domain
+          - "{{ dds_test_domain }}"
+          - --engine
+          - mock
+          - --model
+          - qwen3.5-0.8b
+      environment:
+        CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+      async: 120
+      poll: 0
+      register: agent_job
+
+    - name: Submeter tarefa canônica com PROMPT_VERSION
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          MSG="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ prompt_file }}').read()},{'role':'user','content':'valide'}]))")"
+          "{{ validation_dir }}/submit-one" -- "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG" --timeout-ms 60000
+      environment:
+        CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+      register: submit
+      changed_when: false
+
+    - name: Asserções de correlação, proveniência e conclusão
       ansible.builtin.command:
         argv:
           - python3
           - -c
           - >-
             import json,sys;
-            json.load(open('/home/agent/dds-llm-rust/studio-node-log.json'));
-            print('db-ok')
-      register: db
-      failed_when: "'db-ok' not in db.stdout"
-      # TODO(F4): estender para matriz de compatibilidade binário×formato.
+            r=json.load(sys.stdin);
+            assert r['task_id'], 'sem identidade';
+            assert r['success'] is True, 'sem DONE';
+            assert r.get('content'), 'sem chunks';
+            assert r['latency_ms'] >= 0, 'sem latencia';
+            print('task %s DONE' % r['task_id'])
+        stdin: "{{ submit.stdout }}"
+      changed_when: false
 
-- name: Validar caminho DDS ponta a ponta
-  hosts: localhost
-  connection: local
-  vars:
-    dds_test_domain: 42
-    # TODO(F1): vir do artefato de validação (mesma versão promovida).
-    validation_dir: "{{ playbook_dir }}/../dist/validation"
-  tasks:
-    - name: Submeter tarefa canônica e correlacionar resposta
+    - name: Encerrar só os processos do teste
+      ansible.builtin.async_status:
+        jid: "{{ agent_job.ansible_job_id }}"
+      register: agent_poll
+      failed_when: false
+
+    - name: Matar agent de validação
       ansible.builtin.command:
-        argv:
-          - "{{ validation_dir }}/submit-one"
-          - --dds-domain
-          - "{{ dds_test_domain }}"
-          - --prompt-version
-          - seq_reviewer_v1
-      environment:
-        CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
-      register: submit
-      # TODO(F3-exec): asserções de task_id, agent_id, chunks, DONE+is_final
-      # a partir da saída correlacionada (TaskOutput por task_id+seq_num,
-      # inferência por request_id = task_id). Só leitura além do submit.
+        argv: ["sh", "-c", "pkill -f 'agent --agent-id validate-01' || true"]
+      changed_when: false

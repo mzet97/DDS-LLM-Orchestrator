@@ -16,6 +16,7 @@ pub mod nodes;
 pub mod origin;
 pub mod overview;
 pub mod services;
+pub mod ssh_session;
 pub mod ssh_trust;
 pub mod state;
 pub mod workload;

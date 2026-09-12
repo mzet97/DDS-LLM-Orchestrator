@@ -1,55 +1,99 @@
-# CD do studio-noded via Ansible na operadora (F3 — DRAFT, não executar).
+# CD do studio-noded (F3 — DRAFT, não executar).
 #
-# Direção: pacote versionado do Harbor (mesmo digest testado/promovido) →
-# hosts .61/.62 → unidade systemd. Idempotente; preserva DB, identidades e
-# configs da GUI; rollback = reinstalar versão anterior (F4).
+# Contrato anunciado e demonstrado aqui (não em TODO):
+#   pull por digest do Harbor → conferência de integridade → backup com
+#   semântica explícita → instalação → verificação (hash instalado ==
+#   aprovado, protocolo, 1 listener) → rollback = reexecutar com a ref
+#   anterior. Onde cada arquivo existe está marcado: [OPERADORA] ou [HOST].
 #
 # Fronteira: Ansible instala/atualiza a plataforma; o Studio administra os
-# recursos operacionais. Este playbook NUNCA desfaz configuração da GUI.
+# recursos operacionais. Este playbook NUNCA desfaz configuração da GUI,
+# troca identidades ou duplica processos.
 #
-# Uso (após F0/F1/F2 aprovados e executados):
+# Uso futuro (após aprovações F1/F2 separadas):
 #   ansible-playbook -i inventory.ini deploy-studio-node.yml \
-#     -e tese_version=<commit>-<arch> -e studio_node_bind=192.168.1.62
-- name: Deploy studio-noded versionado
-  hosts: studio_nodes
-  vars:
-    deploy_dir: /home/agent/dds-llm-rust
-    service_name: studio-noded
-    # TODO(F2): origem = Harbor (oras pull), não scp da operadora.
-    artifact_dir: "{{ playbook_dir }}/../dist"
-  tasks:
-    - name: Conferir pacote da versão promovida
-      ansible.builtin.stat:
-        path: "{{ artifact_dir }}/tese-rust-{{ host_arch }}/{{ item }}"
-      loop:
-        - studio-noded
-        - SHA256SUMS
-        - manifest.json
-      register: artifact
-      failed_when: not artifact.stat.exists
+#     -e harbor_ref=sha256:<digest> -e tese_approved_sha256=<hex> \
+#     -e studio_node_bind=192.168.1.62
+# Rollback: repetir com harbor_ref/tese_approved_sha256 da versão anterior.
 
-    - name: Criar diretório de deploy
+- name: "Deploy studio-noded versionado (canario: um host por vez)"
+  hosts: studio_nodes
+  serial: 1
+  vars:
+    deploy_dir: /home/agent/dds-llm-rust # [HOST]
+    service_name: studio-noded
+    ca_file: "{{ lookup('env', 'XDG_CONFIG_HOME') | default('~/.config', true) }}/dds-orchestrator/pki/local-root-ca.crt" # [OPERADORA]
+    staging: "{{ playbook_dir }}/../staging/{{ inventory_hostname }}" # [OPERADORA]
+  tasks:
+    - name: Exigir referência promovida (digest + hash aprovado)
+      ansible.builtin.assert:
+        that:
+          - harbor_ref is defined and harbor_ref is match('^sha256:[0-9a-f]{64}$')
+          - tese_approved_sha256 is defined and tese_approved_sha256 is match('^[0-9a-f]{64}$')
+          - studio_node_bind is defined and studio_node_bind | length > 0
+        fail_msg: "deploy exige harbor_ref (digest), tese_approved_sha256 e studio_node_bind explícitos"
+
+    - name: Baixar artefato promovido por digest [OPERADORA]
+      ansible.builtin.command:
+        argv:
+          - oras
+          - pull
+          - --ca-file
+          - "{{ ca_file }}"
+          - "harbor.home.arpa/library/tese-rust@{{ harbor_ref }}"
+          - -o
+          - "{{ staging }}"
+      delegate_to: localhost
+      register: pull
+      changed_when: true
+
+    - name: Conferir integridade do pacote [OPERADORA]
+      ansible.builtin.command:
+        argv: ["sha256sum", "-c", "SHA256SUMS"]
+        chdir: "{{ staging }}/{{ host_arch }}"
+      delegate_to: localhost
+      changed_when: false
+
+    - name: Conferir hash do binário contra o aprovado [OPERADORA]
+      ansible.builtin.command:
+        argv: ["sha256sum", "{{ staging }}/{{ host_arch }}/studio-noded"]
+      delegate_to: localhost
+      register: staged_hash
+      changed_when: false
+      failed_when: staged_hash.stdout.split()[0] != tese_approved_sha256
+
+    - name: Estado atual do DB (ausência inicial é caso explícito) [HOST]
+      ansible.builtin.stat:
+        path: "{{ deploy_dir }}/studio-node-log.json"
+      register: db_stat
+
+    - name: Backup do DB existente (falha aqui ABORTA, nunca ignora) [HOST]
+      ansible.builtin.copy:
+        src: "{{ deploy_dir }}/studio-node-log.json"
+        dest: "{{ deploy_dir }}/studio-node-log.json.bak-{{ harbor_ref | regex_replace('[^0-9a-f]', '') }}"
+        remote_src: true
+        mode: '0644'
+      when: db_stat.stat.exists
+
+    - name: Registrar ausência inicial de estado [HOST]
+      ansible.builtin.set_fact:
+        initial_state: true
+      when: not db_stat.stat.exists
+
+    - name: Criar diretório de deploy [HOST]
       ansible.builtin.file:
         path: "{{ deploy_dir }}"
         state: directory
         mode: '0755'
 
-    - name: Backup do DB antes de tocar no serviço
+    - name: Instalar binário aprovado [HOST]
       ansible.builtin.copy:
-        src: "{{ deploy_dir }}/studio-node-log.json"
-        dest: "{{ deploy_dir }}/studio-node-log.json.bak-{{ tese_version }}"
-        remote_src: true
-        mode: '0644'
-      failed_when: false
-
-    - name: Instalar binário da versão promovida
-      ansible.builtin.copy:
-        src: "{{ artifact_dir }}/tese-rust-{{ host_arch }}/studio-noded"
+        src: "{{ staging }}/{{ host_arch }}/studio-noded"
         dest: "{{ deploy_dir }}/studio-noded"
         mode: '0755'
       notify: Restart studio-noded
 
-    - name: Instalar unidade systemd (bind explícito da LAN)
+    - name: Instalar unidade systemd (bind explícito da LAN) [HOST]
       ansible.builtin.template:
         src: studio-noded.service.j2
         dest: /etc/systemd/system/studio-noded.service
@@ -57,13 +101,27 @@
       become: true
       notify: Reload systemd
 
-    - name: Habilitar e iniciar
+    - name: Habilitar e iniciar [HOST]
       ansible.builtin.systemd:
         name: "{{ service_name }}"
         enabled: true
         state: started
         daemon_reload: true
       become: true
+
+    - name: Hash instalado confere com o aprovado [HOST]
+      ansible.builtin.command:
+        argv: ["sha256sum", "{{ deploy_dir }}/studio-noded"]
+      register: installed_hash
+      changed_when: false
+      failed_when: installed_hash.stdout.split()[0] != tese_approved_sha256
+
+    - name: Um único listener na porta [HOST]
+      ansible.builtin.command:
+        argv: ["sh", "-c", "ss -ltn | grep -c ':4317 ' || true"]
+      register: listeners
+      changed_when: false
+      failed_when: listeners.stdout | trim != "1"
 
   handlers:
     - name: Reload systemd
