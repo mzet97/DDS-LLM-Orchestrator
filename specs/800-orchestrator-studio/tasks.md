@@ -165,3 +165,14 @@
   refeito com `Panel::left` de navegação (Catálogo/Nó/Inferência/Agentes/
   Despacho/Modelos/Serviços/Compartilhado/Topologia) + painel central com
   rolagem, conforme §30. 26 testes do Studio, gates limpos.
+- [x] **T-800-22 · Visão geral (somente leitura)** (§9.2)
+  Cartões Nó/Serviços/Agentes/Modelos/Inferência com fonte e `stale`
+  explícito; lista vazia sem erro = "nunca lido", nunca zero inventado.
+  Tela inicial padrão do Studio. 3 testes do agregado.
+- [x] **T-800-23 · Subir inferência: plano → aplicar → prova** (§9.3, P2 local)
+  Assistente com unidade escolhida só da lista lida do nó, prévia legível
+  antes de qualquer efeito, execução em thread (start idempotente, espera
+  active 60s, lista modelos, prova de geração real temp 0/32 tokens).
+  Ao vivo: modelos listados e geração real OK em :8082
+  (Qwen3.5-0.8B, 32 tokens). Criar unidade nova com parâmetros arbitrários
+  segue inexistente no nó — declarado no plano, sem simular.

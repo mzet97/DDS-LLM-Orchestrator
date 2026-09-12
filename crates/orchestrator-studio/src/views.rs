@@ -4,8 +4,10 @@ pub mod agents;
 pub mod catalog;
 pub mod dispatch;
 pub mod inference;
+pub mod launch;
 pub mod models;
 pub mod node;
+pub mod overview;
 pub mod services;
 pub mod shared_catalog;
 #[cfg(feature = "dds")]

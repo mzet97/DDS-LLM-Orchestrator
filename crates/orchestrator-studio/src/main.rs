@@ -10,6 +10,7 @@ use eframe::egui;
 use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::catalog_remote::SharedCatalog;
 use orchestrator_studio::inference::InferenceState;
+use orchestrator_studio::launch::LaunchState;
 use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::state::AppState;
@@ -19,9 +20,11 @@ use studio_core::catalog::Catalog;
 /// Seção exibida no painel central (navegação lateral exigida no §30).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
+    Overview,
     Catalog,
     Node,
     Inference,
+    Launch,
     Agents,
     Dispatch,
     Models,
@@ -33,9 +36,11 @@ enum Section {
 impl Section {
     fn label(self) -> &'static str {
         match self {
+            Self::Overview => "Visão geral",
             Self::Catalog => "Catálogo",
             Self::Node => "Nó studio-node",
             Self::Inference => "Inferência",
+            Self::Launch => "Subir inferência",
             Self::Agents => "Agentes",
             Self::Dispatch => "Despacho",
             Self::Models => "Modelos GGUF",
@@ -47,9 +52,11 @@ impl Section {
 
     fn all() -> &'static [Self] {
         &[
+            Self::Overview,
             Self::Catalog,
             Self::Node,
             Self::Inference,
+            Self::Launch,
             Self::Agents,
             Self::Dispatch,
             Self::Models,
@@ -66,6 +73,7 @@ struct StudioApp {
     catalog: Catalog,
     node_url: String,
     inference: InferenceState,
+    launch: LaunchState,
     agents: AgentsState,
     models: ModelsState,
     services: ServicesPanel,
@@ -78,11 +86,12 @@ struct StudioApp {
 impl StudioApp {
     fn new() -> Self {
         Self {
-            section: Section::Catalog,
+            section: Section::Overview,
             state: AppState::new(),
             catalog: Catalog::new(),
             node_url: String::from("http://127.0.0.1:4317"),
             inference: InferenceState::new(),
+            launch: LaunchState::new(),
             agents: AgentsState::new(),
             models: ModelsState::new(),
             services: ServicesPanel::new(),
@@ -118,8 +127,36 @@ impl eframe::App for StudioApp {
         });
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.section {
+                Section::Overview => {
+                    let proof = if self.launch.proved() {
+                        self.launch
+                            .steps
+                            .last()
+                            .map(|step| step.detail.as_str())
+                            .unwrap_or("")
+                    } else {
+                        ""
+                    };
+                    views::overview::show(
+                        ui,
+                        &self.state,
+                        &self.services,
+                        &self.agents,
+                        &self.models,
+                        proof,
+                    );
+                }
                 Section::Node => views::node::show(ui, &mut self.state, &mut self.node_url),
                 Section::Inference => views::inference::show(ui, &mut self.inference),
+                Section::Launch => {
+                    let known: Vec<String> = self
+                        .services
+                        .list
+                        .iter()
+                        .map(|item| item.service.clone())
+                        .collect();
+                    views::launch::show(ui, &mut self.launch, &known);
+                }
                 Section::Agents => views::agents::show(ui, &mut self.agents),
                 Section::Models => views::models::show(ui, &mut self.models),
                 Section::Services => views::services::show(ui, &mut self.services),

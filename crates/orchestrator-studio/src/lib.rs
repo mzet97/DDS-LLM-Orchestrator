@@ -10,8 +10,10 @@ pub mod catalog_remote;
 #[cfg(feature = "dds")]
 pub mod dds_observe;
 pub mod inference;
+pub mod launch;
 pub mod models;
 pub mod origin;
+pub mod overview;
 pub mod services;
 pub mod state;
 pub mod workload;
