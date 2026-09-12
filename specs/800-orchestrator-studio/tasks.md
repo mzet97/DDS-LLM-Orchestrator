@@ -83,3 +83,10 @@
   erro tipado) + `DispatchState`; GUI com painel de despacho.
   3 testes de fio + smoke vivo `STUDIO_LIVE_DISPATCH=1`: tarefa concluída
   por `agent-rust-01` em 582ms. 15 testes do Studio verdes, gates limpos.
+- [x] **T-800-12 · Sessão multi-turn + tabela de operações** (P8; G-23)
+  `InferenceState` com `history`: Enviar anexa user→resposta no fio, erro
+  descarta só o turno falho, "Nova sessão" limpa; GUI com transcript em
+  scroll. Tabela de operações do nó (`op_summary` exaustivo) no painel do
+  nó. Teste de fio: 2 envios → 2º corpo com 3 mensagens. 16 testes verdes,
+  gates limpos. Ferramentas/observabilidade são DDS-nativas sem HTTP —
+  próximo slice é o Studio lendo o domínio DDS (P7/P9).

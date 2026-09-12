@@ -9,6 +9,17 @@ use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::workload::DispatchState;
+use studio_node::protocol::AdminOp;
+
+/// Resumo de uma linha para a tabela de operações do nó.
+fn op_summary(op: &AdminOp) -> String {
+    match op {
+        AdminOp::Bootstrap { node_name } => format!("bootstrap {node_name}"),
+        AdminOp::SetService { service, running } => {
+            format!("serviço {service} {}", if *running { "on" } else { "off" })
+        }
+    }
+}
 use studio_core::catalog::Catalog;
 
 struct StudioApp {
@@ -59,6 +70,18 @@ impl eframe::App for StudioApp {
                     node.version.minor,
                     node.operations.len()
                 ));
+                if !node.operations.is_empty() {
+                    egui::Grid::new("node_ops_grid").show(ui, |ui| {
+                        ui.label("operation_id");
+                        ui.label("op");
+                        ui.end_row();
+                        for record in &node.operations {
+                            ui.label(&record.id.0);
+                            ui.label(op_summary(&record.op));
+                            ui.end_row();
+                        }
+                    });
+                }
             }
             ui.collapsing("Inferência (servidor llama ao vivo)", |ui| {
                 let infer = &mut self.inference;
@@ -84,11 +107,30 @@ impl eframe::App for StudioApp {
                 ui.add(egui::Slider::new(&mut infer.max_tokens, 1..=4096).text("máx. tokens"));
                 ui.label("prompt:");
                 ui.text_edit_multiline(&mut infer.prompt);
-                if ui.button("Enviar").clicked() {
-                    infer.send();
-                }
+                ui.horizontal(|ui| {
+                    if ui.button("Enviar").clicked() {
+                        infer.send();
+                    }
+                    if ui.button("Nova sessão").clicked() {
+                        infer.clear_session();
+                    }
+                });
                 ui.separator();
-                ui.label(&infer.reply);
+                egui::ScrollArea::vertical()
+                    .max_height(220.0)
+                    .show(ui, |ui| {
+                        if infer.history.is_empty() {
+                            ui.label(&infer.reply);
+                        }
+                        for message in &infer.history {
+                            let who = match message.role {
+                                orchestrator_studio::inference::Role::System => "sistema",
+                                orchestrator_studio::inference::Role::User => "você",
+                                orchestrator_studio::inference::Role::Assistant => "assistente",
+                            };
+                            ui.label(format!("{who}: {}", message.content));
+                        }
+                    });
             });
             ui.collapsing("Agentes (orquestrador ao vivo)", |ui| {
                 let agents = &mut self.agents;

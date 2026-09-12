@@ -101,6 +101,35 @@ async fn parameters_cross_the_wire_and_content_returns() {
     );
 }
 
+#[tokio::test]
+async fn session_accumulates_history_on_the_wire() {
+    use orchestrator_studio::inference::InferenceState;
+
+    let captured = Captured::default();
+    let url = live_base_url(captured.clone()).await;
+    let mut session = InferenceState::new();
+    session.server_url = url.clone();
+    session.model = String::from("m");
+    session.prompt = String::from("primeira");
+
+    tokio::task::spawn_blocking(move || {
+        session.send();
+        session.prompt = String::from("segunda");
+        session.send();
+        session
+    })
+    .await
+    .expect("sem panic");
+
+    let bodies = captured.lock().expect("captura acessivel");
+    assert_eq!(bodies.len(), 2);
+    assert_eq!(bodies[0]["messages"].as_array().expect("lista").len(), 1);
+    let second = bodies[1]["messages"].as_array().expect("lista");
+    assert_eq!(second.len(), 3);
+    assert_eq!(second[1]["role"], serde_json::json!("assistant"));
+    assert_eq!(second[2]["content"], serde_json::json!("segunda"));
+}
+
 /// Smoke contra llama-server real: só roda com `STUDIO_LIVE_LLAMA=1`
 /// (padrão dos gates de middleware: bloqueado, nunca aprovado por fixture).
 #[test]

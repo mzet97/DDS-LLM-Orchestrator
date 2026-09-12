@@ -87,6 +87,7 @@ pub struct InferenceState {
     pub prompt: String,
     pub reply: String,
     pub models: Vec<String>,
+    pub history: Vec<Message>,
 }
 
 impl InferenceState {
@@ -101,6 +102,7 @@ impl InferenceState {
             prompt: String::new(),
             reply: String::new(),
             models: Vec::new(),
+            history: Vec::new(),
         }
     }
 
@@ -121,22 +123,41 @@ impl InferenceState {
         }
     }
 
-    /// Geração real contra o servidor; resposta ou erro ficam no painel.
-    /// Bloqueia a thread de UI (localhost; async quando justificar).
+    /// Geração real contra o servidor com o histórico da sessão no fio;
+    /// resposta ou erro ficam no painel. Bloqueia a thread de UI
+    /// (localhost; async quando justificar).
     pub fn send(&mut self) {
+        self.history.push(Message {
+            role: Role::User,
+            content: self.prompt.clone(),
+        });
         let chat = ChatRequest {
             model: self.model.clone(),
-            messages: vec![Message {
-                role: Role::User,
-                content: self.prompt.clone(),
-            }],
+            messages: self.history.clone(),
             temperature: self.temperature,
             max_tokens: self.max_tokens,
         };
         match chat_completion(&self.server_url.clone(), &chat) {
-            Ok(content) => self.reply = content,
-            Err(err) => self.reply = format!("erro de inferência: {err}"),
+            Ok(content) => {
+                self.history.push(Message {
+                    role: Role::Assistant,
+                    content: content.clone(),
+                });
+                self.reply = content;
+                self.prompt.clear();
+            }
+            Err(err) => {
+                self.history.pop();
+                self.reply = format!("erro de inferência: {err}");
+            }
         }
+    }
+
+    /// Nova sessão: limpa histórico, prompt e resposta.
+    pub fn clear_session(&mut self) {
+        self.history.clear();
+        self.prompt.clear();
+        self.reply.clear();
     }
 }
 
