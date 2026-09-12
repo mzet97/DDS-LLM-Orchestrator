@@ -5,6 +5,7 @@
 //! recusado; serviço fora do escopo próprio é recusado (RF-05).
 
 use std::collections::HashMap;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -36,10 +37,13 @@ pub enum NodeError {
     /// Serviço fora dos recursos próprios do nó (RF-05).
     #[error("servico fora do escopo do no: {0}")]
     OutOfScope(String),
+    /// Falha ao persistir ou carregar o log em disco (P2).
+    #[error("falha de persistencia: {0}")]
+    Storage(String),
 }
 
 /// Log em memória das operações do nó, restrito aos serviços próprios.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OperationLog {
     owned_services: Vec<String>,
     records: HashMap<OperationId, OpRecord>,
@@ -80,6 +84,21 @@ impl OperationLog {
     #[must_use]
     pub fn reconcile(&self, id: &OperationId) -> Option<&OpRecord> {
         self.records.get(id)
+    }
+
+    /// Persiste o log em JSON no caminho dado (P2: operações persistidas).
+    pub fn save(&self, path: &Path) -> Result<(), NodeError> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|err| NodeError::Storage(err.to_string()))?;
+        std::fs::write(path, json).map_err(|err| NodeError::Storage(err.to_string()))
+    }
+
+    /// Carrega o log persistido; arquivo ausente ou corrompido é erro
+    /// (primeiro boot usa `new`, nunca `load` cego).
+    pub fn load(path: &Path) -> Result<Self, NodeError> {
+        let json =
+            std::fs::read_to_string(path).map_err(|err| NodeError::Storage(err.to_string()))?;
+        serde_json::from_str(&json).map_err(|err| NodeError::Storage(err.to_string()))
     }
 }
 
@@ -163,5 +182,48 @@ mod tests {
         let log = log_with("dds-agent");
 
         assert!(log.reconcile(&op_id("inexistente")).is_none());
+    }
+
+    fn temp_db(name: &str) -> std::path::PathBuf {
+        std::env::temp_dir().join(format!(
+            "studio-node-test-{name}-{}.json",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn save_and_load_round_trip_preserves_log() {
+        let path = temp_db("roundtrip");
+        let mut log = log_with("dds-agent");
+        publish(&mut log, "op-1");
+
+        log.save(&path).expect("salvar deve funcionar");
+        let back = OperationLog::load(&path).expect("carregar deve funcionar");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(back.reconcile(&op_id("op-1")).is_some());
+        assert!(back.reconcile(&op_id("inexistente")).is_none());
+    }
+
+    #[test]
+    fn load_missing_file_is_storage_error() {
+        let path = temp_db("ausente");
+        let _ = std::fs::remove_file(&path);
+
+        let err = OperationLog::load(&path).expect_err("arquivo ausente deve falhar");
+
+        assert!(matches!(err, NodeError::Storage(_)));
+    }
+
+    fn publish(log: &mut OperationLog, id: &str) {
+        use crate::protocol::AdminOp;
+        log.apply(
+            op_id(id),
+            AdminOp::SetService {
+                service: String::from("dds-agent"),
+                running: true,
+            },
+        )
+        .expect("publicacao de teste deve aplicar");
     }
 }

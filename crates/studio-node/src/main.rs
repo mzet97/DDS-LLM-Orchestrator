@@ -2,6 +2,7 @@
 //!
 //! Porta via `STUDIO_NODE_PORT` (padrão 4317). Serviços próprios via
 //! `STUDIO_NODE_SERVICES` (lista separada por vírgula; padrão `dds-agent`).
+//! Persistência opcional via `STUDIO_NODE_DB` (caminho do JSON do log).
 
 use anyhow::{Context, Result};
 use studio_node::server::{router, NodeState};
@@ -24,7 +25,12 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
         .with_context(|| format!("studio-noded: porta {port} indisponivel em 127.0.0.1"))?;
-    let state = NodeState::new(owned_services());
+    let services = owned_services();
+    let state = match std::env::var("STUDIO_NODE_DB") {
+        Ok(path) => NodeState::with_db(path.into(), services)
+            .context("studio-noded: log persistido corrompido")?,
+        Err(_) => NodeState::new(services),
+    };
     axum::serve(listener, router(state))
         .await
         .context("servidor do no encerrou com erro")

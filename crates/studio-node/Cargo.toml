@@ -9,6 +9,7 @@ description = "No local do DDS Orchestrator Studio: protocolo administrativo ver
 [dependencies]
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 axum = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

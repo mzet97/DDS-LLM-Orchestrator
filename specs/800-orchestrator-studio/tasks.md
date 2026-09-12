@@ -40,6 +40,12 @@
   destacado + curl: version/applied/already_applied/reconcile/403
   confirmados; servidor encerrado após a prova. clippy/fmt limpos
   (corrigido `clippy::double_must_use` em `router`). Sem commit (§29).
-  Nota: `server.rs` com 246 LOC puras (faixa de alerta 200–250) — próxima
-  edição no arquivo deve dividi-lo (testes p/ `tests/` ou handlers p/
-  módulo próprio).
+  Nota de dívida paga em T-800-07 (split abaixo).
+- [x] **T-800-07 · Split `server.rs` + persistência do log** (P2; G-05/06)
+  Testes do servidor movidos p/ `tests/server_api.rs` (`server.rs` 246→119
+  LOC). `OperationLog` serializável com `save`/`load` JSON
+  (`NodeError::Storage`); `NodeState::with_db` carrega no boot ou inicia
+  novo, corrompido falha rápido; `POST /apply` persiste após aplicar
+  (falha → 500 `storage_error`); `STUDIO_NODE_DB` no `studio-noded`.
+  17 testes verdes `--locked` (10 lib + 7 integração, incl. restart que
+  recarrega via HTTP). clippy/fmt limpos. Sem commit (§29).
