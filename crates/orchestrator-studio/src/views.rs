@@ -3,10 +3,13 @@
 pub mod agents;
 pub mod catalog;
 pub mod dispatch;
+pub mod environments;
 pub mod inference;
 pub mod launch;
+pub mod machines;
 pub mod models;
 pub mod node;
+pub mod orchestrators;
 pub mod overview;
 pub mod services;
 pub mod shared_catalog;

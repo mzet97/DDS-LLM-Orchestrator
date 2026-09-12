@@ -22,3 +22,9 @@
 - `cargo fmt --check -p orchestrator-studio`: limpo.
 - Binário `studio` compila com topbar + galeria + paleta + temas.
 - Snapshots pixel e janela real: pendentes (kittest sem wgpu; sem captura do desktop alheio).
+
+### UI-2 — recursos e ambientes (nesta execução, `cargo --offline`)
+
+- `--lib`: 39 verdes (incl. `machines` 3, `agent_defs` 4, `orchestrators` 3).
+- `--test machines_kittest`: 2 verdes (clique por apelido, dimensões distintas).
+- Build do binário, clippy `--all-targets -D warnings` e fmt: limpos.

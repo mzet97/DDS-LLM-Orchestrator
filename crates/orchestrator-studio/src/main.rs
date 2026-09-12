@@ -7,14 +7,17 @@ mod views;
 
 use anyhow::Result;
 use eframe::egui;
+use orchestrator_studio::agent_defs::DefinitionStore;
 use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::catalog_remote::SharedCatalog;
 use orchestrator_studio::design::{self, Theme};
 use orchestrator_studio::gallery::GalleryState;
 use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::launch::LaunchState;
+use orchestrator_studio::machines::MachineLedger;
 use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::nodes::NodeRegistry;
+use orchestrator_studio::orchestrators::OrchestratorPanel;
 use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::shell::{CommandItem, ShellContext};
 use orchestrator_studio::ssh_session::SshSession;
@@ -26,6 +29,9 @@ use studio_core::catalog::Catalog;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Overview,
+    Environments,
+    Machines,
+    Orchestrators,
     Catalog,
     Node,
     Inference,
@@ -44,6 +50,9 @@ impl Section {
     fn label(self) -> &'static str {
         match self {
             Self::Overview => "Visão geral",
+            Self::Environments => "Ambientes",
+            Self::Machines => "Máquinas e rede",
+            Self::Orchestrators => "Orquestradores",
             Self::Catalog => "Catálogo",
             Self::Node => "Nó studio-node",
             Self::Inference => "Inferência",
@@ -62,6 +71,9 @@ impl Section {
     fn all() -> &'static [Self] {
         &[
             Self::Overview,
+            Self::Environments,
+            Self::Machines,
+            Self::Orchestrators,
             Self::Catalog,
             Self::Node,
             Self::Inference,
@@ -103,6 +115,10 @@ struct StudioApp {
     launch: LaunchState,
     ssh: SshSession,
     agents: AgentsState,
+    agents_tab: views::agents::AgentsTab,
+    definitions: DefinitionStore,
+    machines: MachineLedger,
+    orchestrators: OrchestratorPanel,
     models: ModelsState,
     services: ServicesPanel,
     shared: SharedCatalog,
@@ -127,6 +143,10 @@ impl StudioApp {
             launch: LaunchState::new(),
             ssh: SshSession::new(),
             agents: AgentsState::new(),
+            agents_tab: views::agents::AgentsTab::default(),
+            definitions: DefinitionStore::new(),
+            machines: MachineLedger::new(),
+            orchestrators: OrchestratorPanel::new(),
             models: ModelsState::new(),
             services: ServicesPanel::new(),
             shared: SharedCatalog::with_url("http://127.0.0.1:4317"),
@@ -218,7 +238,21 @@ impl eframe::App for StudioApp {
                     views::launch::show(ui, &mut self.launch, &known);
                 }
                 Section::Ssh => views::ssh::show(ui, &mut self.ssh, &self.registry),
-                Section::Agents => views::agents::show(ui, &mut self.agents),
+                Section::Environments => {
+                    views::environments::show(ui, &self.registry, &mut self.shell);
+                }
+                Section::Machines => views::machines::show(ui, &mut self.machines),
+                Section::Orchestrators => {
+                    views::orchestrators::show(ui, &mut self.orchestrators, &self.agents);
+                }
+                Section::Agents => {
+                    views::agents::show(
+                        ui,
+                        &mut self.agents,
+                        &mut self.definitions,
+                        &mut self.agents_tab,
+                    );
+                }
                 Section::Models => views::models::show(ui, &mut self.models),
                 Section::Services => views::services::show(ui, &mut self.services),
                 Section::Shared => views::shared_catalog::show(ui, &mut self.shared),

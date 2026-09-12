@@ -12,10 +12,10 @@ não existência de arquivo.
 
 ## UI-2 — Recursos e ambientes
 
-- [ ] UI-2.1 T01 entrada/retomada + T02 visão geral (atenção, fonte, sem zero confirmado). (UI-R14 · UI-G11)
-- [ ] UI-2.2 T03 máquinas (tabela + abas de detalhe, intenções sem scanner). (UI-R07 · UI-G10)
-- [ ] UI-2.3 T04 agentes: definições × instâncias separadas. (UI-R08 · UI-G14)
-- [ ] UI-2.4 T09 orquestrador-monitor (destino configurável, sem posar de executor). (UI-R12 · UI-G21)
+- [x] UI-2.1 T01 Ambientes (recentes, demonstração rotulada) + T02 existente. (UI-R14 · UI-G11)
+- [x] UI-2.2 T03 máquinas (`machines.rs` + `machines_kittest.rs`: saúde/confiança/DDS distintos, clique por apelido). (UI-R07 · UI-G10)
+- [x] UI-2.3 T04 agentes: abas Definições × Instâncias, vínculo só comprovado ("Não confirmado"). (UI-R08 · UI-G14)
+- [x] UI-2.4 T09 orquestrador-monitor (definição + papel "Supervisão…", aplicar indisponível G-INT-06). (UI-R12 · UI-G21)
 
 ## UI-3 — Editores e percursos
 
