@@ -5,8 +5,10 @@
 
 use anyhow::Result;
 use eframe::egui;
+use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::state::AppState;
+use orchestrator_studio::workload::DispatchState;
 use studio_core::catalog::Catalog;
 
 struct StudioApp {
@@ -14,6 +16,8 @@ struct StudioApp {
     catalog: Catalog,
     node_url: String,
     inference: InferenceState,
+    agents: AgentsState,
+    dispatch: DispatchState,
 }
 
 impl StudioApp {
@@ -23,6 +27,8 @@ impl StudioApp {
             catalog: Catalog::new(),
             node_url: String::from("http://127.0.0.1:4317"),
             inference: InferenceState::new(),
+            agents: AgentsState::new(),
+            dispatch: DispatchState::new(),
         }
     }
 }
@@ -83,6 +89,60 @@ impl eframe::App for StudioApp {
                 }
                 ui.separator();
                 ui.label(&infer.reply);
+            });
+            ui.collapsing("Agentes (orquestrador ao vivo)", |ui| {
+                let agents = &mut self.agents;
+                ui.horizontal(|ui| {
+                    ui.label("orquestrador:");
+                    ui.text_edit_singleline(&mut agents.url);
+                    if ui.button("Atualizar").clicked() {
+                        agents.refresh();
+                    }
+                });
+                if !agents.error.is_empty() {
+                    ui.label(&agents.error);
+                }
+                if agents.list.is_empty() {
+                    ui.label("Nenhum agente listado. Clique Atualizar.");
+                } else {
+                    egui::Grid::new("agents_grid").show(ui, |ui| {
+                        ui.label("agent_id");
+                        ui.label("modelo");
+                        ui.label("slots");
+                        ui.label("concluídos");
+                        ui.label("falhas");
+                        ui.label("latência ms");
+                        ui.end_row();
+                        for agent in &agents.list {
+                            ui.label(&agent.agent_id);
+                            ui.label(&agent.model);
+                            ui.label(format!("{}/{}", agent.slots_busy, agent.slots_total));
+                            ui.label(agent.completed_total.to_string());
+                            ui.label(agent.failed_total.to_string());
+                            ui.label(format!("{:.1}", agent.ema_latency_ms));
+                            ui.end_row();
+                        }
+                    });
+                }
+            });
+            ui.collapsing("Despacho (tarefa real via orquestrador)", |ui| {
+                let dispatch = &mut self.dispatch;
+                ui.horizontal(|ui| {
+                    ui.label("orquestrador:");
+                    ui.text_edit_singleline(&mut dispatch.url);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("modelo:");
+                    ui.text_edit_singleline(&mut dispatch.model);
+                });
+                ui.label("prompt:");
+                ui.text_edit_multiline(&mut dispatch.prompt);
+                if ui.button("Despachar e aguardar").clicked() {
+                    dispatch.send();
+                }
+                if !dispatch.result.is_empty() {
+                    ui.label(&dispatch.result);
+                }
             });
             if self.state.rows().is_empty() {
                 ui.label("Nenhum item no catálogo. Use \"Conectar ao nó\" para ler a origem viva.");

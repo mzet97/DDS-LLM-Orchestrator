@@ -5,6 +5,8 @@
 //! binário `studio` é só a casca eframe que a renderiza (G-01 parcial:
 //! build desktop nativo; somente leitura real, sem dados fictícios).
 
+pub mod agents;
 pub mod inference;
 pub mod origin;
 pub mod state;
+pub mod workload;

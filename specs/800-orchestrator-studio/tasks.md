@@ -72,3 +72,14 @@
   geração OK. Lio: modelo reasoning com budget curto retorna `content`
   vazio (`reasoning_content` consome tokens) — asserção corrigida p/ o que
   o contrato garante. 26 testes verdes `--locked`, clippy/fmt limpos.
+- [x] **T-800-10 · Painel de agentes vivos** (P6; G-15/16)
+  `agents.rs`: `AgentInfo` cru do `GET /api/v1/agents` (sem semáforo
+  inventado) + `AgentsState`; GUI com tabela (slots, concluídos, falhas,
+  latência). 2 testes de fio + erro tipado. Lido ao vivo: `agent-rust-sdd`
+  e `agent-rust-01` (16 concluídos) no orquestrador 8085.
+- [x] **T-800-11 · Despacho real via orquestrador** (P6/P8; G-25/26)
+  `workload.rs`: `dispatch_sync` no `/api/v1/chat/completions/sync`
+  (`Completed` com agente/latência, `Failed` com motivo, status bizarro vira
+  erro tipado) + `DispatchState`; GUI com painel de despacho.
+  3 testes de fio + smoke vivo `STUDIO_LIVE_DISPATCH=1`: tarefa concluída
+  por `agent-rust-01` em 582ms. 15 testes do Studio verdes, gates limpos.
