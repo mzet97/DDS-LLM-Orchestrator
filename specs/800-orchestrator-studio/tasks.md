@@ -229,3 +229,10 @@
   próprios (Ansible/OCI/systemd NÃO exercitados); SSH, GUI e DDS fora do
   teste. Bloqueios externos: SSH `k8s1@.51` negado com as chaves locais
   (build 0.2.0 no .51 pendente); Harbor sem credencial robot; 401 com desafio de autenticação é o fluxo normal; token não testado).
+- [x] **T-800-32 · Sessão da GUI contra SSH descartável real (G-04, GUI)**
+  `orchestrator-studio/tests/ssh_session_live.rs`: caminho REAL
+  (`SshSession::start` + `poll` + `approve_displayed`) contra servidor
+  russh em processo — desconhecido bloqueia com a impressão real,
+  aprovação persiste no cofre, reconexão entrega `PROVA_OK`. Prova com
+  conexão SSH real em loopback; UI aberta e cadastro da `.pub` em VM
+  seguem fora do escopo.
