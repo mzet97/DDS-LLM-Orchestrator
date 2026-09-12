@@ -217,3 +217,15 @@
   em 1.95. Imagem `tese-runner:0.1.0` construída e verificada no .51
   (digest em `ci/REGISTRO-VALIDACAO.md`), SEM push. CA persistida em
   `~/.config/dds-orchestrator/pki/` com impressão registrada.
+- [x] **T-800-31 · Canário local do daemon com binário real (descartável)**
+  `ansible/tests/canary_local.sh` (+ `validate_db.py`, autoteste em
+  `ansible/tests/test_validate_db.py`): estado não vazio, backup explícito,
+  instalação v2 + reinício, validação pelo esquema real, barreira de hash
+  contra binário corrompido, falha de boot de versão instalada e rollback
+  com estado preservado. Revisão publicada `409c3a5` (branch
+  `studio/phase-800-node`); reprodução em checkout limpo com EXIT=0.
+  Delimitação: v1=release e v2=debug DO MESMO commit (procedimento, não
+  compatibilidade entre releases); script reproduz as etapas por comandos
+  próprios (Ansible/OCI/systemd NÃO exercitados); SSH, GUI e DDS fora do
+  teste. Bloqueios externos: SSH `k8s1@.51` negado com as chaves locais
+  (build 0.2.0 no .51 pendente); Harbor sem credencial robot; 401 com desafio de autenticação é o fluxo normal; token não testado).

@@ -35,6 +35,24 @@
 - act_runner 0.2.12 com SHA verificado contra o publicado:
   `0b6d1ca5487e737bc67ecb440997dff412dd63d65b291eddcb69aec9cb61ebbf`
 
+## Canário local do daemon (revisão publicada 409c3a5, 2026-09-12)
+- Revisão: `409c3a5` (branch `studio/phase-800-node`, árvore limpa,
+  scripts com bit executável). Reprodução em checkout separado
+  (`git clone` + `checkout 409c3a5`):
+  `cargo build --locked --release -p studio-node` (15.9s) +
+  `./ansible/tests/canary_local.sh` → `CANARIO_EXIT=0`,
+  `CANÁRIO OK: deploy, reinício, validação, falha e rollback demonstrados`.
+- Binários (mesmo commit-fonte, perfis distintos):
+  v1 release `91afef86c968bf4d313e4e210097f34d602ce952d4ff08825d1c4cbf91094c3a`;
+  v2 debug `f4b9872bce1f680d0d1ae63b02dbe3fa42b520100ff5e049539fb9c8d20539e0`.
+  Conclusão limitada ao procedimento de substituição/reinício.
+- NÃO exercitados: playbooks Ansible, artefato OCI, systemd, SSH, GUI, DDS.
+- Validador: `test_validate_db.py` 8/8 (1 positivo + 6 negativos + flag).
+- Bloqueios externos (sem tocar em serviços): SSH `k8s1@192.168.1.51`
+  `Permission denied` com as chaves locais (porta 22 aberta); Harbor
+  `GET /v2/` responde 401 + `WWW-Authenticate: Bearer` (desafio normal,
+  credencial robot ainda não disponibilizada).
+
 ## Caminho DDS completo (domínio de teste 77, 2026-09-12)
 - Participantes: `det-responder --domain 77` + `agent --agent-id
   dds-prova-77 --dds-domain 77 --engine dds` + `submit-one` com
