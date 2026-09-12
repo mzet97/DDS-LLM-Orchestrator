@@ -1,0 +1,19 @@
+[Unit]
+Description=DDS Orchestrator Studio node (fase 800, via Ansible F3)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=agent
+WorkingDirectory={{ deploy_dir }}
+Environment=STUDIO_NODE_BIND={{ studio_node_bind }}
+Environment=STUDIO_NODE_PORT=4317
+Environment=STUDIO_NODE_DB={{ deploy_dir }}/studio-node-log.json
+ExecStart={{ deploy_dir }}/studio-noded
+Restart=always
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

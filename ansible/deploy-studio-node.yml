@@ -1,0 +1,78 @@
+# CD do studio-noded via Ansible na operadora (F3 — DRAFT, não executar).
+#
+# Direção: pacote versionado do Harbor (mesmo digest testado/promovido) →
+# hosts .61/.62 → unidade systemd. Idempotente; preserva DB, identidades e
+# configs da GUI; rollback = reinstalar versão anterior (F4).
+#
+# Fronteira: Ansible instala/atualiza a plataforma; o Studio administra os
+# recursos operacionais. Este playbook NUNCA desfaz configuração da GUI.
+#
+# Uso (após F0/F1/F2 aprovados e executados):
+#   ansible-playbook -i inventory.ini deploy-studio-node.yml \
+#     -e tese_version=<commit>-<arch> -e studio_node_bind=192.168.1.62
+- name: Deploy studio-noded versionado
+  hosts: studio_nodes
+  vars:
+    deploy_dir: /home/agent/dds-llm-rust
+    service_name: studio-noded
+    # TODO(F2): origem = Harbor (oras pull), não scp da operadora.
+    artifact_dir: "{{ playbook_dir }}/../dist"
+  tasks:
+    - name: Conferir pacote da versão promovida
+      ansible.builtin.stat:
+        path: "{{ artifact_dir }}/tese-rust-{{ host_arch }}/{{ item }}"
+      loop:
+        - studio-noded
+        - SHA256SUMS
+        - manifest.json
+      register: artifact
+      failed_when: not artifact.stat.exists
+
+    - name: Criar diretório de deploy
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup do DB antes de tocar no serviço
+      ansible.builtin.copy:
+        src: "{{ deploy_dir }}/studio-node-log.json"
+        dest: "{{ deploy_dir }}/studio-node-log.json.bak-{{ tese_version }}"
+        remote_src: true
+        mode: '0644'
+      failed_when: false
+
+    - name: Instalar binário da versão promovida
+      ansible.builtin.copy:
+        src: "{{ artifact_dir }}/tese-rust-{{ host_arch }}/studio-noded"
+        dest: "{{ deploy_dir }}/studio-noded"
+        mode: '0755'
+      notify: Restart studio-noded
+
+    - name: Instalar unidade systemd (bind explícito da LAN)
+      ansible.builtin.template:
+        src: studio-noded.service.j2
+        dest: /etc/systemd/system/studio-noded.service
+        mode: '0644'
+      become: true
+      notify: Reload systemd
+
+    - name: Habilitar e iniciar
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      become: true
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true
+
+    - name: Restart studio-noded
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: restarted
+      become: true

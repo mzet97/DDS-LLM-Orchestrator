@@ -1,0 +1,62 @@
+# Validação do studio-noded (F3 — DRAFT, não executar).
+#
+# Duas evidências separadas:
+#   1. daemon = versão aprovada, systemd ativo, estado preservado;
+#   2. caminho DDS executa uma tarefa (identidade, proveniência, chunks,
+#      DONE + is_final) — inferência isolada NÃO basta.
+#
+# Regras do teste DDS: domínio reservado em TODOS os participantes,
+# diretórios próprios, prompts canônicos com PROMPT_VERSION:, encerra só
+# os processos que o teste criou. Nunca durante campanha experimental.
+- name: Validar daemon instalado
+  hosts: studio_nodes
+  tasks:
+    - name: Versão de protocolo anunciada
+      ansible.builtin.uri:
+        url: "http://{{ studio_node_bind }}:4317/version"
+        return_content: true
+      register: version
+      failed_when: version.json.major != 1 or version.json.minor != 0
+
+    - name: Unidade ativa sem duplicata
+      ansible.builtin.systemd:
+        name: studio-noded
+      register: unit
+      failed_when: unit.status.ActiveState != "active"
+      become: true
+
+    - name: DB preservado (log existe e é JSON válido)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - >-
+            import json,sys;
+            json.load(open('/home/agent/dds-llm-rust/studio-node-log.json'));
+            print('db-ok')
+      register: db
+      failed_when: "'db-ok' not in db.stdout"
+      # TODO(F4): estender para matriz de compatibilidade binário×formato.
+
+- name: Validar caminho DDS ponta a ponta
+  hosts: localhost
+  connection: local
+  vars:
+    dds_test_domain: 42
+    # TODO(F1): vir do artefato de validação (mesma versão promovida).
+    validation_dir: "{{ playbook_dir }}/../dist/validation"
+  tasks:
+    - name: Submeter tarefa canônica e correlacionar resposta
+      ansible.builtin.command:
+        argv:
+          - "{{ validation_dir }}/submit-one"
+          - --dds-domain
+          - "{{ dds_test_domain }}"
+          - --prompt-version
+          - seq_reviewer_v1
+      environment:
+        CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+      register: submit
+      # TODO(F3-exec): asserções de task_id, agent_id, chunks, DONE+is_final
+      # a partir da saída correlacionada (TaskOutput por task_id+seq_num,
+      # inferência por request_id = task_id). Só leitura além do submit.

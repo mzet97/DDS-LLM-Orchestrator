@@ -1,0 +1,89 @@
+# CI da tese no Gitea Actions (F1 — DRAFT, ainda não executado).
+#
+# Espelha o workspace src/rust: fmt + clippy + testes + build release dos
+# binários de implantação e do artefato de validação, com os requisitos
+# reais do CONTEXTO.md (toolchain 1.95, --features dds, CycloneDDS
+# vendorizado + libddsc.a via cmake, submódulos registrados).
+#
+# A publicação no Harbor (F1) está esboçada e DESABILITADA: exige robot
+# account + CA interna, pendências explícitas do F0. Nenhum segredo neste
+# arquivo. Sem auto-deploy (F2 = promoção explícita, fora daqui).
+
+name: tese-rust-ci
+
+on:
+  push:
+    paths:
+      - 'src/rust/**'
+      - '.gitea/workflows/ci.yml'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'commit a compilar (padrão: o recebido)'
+        required: false
+        default: ''
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+      - name: Registrar commit compilado
+        run: echo "${{ inputs.ref || github.sha }}" > COMMIT_BUILT
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95'
+          components: rustfmt, clippy
+      - name: Submódulo CycloneDDS (vendorizado)
+        run: |
+          git submodule status third_party/cyclonedds-rust || true
+          test -f third_party/cyclonedds-rust/vendor/cyclonedds/CMakeLists.txt \
+            || git submodule update --init third_party/cyclonedds-rust/vendor/cyclonedds
+      - working-directory: src/rust
+        run: cargo fmt --locked --check
+      - working-directory: src/rust
+        run: cargo clippy --locked --all-targets --features dds -- -D warnings
+      - working-directory: src/rust
+        run: cargo test --locked --features dds
+        env:
+          CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+
+  build-deploy:
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.sha }}
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.95'
+      - name: Build release (implantação)
+        working-directory: src/rust
+        run: cargo build --locked --release -p studio-node -p agent -p orchestrator --features dds
+      - name: Build release (validação)
+        working-directory: src/rust
+        run: cargo build --locked --release -p client -p det-responder --features dds
+      - name: Empacotar com manifesto
+        run: |
+          ARCH="$(uname -m)"
+          OUT="dist/${ARCH}"
+          mkdir -p "$OUT"
+          for bin in studio-noded agent orchestrator submit-one wf-run det-responder; do
+            cp "src/rust/target/release/$bin" "$OUT/" || echo "AUSENTE: $bin"
+          done
+          cp benchmarks/orchestration/prompts "$OUT/" -r 2>/dev/null || true
+          ( cd "$OUT" && sha256sum * > SHA256SUMS 2>/dev/null || true )
+          printf '{"commit":"%s","arch":"%s"}\n' "${{ inputs.ref || github.sha }}" "$ARCH" > "$OUT/manifest.json"
+          tar -czf "tese-rust-${ARCH}.tar.gz" -C dist "$ARCH"
+      # TODO(F1): push para o Harbor como OCI artifact (mesmo digest testado):
+      #   oras push harbor.home.arpa/library/tese-rust:<commit>-<arch> \
+      #     --artifact-type application/vnd.tese.bundle \
+      #     tese-rust-<arch>.tar.gz
+      # Requer: robot account do Harbor (variáveis de ambiente do job, nunca
+      # em claro) + CA interna via --cacert. Sem isso, este passo segue
+      # desabilitado e a promoção (F2) não existe.
