@@ -172,6 +172,9 @@ pub fn qos_profile(name: &str) -> Result<(StructuralQos, OnlineKnobs), UnknownPr
 }
 
 /// Todos os perfis canônicos resolvidos (ordem = `profiles::ALL`).
+/// O `expect` abaixo é invariante interna (não entrada): `ALL` é o próprio
+/// domínio de `qos_profile` — diverge só se alguém editar um sem o outro,
+/// e os testes `all_five_profiles_resolve` travam isso. Mantido (L2).
 pub fn all_profiles() -> Vec<(&'static str, StructuralQos, OnlineKnobs)> {
     profiles::ALL
         .iter()

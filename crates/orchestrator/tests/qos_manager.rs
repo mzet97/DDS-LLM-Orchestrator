@@ -34,10 +34,14 @@ async fn t504_cada_modo_roda_no_control_loop() {
             QoSProfile::Balanced,
         ),
         ("zadeh", Arc::new(ZadehDecider::new()), QoSProfile::Failover),
-        ("fcm", Arc::new(FcmDecider::new()), QoSProfile::Failover),
+        (
+            "fcm",
+            Arc::new(FcmDecider::new().expect("semente v1 válida")),
+            QoSProfile::Failover,
+        ),
         (
             "fcm-dhl",
-            Arc::new(FcmDhlDecider::default()),
+            Arc::new(FcmDhlDecider::new(0.1).expect("semente v1 válida")),
             QoSProfile::Failover,
         ),
         ("nfcm", Arc::new(Nfcm::qos_default()), QoSProfile::Failover),

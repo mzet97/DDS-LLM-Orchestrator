@@ -219,6 +219,17 @@ pub(crate) fn select_task_writer_slot(task_id: &str, pool_len: usize) -> usize {
     (hasher.finish() as usize) % pool_len
 }
 
+/// Strength por papel (Fase 2.2 já validada no Python): cliente<agente<orq.
+///
+/// Fonte única (L1): aliases de `dds_contract::roles` — vale para o
+/// `DataSpace` real (arbitragem EXCLUSIVE no DDS) e como referência
+/// documental para o mock, que NÃO arbitra (ver `in_memory::InMemoryDataSpace`).
+impl DataSpace {
+    pub const STRENGTH_CLIENT: i32 = dds_contract::STRENGTH_CLIENT;
+    pub const STRENGTH_AGENT: i32 = dds_contract::STRENGTH_AGENT;
+    pub const STRENGTH_ORCHESTRATOR: i32 = dds_contract::STRENGTH_ORCHESTRATOR;
+}
+
 #[cfg(feature = "dds")]
 fn create_participant(
     domain_id: u32,
@@ -249,11 +260,6 @@ fn create_participant(
 
 #[cfg(feature = "dds")]
 impl DataSpace {
-    /// Strength por papel (Fase 2.2 já validada no Python): cliente<agente<orq.
-    pub const STRENGTH_CLIENT: i32 = 10;
-    pub const STRENGTH_AGENT: i32 = 100;
-    pub const STRENGTH_ORCHESTRATOR: i32 = 200;
-
     /// Nº de writers de `Tasks` no pool de um DataSpace com papel de AGENTE
     /// (ver `task_writer_for`). Irrelevante para os demais papéis (pool de 1).
     ///
@@ -1052,6 +1058,54 @@ impl DataSpace {
         }
     }
 
+    pub fn stream_server_statuses(&self) -> impl Stream<Item = cache::ArcServerStatus> {
+        let caches = self.caches();
+        let subscriber = Arc::clone(&self.subscriber);
+        let topic = Arc::clone(&self.server_status_topic);
+        let waitset = Arc::clone(&self.shared_waitset);
+        // Eager como `stream_tasks`: o reader precisa existir antes do
+        // primeiro write num tópico Volatile (ex.: subscribe → write → poll).
+        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
+            Ok(reader) => match waitset.register(&reader) {
+                Ok(registration) => Some((reader, registration)),
+                Err(e) => {
+                    tracing::error!(error = %e, "waitset.register(ServerStatus) falhou; stream encerrado");
+                    None
+                }
+            },
+            Err(e) => {
+                tracing::error!(error = %e, "DataReader::with_qos(ServerStatus) falhou; stream encerrado");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
+            };
+            loop {
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(statuses) if !statuses.is_empty() => {
+                        for s in statuses {
+                            yield caches.upsert_server_status(s);
+                        }
+                    }
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(error = %e, "take_async(ServerStatus) falhou; retry");
+                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            break;
+                        }
+                    }
+                }
+                n.await;
+            }
+        }
+    }
+
     /// Stream de `ToolCallRequest` acordada por amostra.
     pub fn stream_tool_calls(&self) -> impl Stream<Item = cache::ArcToolCallRequest> {
         let caches = self.caches();
@@ -1416,32 +1470,35 @@ impl DataSpace {
     }
 
     /// Streams `SystemMetrics` using the shared event-driven WaitSet (REQ-708).
+    /// Setup eager como `stream_tasks`: o reader precisa existir antes do
+    /// primeiro write num tópico Volatile (ex.: subscribe → write → poll).
     pub fn stream_system_metrics(&self) -> impl Stream<Item = cache::ArcSystemMetric> {
         let caches = self.caches();
         let subscriber = Arc::clone(&self.subscriber);
         let topic = Arc::clone(&self.system_metrics_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let profile = match qos::profiles::system_metrics() {
-                Ok(profile) => profile,
-                Err(error) => {
-                    tracing::error!(%error, "SystemMetrics reader QoS failed");
-                    return;
-                }
-            };
-            let reader = match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
-                Ok(reader) => reader,
+        let setup = match qos::profiles::system_metrics() {
+            Ok(profile) => match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
+                Ok(reader) => match waitset.register(&reader) {
+                    Ok(registration) => Some((reader, registration)),
+                    Err(error) => {
+                        tracing::error!(%error, "waitset.register(SystemMetrics) failed");
+                        None
+                    }
+                },
                 Err(error) => {
                     tracing::error!(%error, "DataReader::with_qos(SystemMetrics) failed");
-                    return;
+                    None
                 }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(registration) => registration,
-                Err(error) => {
-                    tracing::error!(%error, "waitset.register(SystemMetrics) failed");
-                    return;
-                }
+            },
+            Err(error) => {
+                tracing::error!(%error, "SystemMetrics reader QoS failed");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let notified = registration.notified();
@@ -1468,32 +1525,35 @@ impl DataSpace {
     }
 
     /// Streams `ServerStatus` using the shared event-driven WaitSet (REQ-708).
+    /// Setup eager como `stream_tasks`: o reader precisa existir antes do
+    /// primeiro write num tópico Volatile (ex.: subscribe → write → poll).
     pub fn stream_server_status(&self) -> impl Stream<Item = cache::ArcServerStatus> {
         let caches = self.caches();
         let subscriber = Arc::clone(&self.subscriber);
         let topic = Arc::clone(&self.server_status_topic);
         let waitset = Arc::clone(&self.shared_waitset);
-        async_stream::stream! {
-            let profile = match qos::profiles::server_status() {
-                Ok(profile) => profile,
-                Err(error) => {
-                    tracing::error!(%error, "ServerStatus reader QoS failed");
-                    return;
-                }
-            };
-            let reader = match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
-                Ok(reader) => reader,
+        let setup = match qos::profiles::server_status() {
+            Ok(profile) => match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
+                Ok(reader) => match waitset.register(&reader) {
+                    Ok(registration) => Some((reader, registration)),
+                    Err(error) => {
+                        tracing::error!(%error, "waitset.register(ServerStatus) failed");
+                        None
+                    }
+                },
                 Err(error) => {
                     tracing::error!(%error, "DataReader::with_qos(ServerStatus) failed");
-                    return;
+                    None
                 }
-            };
-            let registration = match waitset.register(&reader) {
-                Ok(registration) => registration,
-                Err(error) => {
-                    tracing::error!(%error, "waitset.register(ServerStatus) failed");
-                    return;
-                }
+            },
+            Err(error) => {
+                tracing::error!(%error, "ServerStatus reader QoS failed");
+                None
+            }
+        };
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
             };
             loop {
                 let notified = registration.notified();
@@ -1533,18 +1593,19 @@ pub mod monitor;
 #[cfg(feature = "dds")]
 impl DataSpace {
     /// Reader de `AgentRegistry` com QoS e listener custom (monitor/T-306).
+    /// Falível: criação de entidade DDS pode falhar — `Err` em vez de panic.
     pub fn agents_reader_with(
         &self,
         qos: &cyclonedds::Qos,
         listener: &cyclonedds::Listener,
-    ) -> DataReader<AgentState> {
+    ) -> Result<DataReader<AgentState>, api::DataSpaceError> {
         DataReader::with_qos_and_listener(
             &self.subscriber,
             &self.agents_topic,
             Some(qos),
             Some(listener),
         )
-        .expect("reader AgentRegistry com listener — erro fatal na inicialização do monitor")
+        .map_err(err)
     }
 
     /// Reader de `TaskOutput` com QoS e listener custom (monitor/T-306).
@@ -1552,54 +1613,65 @@ impl DataSpace {
         &self,
         qos: &cyclonedds::Qos,
         listener: &cyclonedds::Listener,
-    ) -> DataReader<TaskOutput> {
+    ) -> Result<DataReader<TaskOutput>, api::DataSpaceError> {
         DataReader::with_qos_and_listener(
             &self.subscriber,
             &self.outputs_topic,
             Some(qos),
             Some(listener),
         )
-        .expect("reader TaskOutput com listener")
+        .map_err(err)
     }
 
     /// Writer de `AgentRegistry` com QoS custom (testes do monitor).
-    pub fn agents_writer_with(&self, qos: &cyclonedds::Qos) -> DataWriter<AgentState> {
-        DataWriter::with_qos(&self.publisher, &self.agents_topic, Some(qos))
-            .expect("writer AgentRegistry")
+    pub fn agents_writer_with(
+        &self,
+        qos: &cyclonedds::Qos,
+    ) -> Result<DataWriter<AgentState>, api::DataSpaceError> {
+        DataWriter::with_qos(&self.publisher, &self.agents_topic, Some(qos)).map_err(err)
     }
 
     /// Writer de `TaskOutput` com QoS custom (testes do monitor).
-    pub fn outputs_writer_with(&self, qos: &cyclonedds::Qos) -> DataWriter<TaskOutput> {
-        DataWriter::with_qos(&self.publisher, &self.outputs_topic, Some(qos))
-            .expect("writer TaskOutput")
+    pub fn outputs_writer_with(
+        &self,
+        qos: &cyclonedds::Qos,
+    ) -> Result<DataWriter<TaskOutput>, api::DataSpaceError> {
+        DataWriter::with_qos(&self.publisher, &self.outputs_topic, Some(qos)).map_err(err)
     }
 
     /// Writer de `Tasks` com QoS custom (ex.: papel cliente=10 para submissões
     /// da API — se fosse 200, os claims dos agentes perderiam a arbitragem).
-    pub fn tasks_writer_with(&self, qos: &cyclonedds::Qos) -> DataWriter<Task> {
-        DataWriter::with_qos(&self.publisher, &self.tasks_topic, Some(qos)).expect("writer Tasks")
+    pub fn tasks_writer_with(
+        &self,
+        qos: &cyclonedds::Qos,
+    ) -> Result<DataWriter<Task>, api::DataSpaceError> {
+        DataWriter::with_qos(&self.publisher, &self.tasks_topic, Some(qos)).map_err(err)
     }
 }
 
 #[cfg(feature = "dds")]
 impl DataSpace {
     /// Pool de escrita com writers dedicados (mesmos perfis/strength do DataSpace).
-    pub fn new_writer_pool(&self, n_workers: usize, capacity: usize) -> writer_pool::WriterPool {
+    /// Falível: repassa falha de spawn de `WriterPool::new`.
+    pub fn new_writer_pool(
+        &self,
+        n_workers: usize,
+        capacity: usize,
+    ) -> Result<writer_pool::WriterPool, api::DataSpaceError> {
         let s = self.ownership_strength;
-        let q_agents = qos::profiles::agent_registry().expect("qos agents");
-        let q_outputs = qos::profiles::task_output(Some(s)).expect("qos outputs");
+        let q_agents = qos::profiles::agent_registry().map_err(err)?;
+        let q_outputs = qos::profiles::task_output(Some(s)).map_err(err)?;
 
         // Mesmo pool com força variada por slot que `DataSpace::new()` usa —
         // ver `build_tasks_writer_pool`. Sem isso, `WriteRequest::Task`
         // (hoje só exercido pelos testes de `writer_pool`) reintroduziria o
         // desbalanceamento de carga entre agentes corrigido nesta sessão,
         // caso algum refactor futuro passe a rotear o claim loop por aqui.
-        let tw = build_tasks_writer_pool(&self.publisher, &self.tasks_topic, s)
-            .expect("writers Tasks do pool");
+        let tw = build_tasks_writer_pool(&self.publisher, &self.tasks_topic, s)?;
         let aw = DataWriter::with_qos(&self.publisher, &self.agents_topic, Some(&q_agents))
-            .expect("writer AgentRegistry do pool");
+            .map_err(err)?;
         let ow = DataWriter::with_qos(&self.publisher, &self.outputs_topic, Some(&q_outputs))
-            .expect("writer TaskOutput do pool");
+            .map_err(err)?;
 
         writer_pool::WriterPool::new(n_workers, capacity, writer_pool::make_write_fn(tw, aw, ow))
     }
@@ -1683,42 +1755,6 @@ impl api::DataSpaceApi for DataSpace {
         Box::pin(self.stream_task_outputs())
     }
 
-    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), api::DataSpaceError> {
-        self.system_metrics_writer.write(&metric).map_err(err)
-    }
-
-    async fn read_system_metric(
-        &self,
-        metric_name: &str,
-        component_id: &str,
-    ) -> Result<Option<SystemMetric>, api::DataSpaceError> {
-        Ok(self
-            .caches
-            .read_system_metric(metric_name, component_id)
-            .map(|metric| (*metric).clone()))
-    }
-
-    fn subscribe_system_metrics(
-        &self,
-    ) -> std::pin::Pin<Box<dyn Stream<Item = SystemMetric> + Send>> {
-        use futures::StreamExt;
-        Box::pin(self.stream_system_metrics().map(|metric| (*metric).clone()))
-    }
-
-    async fn write_server_status(&self, status: ServerStatus) -> Result<(), api::DataSpaceError> {
-        self.server_status_writer.write(&status).map_err(err)
-    }
-
-    async fn read_server_status(
-        &self,
-        server_id: &str,
-    ) -> Result<Option<ServerStatus>, api::DataSpaceError> {
-        Ok(self
-            .caches
-            .read_server_status(server_id)
-            .map(|status| (*status).clone()))
-    }
-
     fn subscribe_server_status(
         &self,
     ) -> std::pin::Pin<Box<dyn Stream<Item = ServerStatus> + Send>> {
@@ -1742,6 +1778,8 @@ impl api::DataSpaceApi for DataSpace {
         self.caches.execution_traces.clear();
         self.caches.security_snapshots.clear();
         self.caches.security_updates.clear();
+        self.caches.system_metrics.clear();
+        self.caches.server_status.clear();
         self.caches.qos_routing.clear();
         self.caches.qos_metrics.clear();
         self.caches.qos_violations.clear();
@@ -1812,6 +1850,49 @@ impl api::DataSpaceApi for DataSpace {
     ) -> std::pin::Pin<Box<dyn Stream<Item = ContextUpdate> + Send>> {
         use futures::StreamExt;
         Box::pin(self.stream_context_updates().map(|a| (*a).clone()))
+    }
+
+    async fn write_system_metric(&self, metric: SystemMetric) -> Result<(), api::DataSpaceError> {
+        self.system_metrics_writer.write(&metric).map_err(err)
+    }
+
+    async fn read_system_metric(
+        &self,
+        metric_name: &str,
+        component_id: &str,
+    ) -> Result<Option<SystemMetric>, api::DataSpaceError> {
+        Ok(self
+            .caches
+            .read_system_metric(metric_name, component_id)
+            .map(|m| (*m).clone()))
+    }
+
+    fn subscribe_system_metrics(
+        &self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = SystemMetric> + Send>> {
+        use futures::StreamExt;
+        Box::pin(self.stream_system_metrics().map(|a| (*a).clone()))
+    }
+
+    async fn write_server_status(&self, status: ServerStatus) -> Result<(), api::DataSpaceError> {
+        self.server_status_writer.write(&status).map_err(err)
+    }
+
+    async fn read_server_status(
+        &self,
+        server_id: &str,
+    ) -> Result<Option<ServerStatus>, api::DataSpaceError> {
+        Ok(self
+            .caches
+            .read_server_status(server_id)
+            .map(|s| (*s).clone()))
+    }
+
+    fn subscribe_server_statuses(
+        &self,
+    ) -> std::pin::Pin<Box<dyn Stream<Item = ServerStatus> + Send>> {
+        use futures::StreamExt;
+        Box::pin(self.stream_server_statuses().map(|a| (*a).clone()))
     }
 
     // ── ToolCall methods ────────────────────────────────────────────────
@@ -1942,10 +2023,6 @@ pub struct DataSpace {
 
 #[cfg(not(feature = "dds"))]
 impl DataSpace {
-    pub const STRENGTH_CLIENT: i32 = 10;
-    pub const STRENGTH_AGENT: i32 = 100;
-    pub const STRENGTH_ORCHESTRATOR: i32 = 200;
-
     pub fn new(domain_id: u32, ownership_strength: i32) -> Self {
         Self {
             ownership_strength,

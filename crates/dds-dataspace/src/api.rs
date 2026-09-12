@@ -136,18 +136,26 @@ pub trait DataSpaceApi: Send + Sync {
     /// Retorna um stream de updates de contexto.
     fn subscribe_context_updates(&self) -> Pin<Box<dyn Stream<Item = ContextUpdate> + Send>>;
 
+    // === Telemetria de sistema (plural preservado: chamadores em
+    // contract.rs usam `subscribe_server_statuses`; t808 usa o singular) ===
+
+    /// Retorna um stream de status do servidor (forma plural).
+    fn subscribe_server_statuses(&self) -> Pin<Box<dyn Stream<Item = ServerStatus> + Send>>;
+
     // === ToolCall ===
 
     /// Publica um request de tool call.
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), DataSpaceError>;
 
-    /// Retorna um stream de tool calls.
-    fn subscribe_tool_calls(&self) -> Pin<Box<dyn Stream<Item = ToolCallRequest> + Send>>;
-
+    /// Lê um tool call por ID. Sem default: `Ok(None)` silencioso escondia
+    /// implementador incompleto (M2) — todo backend declara o seu.
     async fn read_tool_call(
         &self,
         call_id: &str,
     ) -> Result<Option<ToolCallRequest>, DataSpaceError>;
+
+    /// Retorna um stream de tool calls.
+    fn subscribe_tool_calls(&self) -> Pin<Box<dyn Stream<Item = ToolCallRequest> + Send>>;
 
     // === ExecutionTrace ===
 
@@ -195,6 +203,10 @@ pub trait DataSpaceApi: Send + Sync {
     async fn write_qos_violation(&self, violation: QoSViolation) -> Result<(), DataSpaceError>;
 
     /// Publica um evento de discovery.
+    ///
+    /// Sem produtor nativo em Rust (M3): hoje os eventos chegam via
+    /// `qos_monitor` Python ou escrita direta (testes). O lado Rust
+    /// consome via `subscribe_discovery_events` → `qos_collector`.
     async fn write_discovery_event(&self, event: DiscoveryEvent) -> Result<(), DataSpaceError>;
 
     /// Retorna um stream de perfis de roteamento QoS.

@@ -1,6 +1,11 @@
 //! # dds-contract
 //!
 //! O **contrato DDS único**: tipos de tópico (gerados do IDL) e perfis de QoS.
+//! Autoridade contratual: `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md`
+//! §§11–12 (18 tópicos, dicionário de campos/chaves, divergências §12.8).
+//! Os arquivos `.idl` são a renderização mecânica desse contrato; a fonte de
+//! geração é `third_party/llama.cpp_dds/dds/{idl,v4/idl}/` (a cópia em
+//! `src/llama_cpp/dds/` é espelho sincronizado + gate anti-drift em testes).
 //! Substitui a manutenção manual de `dds_backend/dds_types.py` — os tipos vêm do
 //! **mesmo IDL** que o C++ (`OrchestratorDDS.idl`) e do V4 (`OrchestratorV4.idl`).
 //!
@@ -263,6 +268,10 @@ pub mod generated {
             pub updated_at_ns: u64,
         }
 
+        /// Espelho mock (build sem `--features dds`) — deve permanecer
+        /// campo-a-campo idêntico ao `ToolCallRequest` do
+        /// `OrchestratorV4.idl` (M2: o mock já divergiu uma vez, sem
+        /// `requester_id`, quebrando a compilação dos testes `dds`).
         #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
         pub struct ToolCallRequest {
             pub call_id: String,
@@ -513,6 +522,46 @@ mod dds_tests {
                 !body.contains("@key"),
                 "{name} must be keyless in IDL, body had @key"
             );
+        }
+    }
+
+    #[test]
+    fn idl_mirror_copies_are_in_sync() {
+        // Anti-drift: `third_party/llama.cpp_dds/` é a fonte de geração do
+        // build.rs; `src/llama_cpp/dds/` é espelho. Autoridade contratual:
+        // Entendimento §§11–12 (o .md traz o dicionário, não a listagem
+        // integral — os .idl são a renderização mecânica).
+        //
+        // Leitura em runtime (não `include_str!`): num checkout isolado do
+        // runtime (CI do repo standalone) o monorepo pai não existe — o gate
+        // é pulado em vez de quebrar a compilação.
+        let manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let pairs = [
+            (
+                "../../../../third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl",
+                "../../../llama_cpp/dds/idl/OrchestratorDDS.idl",
+                "OrchestratorDDS.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)",
+            ),
+            (
+                "../../../../third_party/llama.cpp_dds/dds/v4/idl/OrchestratorV4.idl",
+                "../../../llama_cpp/dds/v4/idl/OrchestratorV4.idl",
+                "OrchestratorV4.idl divergiu entre third_party (canônico) e src/llama_cpp (espelho)",
+            ),
+        ];
+        for (canonical_rel, mirror_rel, msg) in pairs {
+            let canonical = manifest.join(canonical_rel);
+            let mirror = manifest.join(mirror_rel);
+            let (Ok(canonical_idl), Ok(mirror_idl)) = (
+                std::fs::read_to_string(&canonical),
+                std::fs::read_to_string(&mirror),
+            ) else {
+                eprintln!(
+                    "idl_mirror_copies_are_in_sync: pulado (sem monorepo pai em {})",
+                    manifest.display()
+                );
+                return;
+            };
+            assert_eq!(canonical_idl, mirror_idl, "{msg}");
         }
     }
 

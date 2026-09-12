@@ -44,3 +44,6 @@ required-features = ["dds"]
 [[bench]]
 name = "cache_hasher"
 harness = false
+
+[lints]
+workspace = true

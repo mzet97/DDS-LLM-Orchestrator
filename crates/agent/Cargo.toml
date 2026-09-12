@@ -33,3 +33,6 @@ security = ["dds", "cyclonedds/security", "dds-dataspace/security", "dds-contrac
 [[bin]]
 name = "agent"
 path = "src/main.rs"
+
+[lints]
+workspace = true

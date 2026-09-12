@@ -16,6 +16,24 @@ allow = [
   "Zlib",
 ]
 confidence-threshold = 0.8
+# Exceções escopadas (merge origin/main): árvore GUI do orchestrator-studio
+# (egui 0.36). BSL-1.0 (Boost, permissiva) em clipboard-win/error-code;
+# OFL-1.1 + Ubuntu-font-1.0 cobrem APENAS dados de fonte em
+# epaint_default_fonts, não código.
+[[licenses.exceptions]]
+name = "clipboard-win"
+version = "5.4.1"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+name = "error-code"
+version = "3.4.0"
+allow = ["BSL-1.0"]
+
+[[licenses.exceptions]]
+name = "epaint_default_fonts"
+version = "0.36.2"
+allow = ["OFL-1.1", "Ubuntu-font-1.0"]
 
 [sources]
 unknown-registry = "deny"

@@ -20,6 +20,9 @@ members = [
     "crates/mcp-gateway",
     "crates/observability",
     "crates/benchmarks",
+    "crates/det-responder",
+    "crates/studio-core",
+    "crates/orchestrator-studio",
 ]
 
 [workspace.package]
@@ -48,6 +51,12 @@ parking_lot = "0.12"             # locks rápidos (substitui threading.Lock)
 dashmap = "6"                    # caches concorrentes lock-free (substitui dicts+lock)
 crossbeam-channel = "0.5"        # filas MPMC (substitui a fila de escrita única)
 ahash = "0.8"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[workspace.lints.clippy]
+warnings = "deny"
 
 [profile.release]
 lto = "thin"

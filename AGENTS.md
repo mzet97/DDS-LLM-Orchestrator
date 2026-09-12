@@ -87,6 +87,9 @@ cargo run -p cyclonedds-idlc -- --input /path/to/main/project/src/llama_cpp/dds/
   sem instrução. Não expor segredos. Não afirmar resultado sem medição.
 - Não resolver conflito com a Constituição no escuro — reporte ao líder.
 
+## 9b. Contrato canônico (não reinventar)
+- 18 tópicos + 2 IDLs + claim com releitura: ver `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md` §§9–13 e raiz `AGENTS.md` §CANONICAL CONTRACT. Paridade inclui mesmos nomes de tópicos/perfis/métricas do Python/IDL.
+
 ## 9. Fluxo de uma sessão típica
 1. Ler Constitution + Context + Roadmap → achar a fase ativa.
 2. Abrir `specs/<fase>/tasks.md` → pegar a próxima task `[ ]` não-bloqueada.

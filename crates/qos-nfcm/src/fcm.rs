@@ -21,6 +21,10 @@ pub enum FcmError {
     UnknownConcept(String, String),
     #[error("peso fora de [-1,1] em ({0}->{1}): {2}")]
     WeightOutOfRange(String, String, f64),
+    #[error("nenhum conceito para desfuzificar")]
+    EmptyDecision,
+    #[error("métrica de entrada não-finita: {0}")]
+    NonFiniteMetric(String),
 }
 
 // ── Sigmoide (clamp anti-overflow, como o Python) ─────────────────────────
@@ -68,15 +72,16 @@ pub struct FcmResult {
 }
 
 impl FcmResult {
-    /// Conceito de maior ativação (restrito a `among`).
-    pub fn top_concept(&self, among: &[String]) -> (String, f64) {
+    /// Conceito de maior ativação (restrito a `among`). Total: `total_cmp`
+    /// ordena até NaN sem panic; vazio vira `Err` (o chamador aplica fallback).
+    pub fn top_concept(&self, among: &[String]) -> Result<(String, f64), FcmError> {
         let amongset: HashSet<&String> = among.iter().collect();
         self.final_state
             .iter()
             .filter(|(k, _)| amongset.contains(k))
-            .max_by(|a, b| a.1.partial_cmp(b.1).unwrap())
+            .max_by(|a, b| a.1.total_cmp(b.1))
             .map(|(k, v)| (k.clone(), *v))
-            .expect("nenhum conceito para desfuzificar")
+            .ok_or(FcmError::EmptyDecision)
     }
 }
 
@@ -298,26 +303,33 @@ pub fn build_weight_matrix() -> HashMap<Edge, f64> {
 }
 
 /// FCM de QoS v1 (semente especialista), lam=1.0, self_memory=true (defaults do Python).
-pub fn build_qos_fcm() -> FuzzyCognitiveMap {
+/// Falível: a semente é dado, não invariante — o chamador decide (fallback ou erro).
+pub fn build_qos_fcm() -> Result<FuzzyCognitiveMap, FcmError> {
     let concepts: Vec<String> = INPUT_CONCEPTS
         .iter()
         .chain(DECISION_CONCEPTS.iter())
         .map(|s| s.to_string())
         .collect();
     FuzzyCognitiveMap::new(concepts, build_weight_matrix(), 1.0, true)
-        .expect("configuração v1 válida")
 }
 
 /// Roda a inferência com os conceitos de ENTRADA clampados (como `decide_qos`).
+/// Falível: sem conceito de decisão, `Err` (o `decide` aplica fallback Balanced).
 pub fn decide_qos(
     fcm: &FuzzyCognitiveMap,
     metrics: &HashMap<String, f64>,
-) -> (String, f64, FcmResult) {
+) -> Result<(String, f64, FcmResult), FcmError> {
+    // Fronteira: métricas são entrada não-confiável (como `from_crisp` no zadeh).
+    for (k, v) in metrics {
+        if !v.is_finite() {
+            return Err(FcmError::NonFiniteMetric(k.clone()));
+        }
+    }
     let clamp: Vec<String> = INPUT_CONCEPTS.iter().map(|s| s.to_string()).collect();
     let r = fcm.infer(metrics, 100, 1e-4, &clamp);
     let among: Vec<String> = DECISION_CONCEPTS.iter().map(|s| s.to_string()).collect();
-    let (winner, score) = r.top_concept(&among);
-    (winner, score, r)
+    let (winner, score) = r.top_concept(&among)?;
+    Ok((winner, score, r))
 }
 
 // ── DHL (dhl.py) ───────────────────────────────────────────────────────────
@@ -416,17 +428,13 @@ pub struct FcmDecider {
     fcm: FuzzyCognitiveMap,
 }
 
-impl Default for FcmDecider {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl FcmDecider {
-    pub fn new() -> Self {
-        Self {
-            fcm: build_qos_fcm(),
-        }
+    /// Semente v1 pode ser inconsistente se o fonte for editado — `Err` em
+    /// vez de panic (sem `Default`: construir pode falhar).
+    pub fn new() -> Result<Self, FcmError> {
+        Ok(Self {
+            fcm: build_qos_fcm()?,
+        })
     }
 
     pub fn fcm(&self) -> &FuzzyCognitiveMap {
@@ -437,16 +445,18 @@ impl FcmDecider {
 impl QosDecider for FcmDecider {
     fn decide(&self, metrics: &QoSMetrics) -> QoSDecision {
         let state = metrics_to_state(metrics);
-        let (winner, score, r) = decide_qos(&self.fcm, &state);
-        QoSDecision {
-            profile: profile_from_winner(&winner),
-            confidence: score,
-            explanation: format!(
-                "fcm: {} (activation={:.3}, it={}, {:?})",
-                winner, score, r.iterations, r.kind
-            ),
-            converged: r.converged,
-            runner_up: 0.0,
+        match decide_qos(&self.fcm, &state) {
+            Ok((winner, score, r)) => QoSDecision {
+                profile: profile_from_winner(&winner),
+                confidence: score,
+                explanation: format!(
+                    "fcm: {} (activation={:.3}, it={}, {:?})",
+                    winner, score, r.iterations, r.kind
+                ),
+                converged: r.converged,
+                runner_up: 0.0,
+            },
+            Err(e) => fcm_fallback(e),
         }
     }
 
@@ -467,20 +477,33 @@ struct FcmDhlInner {
     prev_state: Option<HashMap<String, f64>>,
 }
 
+/// Fallback total dos deciders FCM (mesmo contrato do `ZadehDecider`):
+/// qualquer falha vira `Balanced` com `converged=false` — o control-loop
+/// mantém o perfil efetivo atual.
+fn fcm_fallback(e: FcmError) -> QoSDecision {
+    QoSDecision {
+        profile: QoSProfile::Balanced,
+        confidence: 0.0,
+        explanation: format!("fcm: fallback ({e})"),
+        converged: false,
+        runner_up: 0.0,
+    }
+}
+
 impl FcmDhlDecider {
-    pub fn new(learning_rate: f64) -> Self {
-        Self {
+    pub fn new(learning_rate: f64) -> Result<Self, FcmError> {
+        Ok(Self {
             inner: std::sync::Mutex::new(FcmDhlInner {
-                fcm: build_qos_fcm(),
+                fcm: build_qos_fcm()?,
                 learner: DifferentialHebbianLearner::new(learning_rate, 0.98),
                 prev_state: None,
             }),
-        }
+        })
     }
 
     /// Peso atual de uma aresta (para testes/observabilidade).
     pub fn weight_of(&self, src: &str, dst: &str) -> Option<f64> {
-        let inner = self.inner.lock().unwrap();
+        let inner = crate::lock(&self.inner);
         inner
             .fcm
             .get_weights()
@@ -489,27 +512,28 @@ impl FcmDhlDecider {
     }
 }
 
-impl Default for FcmDhlDecider {
-    fn default() -> Self {
-        Self::new(0.1)
-    }
-}
-
 impl QosDecider for FcmDhlDecider {
     fn decide(&self, metrics: &QoSMetrics) -> QoSDecision {
         let input = metrics_to_state(metrics);
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = crate::lock(&self.inner);
 
         // Infere com os pesos atuais (estado COMPLETO inclui conceitos de decisão)
-        let (winner, score, r) = decide_qos(&inner.fcm, &input);
+        let (winner, score, r) = match decide_qos(&inner.fcm, &input) {
+            Ok(v) => v,
+            Err(e) => return fcm_fallback(e),
+        };
 
         // DHL: aprende com a transição do estado completo anterior → atual.
         // Assim as arestas métrica→decisão também aprendem (as variações das
         // ativações de decisão entram no produto), e não decaem para zero.
+        // `set_weights` só falha com NaN (pesos vêm do próprio FCM, mesmas
+        // chaves, clamp em `update_step`); sem ele, mantém os pesos atuais.
         if let Some(prev) = inner.prev_state.replace(r.final_state.clone()) {
             let mut w = inner.fcm.get_weights();
             inner.learner.update_step(&mut w, &prev, &r.final_state);
-            inner.fcm.set_weights(w).expect("pesos DHL válidos");
+            if let Err(e) = inner.fcm.set_weights(w) {
+                return fcm_fallback(e);
+            }
         }
 
         QoSDecision {
@@ -526,5 +550,52 @@ impl QosDecider for FcmDhlDecider {
 
     fn name(&self) -> &str {
         "fcm-dhl"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::decider::QosDecider;
+
+    fn nan_metrics() -> QoSMetrics {
+        QoSMetrics {
+            recent_latency: f64::NAN,
+            ..QoSMetrics::default()
+        }
+    }
+
+    #[test]
+    fn fcm_decide_com_nan_retorna_fallback_sem_panic() {
+        // Given: métrica NaN (propaga até `set`/comparações)
+        let d = FcmDecider::new().expect("semente v1 válida");
+        // When: decide / Then: fallback Balanced sem panic
+        let decision = d.decide(&nan_metrics());
+        assert_eq!(decision.profile, QoSProfile::Balanced);
+        assert!(!decision.converged);
+    }
+
+    #[test]
+    fn fcm_dhl_decide_com_nan_retorna_fallback_sem_panic() {
+        let d = FcmDhlDecider::new(0.1).expect("semente v1 válida");
+        // Duas rodadas: a 2ª exercita o caminho DHL (`set_weights` com NaN).
+        d.decide(&nan_metrics());
+        let decision = d.decide(&nan_metrics());
+        assert_eq!(decision.profile, QoSProfile::Balanced);
+        assert!(!decision.converged);
+    }
+
+    #[test]
+    fn top_concept_vazio_retorna_erro() {
+        let r = FcmResult {
+            final_state: std::collections::HashMap::new(),
+            iterations: 0,
+            converged: false,
+            kind: Termination::MaxIter,
+        };
+        assert!(matches!(
+            r.top_concept(&["x".to_string()]),
+            Err(FcmError::EmptyDecision)
+        ));
     }
 }

@@ -212,6 +212,34 @@ impl From<FinishReason> for i32 {
     }
 }
 
+impl FinishReason {
+    /// Vocabulário canônico em string para o campo `Task.finish_reason`
+    /// (que é `string` no IDL; `TaskOutput.finish_reason` usa o `i32`).
+    /// Única fonte do mapeamento string<->variante<->i32.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "NONE",
+            Self::Completion => "COMPLETION",
+            Self::Length => "LENGTH",
+            Self::Timeout => "TIMEOUT",
+            Self::Error => "ERROR",
+        }
+    }
+
+    /// Parse total do vocabulário canônico; fora dele, `None`
+    /// (o wire de `Task` admite strings operacionais livres).
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "NONE" => Some(Self::None),
+            "COMPLETION" => Some(Self::Completion),
+            "LENGTH" => Some(Self::Length),
+            "TIMEOUT" => Some(Self::Timeout),
+            "ERROR" => Some(Self::Error),
+            _ => None,
+        }
+    }
+}
+
 /// Componente do sistema (`SystemMetric.component_type`) — bate com
 /// `OrchestratorV4.idl`'s `enum ComponentType` por ordem de declaração
 /// (`CT_ORCHESTRATOR=0, CT_AGENT=1, CT_LLAMA_SERVER=2, CT_CLIENT=3`). Sem
@@ -493,6 +521,26 @@ mod tests {
     fn task_status_variants() {
         assert_ne!(TaskStatus::Pending, TaskStatus::Running);
         assert_ne!(TaskStatus::Done, TaskStatus::Failed);
+    }
+
+    #[test]
+    fn finish_reason_string_roundtrip() {
+        // Given: vocabulário canônico string<->i32 (Task usa string, TaskOutput usa i32)
+        for (reason, text, code) in [
+            (FinishReason::None, "NONE", 0),
+            (FinishReason::Completion, "COMPLETION", 1),
+            (FinishReason::Length, "LENGTH", 2),
+            (FinishReason::Timeout, "TIMEOUT", 3),
+            (FinishReason::Error, "ERROR", 4),
+        ] {
+            // When/Then: ida e volta preservam o valor
+            assert_eq!(reason.as_str(), text);
+            assert_eq!(FinishReason::parse(text), Some(reason));
+            assert_eq!(i32::from(reason), code);
+            assert_eq!(FinishReason::try_from(code), Ok(reason));
+        }
+        assert_eq!(FinishReason::parse("completion"), None);
+        assert_eq!(FinishReason::parse("MAX_RETRIES_EXCEEDED"), None);
     }
 
     #[test]

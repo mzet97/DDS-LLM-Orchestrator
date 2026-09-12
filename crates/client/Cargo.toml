@@ -30,5 +30,18 @@ name = "e2e-bench"
 path = "src/bin/e2e_bench.rs"
 required-features = ["dds"]
 
+[[bin]]
+name = "submit-one"
+path = "src/bin/submit_one.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "wf-run"
+path = "src/bin/wf_run.rs"
+required-features = ["dds"]
+
 [dev-dependencies]
 agent = { version = "=0.1.0", path = "../agent", features = ["dds"] }
+
+[lints]
+workspace = true

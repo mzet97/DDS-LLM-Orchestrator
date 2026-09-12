@@ -173,6 +173,12 @@ macro_rules! impl_subscribe {
 impl DataSpaceApi for InMemoryDataSpace {
     // === Tasks ===
 
+    /// DIVERGÊNCIA DOCUMENTADA vs DDS real (H2): `Tasks` usa EXCLUSIVE
+    /// ownership (STRENGTH_CLIENT=10 < STRENGTH_AGENT=100 <
+    /// STRENGTH_ORCHESTRATOR=200) e o writer mais fraco perde a arbitragem.
+    /// O mock não recebe strength por escrita (`DataSpaceApi::write_task`
+    /// não tem o parâmetro) e aplica last-write-wins puro. Não usar o mock
+    /// para validar arbitragem de ownership (relevante para EXP1a).
     async fn write_task(&self, task: Task) -> Result<(), DataSpaceError> {
         let arc = Arc::new(task);
         self.tasks.insert(arc.task_id.clone(), arc.clone());
@@ -328,6 +334,8 @@ impl DataSpaceApi for InMemoryDataSpace {
     );
     impl_subscribe!(subscribe_context_updates, context_update_tx, ContextUpdate);
 
+    impl_subscribe!(subscribe_server_statuses, server_status_tx, ServerStatus);
+
     // === ToolCall ===
 
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), DataSpaceError> {
@@ -456,10 +464,49 @@ impl DataSpaceApi for InMemoryDataSpace {
         self.execution_traces.clear();
         self.security_snapshots.clear();
         self.security_updates.clear();
+        self.system_metrics.clear();
+        self.server_status.clear();
         self.qos_routing.clear();
         self.qos_metrics.clear();
         self.qos_violations.clear();
         self.discovery_events.clear();
         Ok(())
+    }
+}
+
+// Prova em tempo de compilação da ordem dos strengths que o DDS real
+// arbitra e o mock ignora (last-write-wins).
+const _: () = {
+    assert!(
+        crate::DataSpace::STRENGTH_CLIENT < crate::DataSpace::STRENGTH_AGENT
+            && crate::DataSpace::STRENGTH_AGENT < crate::DataSpace::STRENGTH_ORCHESTRATOR
+    );
+};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn task_with_status(id: &str, status: i32) -> Task {
+        Task {
+            task_id: id.into(),
+            status,
+            ..Task::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn write_task_is_last_write_wins_without_ownership_arbitration() {
+        // Given: duas escritas sequenciais da mesma task (sem strength por
+        // escrita — ver doc de `write_task`)
+        let ds = InMemoryDataSpace::new();
+        ds.write_task(task_with_status("t", 1)).await.unwrap();
+        // When: segunda escrita / Then: última vence (DDS real arbitraría por strength)
+        ds.write_task(task_with_status("t", 2)).await.unwrap();
+        let back = ds.read_task("t").await.unwrap().expect("task presente");
+        assert_eq!(back.status, 2);
+
+        // O contrato que o DDS real impõe e o mock NÃO: cliente<agente<orq
+        // (prova em tempo de compilação no const acima do módulo de testes).
     }
 }

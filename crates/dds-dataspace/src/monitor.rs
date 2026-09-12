@@ -3,7 +3,7 @@
 //! Listeners do CycloneDDS (`on_liveliness_changed`, `on_requested_deadline_missed`)
 //! em vez do polling do `QoSMonitor` Python — eventos chegam via `broadcast`.
 
-use cyclonedds::Listener;
+use cyclonedds::{DdsResult, Listener};
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::broadcast;
@@ -61,7 +61,8 @@ impl QosMonitor {
     }
 
     /// Listener para o reader de `AgentRegistry` (liveliness dos agentes).
-    pub fn agents_listener(&self) -> Listener {
+    /// Retorna `Err` (ex.: `OutOfResources`) em vez de panic — M3.
+    pub fn agents_listener(&self) -> DdsResult<Listener> {
         let tx = self.tx.clone();
         let alive_net = Arc::clone(&self.alive_net);
         Listener::builder()
@@ -78,11 +79,11 @@ impl QosMonitor {
                 });
             })
             .build()
-            .expect("agents listener")
     }
 
     /// Listener para o reader de `TaskOutput` (deadline missed).
-    pub fn outputs_listener(&self) -> Listener {
+    /// Retorna `Err` (ex.: `OutOfResources`) em vez de panic — M3.
+    pub fn outputs_listener(&self) -> DdsResult<Listener> {
         let tx = self.tx.clone();
         let missed = Arc::clone(&self.missed_total);
         Listener::builder()
@@ -94,6 +95,5 @@ impl QosMonitor {
                 });
             })
             .build()
-            .expect("outputs listener")
     }
 }

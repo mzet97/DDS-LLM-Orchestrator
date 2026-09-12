@@ -76,7 +76,7 @@ impl AgentDds {
     }
 
     fn build(config: AgentConfig, dataspace: DataSpace) -> Result<Self> {
-        let writer_pool = dataspace.new_writer_pool(2, 4096);
+        let writer_pool = dataspace.new_writer_pool(2, 4096)?;
         Ok(Self {
             claim_permits: Arc::new(Semaphore::new(config.slots as usize)),
             agent: Agent::new(config),
@@ -173,10 +173,12 @@ impl AgentDds {
         // imediatamente antes do write de ASSIGNED.
         while let Some(queued) = rx.recv().await {
             let task_id = queued.task.task_id.clone();
-            let permit = Arc::clone(&self.claim_permits)
-                .acquire_owned()
-                .await
-                .expect("semaphore de admissão não é fechada");
+            // Sem `expect`: o semáforo é nosso (nunca fechado), mas o
+            // dispatcher não deve panicar se a invariante um dia cair.
+            let permit = match Arc::clone(&self.claim_permits).acquire_owned().await {
+                Ok(p) => p,
+                Err(_) => break, // semáforo fechado: encerra o dispatcher
+            };
 
             // Revalidação com estado FRESCO do cache (RUST-CLAIM-012): a
             // amostra que entrou na fila pode estar obsoleta.

@@ -1,5 +1,11 @@
 //! Gera tipos Rust a partir dos IDLs canônicos (REQ-001).
 //!
+//! Autoridade contratual: `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md`
+//! §§11–12 (18 tópicos, dicionário, divergências §12.8; o .md não traz a
+//! listagem IDL integral — os .idl abaixo são a renderização mecânica).
+//! Fonte de geração: `third_party/llama.cpp_dds/dds/{idl,v4/idl}/`.
+//! `src/llama_cpp/dds/` é espelho sincronizado (gate anti-drift em lib.rs).
+//!
 //! - `OrchestratorDDS.idl` — tipos LLM + ServerStatus (interop C++/Python)
 //! - `OrchestratorV4.idl` — Task/AgentState/TaskOutput/SystemMetric
 //!

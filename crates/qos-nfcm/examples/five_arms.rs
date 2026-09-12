@@ -7,7 +7,7 @@
 //! Rode com: `cargo run -p qos-nfcm --example five_arms --release`
 
 use qos_nfcm::decider::{QoSMetrics, QosDecider, StaticDecider};
-use qos_nfcm::fcm::{FcmDecider, FcmDhlDecider};
+use qos_nfcm::fcm::{FcmDecider, FcmDhlDecider, FcmError};
 use qos_nfcm::zadeh::ZadehDecider;
 use qos_nfcm::{Nfcm, QoSProfile};
 use std::sync::Arc;
@@ -62,12 +62,12 @@ fn short(p: &QoSProfile) -> &'static str {
     }
 }
 
-fn main() {
+fn main() -> Result<(), FcmError> {
     let arms: Vec<(&str, Arc<dyn QosDecider>)> = vec![
         ("static", Arc::new(StaticDecider::new(QoSProfile::Balanced))),
         ("zadeh", Arc::new(ZadehDecider::new())),
-        ("fcm", Arc::new(FcmDecider::new())),
-        ("fcm-dhl", Arc::new(FcmDhlDecider::default())),
+        ("fcm", Arc::new(FcmDecider::new()?)),
+        ("fcm-dhl", Arc::new(FcmDhlDecider::new(0.1)?)),
         ("nfcm", Arc::new(Nfcm::qos_default())),
     ];
 
@@ -118,4 +118,5 @@ fn main() {
     println!(" online entre cenários — a sequência influencia suas decisões.)");
     println!("(métricas de referência: urgência, deadline, latência, carga, erro, confiança,");
     println!(" complexidade, streaming — nesta ordem: {:?})", KEYS);
+    Ok(())
 }

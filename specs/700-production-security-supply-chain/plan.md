@@ -111,3 +111,27 @@ Depois do primeiro PASS dos Gates A–G, publicar a prerelease, trocar o runtime
 para a versão publicada e repetir B–G no artefato do registry. O fechamento exige
 `REPORT.md`, matriz de evidência e cinco lanes independentes. A release não substitui
 nenhum teste anterior; ela adiciona o smoke final do consumidor externo.
+## Cronograma recomendando de execução (semanal)
+
+### Semana 1
+- Finalizar 500 (`T-601` / `T-602` / `T-603`) + `REPORT` final.
+- Executar `T-801` e fechar a pré-condição da Fase 700.
+- Preparar evidências e registrar worktrees limpos.
+
+### Semana 2
+- Entregar `T-802`, `T-803`, `T-804` (boundary Dinâmico e CDR).
+
+### Semana 3
+- Entregar `T-805`, `T-806`, `T-807` (HTTP/MCP/file sandbox).
+
+### Semana 4
+- Entregar `T-808`, `T-809` e fechar `T-810`.
+
+### Semana 5
+- Fechar `T-811` com decisão por PR e checks frescos.
+- Fechar `T-812`, `T-813`, `T-814` e preparar prerelease + atualização do runtime.
+
+### Gate de avanço entre semanas
+- Nenhuma task avança sem evidência bruta em `.omo/evidence`.
+- Nenhum gate pode ser “verde” sem `clippy`, `fmt`, `test` e evidência de reproduzibilidade.
+- Documentar qualquer desvio com `NEEDS-CLARIFICATION` e bloquear avanço.

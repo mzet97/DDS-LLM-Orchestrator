@@ -7,11 +7,12 @@
 //! ```
 
 use anyhow::{Context, Result};
-use std::path::PathBuf;
 
 struct Args {
     dds_domain: u32,
     dds_secure: bool,
+    // Lido só com `security`; sem ela o CLI continua aceitando a flag.
+    #[cfg_attr(not(feature = "security"), allow(dead_code))]
     dds_security_dir: Option<String>,
     filesystem_root: String,
 }
@@ -94,6 +95,7 @@ async fn main() -> Result<()> {
 
     #[cfg(feature = "security")]
     let service = {
+        use std::path::PathBuf;
         let security = if args.dds_secure {
             let dir = args
                 .dds_security_dir

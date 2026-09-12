@@ -7,6 +7,7 @@
 //! - DONE, FAILED → terminal (sem transição)
 
 use dds_contract::generated::dds_llm_orchestrator::Task;
+use orch_common::FinishReason;
 
 /// Status de task (espelha o enum IDL).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -19,28 +20,33 @@ pub enum TaskStatus {
 }
 
 impl TaskStatus {
-    pub fn from_i32(v: i32) -> Self {
-        match v {
-            0 => Self::Pending,
-            1 => Self::Assigned,
-            2 => Self::Running,
-            3 => Self::Done,
-            4 => Self::Failed,
-            _ => Self::Pending,
-        }
-    }
-
     pub fn is_terminal(&self) -> bool {
         matches!(self, Self::Done | Self::Failed)
     }
 }
 
-/// Erro de transição inválida.
+impl TryFrom<i32> for TaskStatus {
+    type Error = TransitionError;
+
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
+        match v {
+            0 => Ok(Self::Pending),
+            1 => Ok(Self::Assigned),
+            2 => Ok(Self::Running),
+            3 => Ok(Self::Done),
+            4 => Ok(Self::Failed),
+            _ => Err(TransitionError::UnknownStatus { value: v }),
+        }
+    }
+}
+
+/// Erro de transição: inválida ou com status desconhecido no wire.
 #[derive(Debug, thiserror::Error)]
-#[error("transição inválida: {from:?} → {to:?}")]
-pub struct TransitionError {
-    pub from: TaskStatus,
-    pub to: TaskStatus,
+pub enum TransitionError {
+    #[error("transição inválida: {from:?} → {to:?}")]
+    Invalid { from: TaskStatus, to: TaskStatus },
+    #[error("status desconhecido no wire: {value}")]
+    UnknownStatus { value: i32 },
 }
 
 /// Verifica se a transição é válida.
@@ -57,11 +63,12 @@ pub fn can_transition(from: TaskStatus, to: TaskStatus) -> bool {
     )
 }
 
-/// Transição segura — retorna erro se inválida.
+/// Transição segura — retorna erro se inválida ou se o status no wire
+/// for desconhecido (nunca assume `Pending` silencioso).
 pub fn transition(task: &mut Task, to: TaskStatus) -> Result<(), TransitionError> {
-    let from = TaskStatus::from_i32(task.status);
+    let from = TaskStatus::try_from(task.status)?;
     if !can_transition(from, to) {
-        return Err(TransitionError { from, to });
+        return Err(TransitionError::Invalid { from, to });
     }
     task.status = to as i32;
     Ok(())
@@ -82,11 +89,11 @@ pub fn start_running(task: &mut Task) -> Result<(), TransitionError> {
     Ok(())
 }
 
-/// Complete: RUNNING → DONE.
+/// Complete: RUNNING → DONE (motivo canônico do vocabulário `FinishReason`).
 pub fn complete(task: &mut Task) -> Result<(), TransitionError> {
     transition(task, TaskStatus::Done)?;
     task.completed_at_ns = now_ns();
-    task.finish_reason = "COMPLETION".to_string();
+    task.finish_reason = FinishReason::Completion.as_str().to_string();
     Ok(())
 }
 
@@ -150,6 +157,29 @@ mod tests {
     }
 
     #[test]
+    fn test_complete_emits_canonical_finish_reason() {
+        // Given: RUNNING / When: completa / Then: string canônica com ida-e-volta ao FR_*
+        let mut t = make_task(2);
+        complete(&mut t).unwrap();
+        assert_eq!(t.finish_reason, "COMPLETION");
+        assert_eq!(
+            FinishReason::parse(&t.finish_reason),
+            Some(FinishReason::Completion)
+        );
+        assert_eq!(i32::from(FinishReason::Completion), 1); // FR_COMPLETION
+    }
+
+    #[test]
+    fn test_unknown_wire_status_rejected() {
+        // Given: status fora do enum (wire corrompido)
+        let mut t = make_task(99);
+        // When: tenta qualquer transição / Then: rejeita sem tocar na task
+        let err = transition(&mut t, TaskStatus::Assigned).unwrap_err();
+        assert!(matches!(err, TransitionError::UnknownStatus { value: 99 }));
+        assert_eq!(t.status, 99);
+    }
+
+    #[test]
     fn test_reassign_increments_retry() {
         let mut t = make_task(1); // ASSIGNED
         t.retry_count = 0;
@@ -164,5 +194,27 @@ mod tests {
         t.retry_count = 3;
         assert!(!reassign(&mut t, 3).unwrap());
         assert_eq!(t.status, 4); // FAILED
+    }
+
+    #[test]
+    fn test_reclaim_after_reassign_full_cycle() {
+        // Given: tentativa 1 estagnada em RUNNING (reaper detectou inatividade)
+        let mut t = make_task(2);
+        t.assigned_agent = "agent-1".into();
+        t.retry_count = 0;
+        // When: reaper devolve a PENDING e outro agente reivindica e conclui
+        assert!(reassign(&mut t, 3).unwrap());
+        assert_eq!(t.status, 0); // PENDING
+        assert!(t.assigned_agent.is_empty()); // sem dono — tentativa antiga invalidada
+        assert_eq!(t.retry_count, 1);
+        assert!(assign(&mut t, "agent-2").is_ok());
+        assert!(start_running(&mut t).is_ok());
+        // Then: conclusão da tentativa 2 fecha o ciclo com motivo canônico
+        assert!(complete(&mut t).is_ok());
+        assert_eq!(t.status, 3); // DONE
+        assert_eq!(t.finish_reason, "COMPLETION");
+        // RESÍDUO DOCUMENTADO (§25.2 do entendimento): `TaskOutput` não carrega
+        // tentativa/retry — outputs da tentativa 1 com mesmo (task_id, seq_num)
+        // são indistinguíveis dos da tentativa 2 (sem fencing fim-a-fim).
     }
 }

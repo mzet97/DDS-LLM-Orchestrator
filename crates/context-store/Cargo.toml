@@ -32,3 +32,6 @@ dds = ["dep:cyclonedds", "dds-dataspace/dds", "dds-contract/dds"]
 name = "context-store"
 path = "src/main.rs"
 required-features = ["dds"]
+
+[lints]
+workspace = true

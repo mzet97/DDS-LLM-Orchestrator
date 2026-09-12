@@ -1,0 +1,20 @@
+[package]
+name = "det-responder"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Respondedor determinístico de benchmark: consome LLM.InferenceRequest via DDS e publica fixtures LLM.InferenceResult. Não é lógica de produção."
+
+[dependencies]
+cyclonedds = { workspace = true }
+dds-contract = { version = "=0.1.0", path = "../dds-contract", features = ["dds"] }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace", features = ["dds"] }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+futures-util = "0.3"
+
+[lints]
+workspace = true

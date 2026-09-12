@@ -1,9 +1,9 @@
-//! # qos-nfcm
+//! # qos-nfcm — [LEGADO — disciplina]
 //!
 //! Neuro-Fuzzy Cognitive Map para seleção adaptativa e interpretável de QoS.
-//! Porte Rust de `src/orchestrator/neuro_fuzzy/` (Python). Ganhos de Rust:
-//! sem GIL, inferência sem alocação no laço quente, e **treino paralelo (rayon)**
-//! nos 24 threads do Ryzen — o que em Python era serial por causa do GIL.
+//! Porte Rust de `src/orchestrator/neuro_fuzzy/` (Python). Mantido por
+//! compatibilidade/histórico de disciplina; fora do hot path DDS-first e
+//! desligado por padrão no orquestrador (`--fuzzy-qos`).
 //!
 //! Reproduz os números do artigo (Seção 8) e discrimina os 4 cenários canônicos.
 
@@ -23,6 +23,13 @@ pub use decider::{QoSDecision, QoSMetrics, QosDecider, StaticDecider};
 pub use fcm::{FcmDecider, FcmDhlDecider};
 pub use nfcm::{Nfcm, NfcmConfig, NfcmResult, METRICS, NODES, PROFILES};
 pub use zadeh::ZadehDecider;
+
+/// Trava um `Mutex` sem panic: se outro thread panificou com o lock
+/// (poison), prossegue com o estado parcial em vez de derrubar o
+/// control-loop — deciders são totais por desenho, com fallback.
+pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 /// Perfis QoS disponíveis.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,7 +78,9 @@ pub fn explain_text(r: &NfcmResult) -> String {
             (m, t, mu)
         })
         .collect();
-    dom.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap());
+    // `total_cmp`: ordem total sem panic mesmo com NaN (explicação é
+    // observabilidade — nunca pode derrubar a decisão).
+    dom.sort_by(|a, b| b.2.total_cmp(&a.2));
     let terms = ["baixo", "medio", "alto"];
     let tops: Vec<String> = dom
         .iter()

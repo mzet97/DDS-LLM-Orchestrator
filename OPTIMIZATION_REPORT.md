@@ -35,7 +35,7 @@ aceito ou revertido.
 | Hardware | Ryzen 5900X-class (24 threads lógicas), AMD RX 7900 XTX presente mas **não usada** na inferência do E2E (ver caveat na seção de comparação abaixo — build CPU-only) |
 | SO | Linux (Fedora-like, `dnf`/`rocminfo` presentes) |
 | `CARGO_TARGET_DIR` | `$HOME/.cache/tese-rust-target` (fora do mount SMB/CIFS do repo) |
-| Filesystem do repo | SMB/CIFS (`/run/host/var/mnt/HD1TB/tese`) — travamentos intermitentes documentados abaixo |
+| Filesystem do repo | SMB/CIFS (`/var/home/mzet/projetos/tese`) — travamentos intermitentes documentados abaixo |
 | DDS domain do E2E real | 77 (evita colisão com domínios usados por outras suítes deste repo) |
 | Modelo do E2E real | `Qwen3.5-0.8B-Q4_K_M.gguf` (`tese/models/`) |
 | `llama-server` do E2E real | binário pré-existente `tese/src/llama_cpp/build-dds/bin/llama-server` (CPU-only, static-linked DDS) — ver caveat |
@@ -762,7 +762,7 @@ alvos entra no build normal.
 ```bash
 # Build de verificação (fora do CIFS, evita "cmake_symlink_library: Operation not supported")
 mkdir -p /tmp/llamacpp_dds_verify_build && cd /tmp/llamacpp_dds_verify_build
-cmake /run/host/var/mnt/HD1TB/tese/third_party/llama.cpp_dds \
+cmake /var/home/mzet/projetos/tese/third_party/llama.cpp_dds \
   -DLLAMA_DDS=ON -DCMAKE_BUILD_TYPE=Release -DGGML_CUDA=OFF -DGGML_VULKAN=OFF -DGGML_HIP=OFF \
   -DLLAMA_BUILD_TESTS=ON -DLLAMA_CURL=OFF
 cmake --build . --target test_client benchmark_final benchmark_multi_dds benchmark_stream_dds \

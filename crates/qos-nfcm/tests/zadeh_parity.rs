@@ -22,7 +22,7 @@ const KEYS: [&str; 8] = [
 fn inputs(vals: &[f64; 8]) -> HashMap<&'static str, FuzzyNumber> {
     KEYS.iter()
         .zip(vals.iter())
-        .map(|(k, v)| (*k, FuzzyNumber::from_crisp(*v)))
+        .map(|(k, v)| (*k, FuzzyNumber::from_crisp(*v).unwrap()))
         .collect()
 }
 
@@ -98,13 +98,13 @@ fn paridade_selecao_e_centroid_com_o_python() {
 
     for (name, metrics, exp) in scenarios() {
         let inp = inputs(&metrics);
-        let best = sel.select(&inp, true);
+        let best = sel.select(&inp, true).unwrap();
         assert_eq!(
             best.profile, exp.winner,
             "cenário {name}: vencedor diverge do Python"
         );
 
-        let all = sel.evaluate_all(&inp);
+        let all = sel.evaluate_all(&inp).unwrap();
         for (i, p) in order.iter().enumerate() {
             let got = all
                 .iter()
@@ -205,8 +205,8 @@ fn fuzzy_number_canonical_extrapola_extremos() {
 #[test]
 fn extensao_vertices_min_max() {
     // f(x, y) = x - y: min = lower_x - upper_y; max = upper_x - lower_y (clamp [0,1])
-    let x = FuzzyNumber::from_interval(0.5, 0.8);
-    let y = FuzzyNumber::from_interval(0.1, 0.4);
+    let x = FuzzyNumber::from_interval(0.5, 0.8).unwrap();
+    let y = FuzzyNumber::from_interval(0.1, 0.4).unwrap();
     let eval = ExtensionPrincipleEvaluator::new(|p: &[f64]| p[0] - p[1], vec![0.0, 1.0]);
     let out = eval.evaluate(&[x, y]).unwrap();
     // min = 0.5-0.4 = 0.1; max = 0.8-0.1 = 0.7

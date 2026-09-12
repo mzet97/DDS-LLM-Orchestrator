@@ -172,8 +172,6 @@ pub mod dds_impl {
     use tokio::sync::broadcast;
     use tokio::task::JoinHandle;
 
-    /// Strength do papel cliente (Fase 2.2): 10 < agente(100) < orq(200).
-    const STRENGTH_CLIENT: i32 = 10;
     const EVENT_CHANNEL_CAPACITY: usize = 4096;
     const TASKS_TOPIC: &str = "Tasks";
     const TASK_OUTPUT_TOPIC: &str = "TaskOutput";
@@ -192,7 +190,7 @@ pub mod dds_impl {
             let runtime = tokio::runtime::Handle::try_current()
                 .map_err(|_| ClientError::RuntimeUnavailable)?;
             let dataspace = Arc::new(
-                DataSpace::new(config.dds_domain, STRENGTH_CLIENT)
+                DataSpace::new(config.dds_domain, DataSpace::STRENGTH_CLIENT)
                     .map_err(|e| ClientError::DdsError(e.to_string()))?,
             );
             let (tasks_tx, tasks_rx) = broadcast::channel(EVENT_CHANNEL_CAPACITY);
