@@ -6,6 +6,7 @@
 //! Sem transporte e sem persistência em disco nesta fase: o log vive em
 //! memória e o fio é JSON via serde (transporte e `studio-storage` vêm depois).
 
+pub mod catalog_auth;
 pub mod operations;
 pub mod probe;
 pub mod protocol;

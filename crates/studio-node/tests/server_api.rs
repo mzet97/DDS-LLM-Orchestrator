@@ -273,4 +273,96 @@ mod tests {
             ]
         );
     }
+
+    #[tokio::test]
+    async fn shared_catalog_enforces_revision_tombstone_and_cursor() {
+        let app = router(NodeState::new(Vec::new()));
+        let publish = |id: &str, base: Option<u64>, value: &str| {
+            Request::post("/catalog/publish")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "id": id, "base": base, "value": value, "generation": 0,
+                    })
+                    .to_string(),
+                ))
+                .expect("request valido")
+        };
+
+        let created = app
+            .clone()
+            .oneshot(publish("proj-a", None, "v1"))
+            .await
+            .expect("rota existe");
+        assert_eq!(created.status(), StatusCode::OK);
+        assert_eq!(body_json(created).await, serde_json::json!({"revision": 0}));
+
+        let stale = app
+            .clone()
+            .oneshot(publish("proj-a", Some(9), "v2"))
+            .await
+            .expect("rota existe");
+        assert_eq!(stale.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            body_json(stale).await["code"],
+            serde_json::json!("revision_conflict")
+        );
+
+        let updated = app
+            .clone()
+            .oneshot(publish("proj-a", Some(0), "v2"))
+            .await
+            .expect("rota existe");
+        assert_eq!(updated.status(), StatusCode::OK);
+
+        let snapshot = app
+            .clone()
+            .oneshot(
+                Request::get("/catalog/snapshot")
+                    .body(Body::empty())
+                    .expect("request valida"),
+            )
+            .await
+            .expect("rota existe");
+        assert_eq!(snapshot.status(), StatusCode::OK);
+        let snap = body_json(snapshot).await;
+        assert_eq!(snap["items"].as_array().expect("lista").len(), 1);
+        assert_eq!(snap["items"][0]["revision"], serde_json::json!(1));
+
+        let deleted = app
+            .clone()
+            .oneshot(
+                Request::post("/catalog/delete")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({"id": "proj-a", "base": 1}).to_string(),
+                    ))
+                    .expect("request valido"),
+            )
+            .await
+            .expect("rota existe");
+        assert_eq!(deleted.status(), StatusCode::OK);
+
+        let reborn = app
+            .clone()
+            .oneshot(publish("proj-a", None, "v3"))
+            .await
+            .expect("rota existe");
+        assert_eq!(reborn.status(), StatusCode::GONE);
+        assert_eq!(
+            body_json(reborn).await["code"],
+            serde_json::json!("tombstoned")
+        );
+
+        let events = app
+            .oneshot(
+                Request::get("/catalog/events?since=0")
+                    .body(Body::empty())
+                    .expect("request valida"),
+            )
+            .await
+            .expect("rota existe");
+        assert_eq!(events.status(), StatusCode::OK);
+        assert_eq!(body_json(events).await.as_array().expect("lista").len(), 3);
+    }
 }

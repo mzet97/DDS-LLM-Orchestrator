@@ -9,21 +9,22 @@
 
 use std::collections::{HashMap, VecDeque};
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::revision::{Generation, Revision};
 
 /// Identidade lógica de uma definição publicada (G-52: nunca fundir por nome).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DefinitionId(pub String);
 
 /// Cursor opaco de acompanhamento de eventos (§34.8: inclui escopo/epoch no
 /// protocolo; aqui, sequência monotônica do log local).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Cursor(pub u64);
 
 /// Evento administrativo persistido no log do catálogo (§34.8).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Event {
     /// Posição no log; `cursor` após este evento é `Cursor(seq + 1)`.
     pub seq: u64,
@@ -33,7 +34,8 @@ pub struct Event {
 }
 
 /// Natureza do evento (§34.8: criação, atualização, exclusão).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum EventKind {
     Created,
     Updated,
@@ -41,7 +43,7 @@ pub enum EventKind {
 }
 
 /// Visão de um item no snapshot.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ItemView {
     pub id: DefinitionId,
     pub value: String,
@@ -49,7 +51,7 @@ pub struct ItemView {
 }
 
 /// Snapshot consistente + cursor de continuação (§34.8).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     pub items: Vec<ItemView>,
     pub cursor: Cursor,

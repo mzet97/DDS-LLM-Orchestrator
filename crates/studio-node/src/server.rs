@@ -11,6 +11,7 @@ use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
+use crate::catalog_auth::{AuthorityError, CatalogAuthority};
 use crate::operations::{NodeError, OpOutcome, OpRecord, OperationLog};
 use crate::probe::{Probe, SystemdProbe};
 use crate::protocol::{AdminEnvelope, ProtocolError, ProtocolVersion, NODE_PROTOCOL_VERSION};
@@ -24,6 +25,7 @@ pub struct NodeState {
     log: Arc<Mutex<OperationLog>>,
     db_path: Option<PathBuf>,
     probe: Arc<dyn Probe>,
+    catalog: Arc<Mutex<CatalogAuthority>>,
 }
 
 impl NodeState {
@@ -41,7 +43,17 @@ impl NodeState {
             log: Arc::new(Mutex::new(OperationLog::new(owned_services))),
             db_path: None,
             probe,
+            catalog: Arc::new(Mutex::new(CatalogAuthority::new())),
         }
+    }
+
+    /// Caminho do journal do catálogo derivado do DB de operações.
+    fn journal_path(db_path: &std::path::Path) -> PathBuf {
+        let stem = db_path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("studio-node");
+        db_path.with_file_name(format!("{stem}.catalog.jsonl"))
     }
 
     /// Estado com persistência: carrega o log existente ou começa novo no
@@ -52,11 +64,14 @@ impl NodeState {
             Err(NodeError::Storage(_)) if !db_path.exists() => OperationLog::new(owned_services),
             Err(err) => return Err(err),
         };
+        let catalog = CatalogAuthority::with_journal(Self::journal_path(&db_path))
+            .map_err(|err| NodeError::Storage(format!("catalogo: {err}")))?;
         Ok(Self {
             version: NODE_PROTOCOL_VERSION,
             log: Arc::new(Mutex::new(log)),
             db_path: Some(db_path),
             probe: Arc::new(SystemdProbe),
+            catalog: Arc::new(Mutex::new(catalog)),
         })
     }
 }
@@ -185,6 +200,101 @@ async fn get_operation(
     }
 }
 
+fn authority_error(err: AuthorityError) -> (StatusCode, Json<ApiErrorBody>) {
+    match err {
+        AuthorityError::Conflict { current } => api_error(
+            StatusCode::CONFLICT,
+            "revision_conflict",
+            format!("base obsoleta; vigente: {current:?}"),
+        ),
+        AuthorityError::Tombstoned { deleted_at } => api_error(
+            StatusCode::GONE,
+            "tombstoned",
+            format!("id removido em {deleted_at}; recriar exige identidade nova"),
+        ),
+        AuthorityError::CursorExpired => api_error(
+            StatusCode::GONE,
+            "cursor_expired",
+            String::from("cursor fora da retenção; refazer snapshot"),
+        ),
+        AuthorityError::Corrupt { path, detail } => api_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "catalog_corrupt",
+            format!("journal {path}: {detail}"),
+        ),
+    }
+}
+
+/// Corpo de publicação condicional (G-47/57).
+#[derive(Debug, Clone, Deserialize)]
+struct PublishBody {
+    id: String,
+    base: Option<u64>,
+    value: String,
+    generation: u64,
+}
+
+/// Corpo de exclusão condicional (G-57).
+#[derive(Debug, Clone, Deserialize)]
+struct DeleteBody {
+    id: String,
+    base: u64,
+}
+
+/// Snapshot consistente do catálogo compartilhado (§34.8).
+async fn catalog_snapshot(State(state): State<NodeState>) -> Json<studio_core::catalog::Snapshot> {
+    Json(state.catalog.lock().await.snapshot())
+}
+
+/// Eventos contíguos desde `?since=` (G-49).
+async fn catalog_events(
+    State(state): State<NodeState>,
+    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, u64>>,
+) -> ApiResult<Vec<studio_core::catalog::Event>> {
+    let since = params.get("since").copied().unwrap_or(0);
+    state
+        .catalog
+        .lock()
+        .await
+        .events_since(since)
+        .map(Json)
+        .map_err(authority_error)
+}
+
+/// Publicação condicional no catálogo compartilhado (G-47/57).
+async fn catalog_publish(
+    State(state): State<NodeState>,
+    Json(body): Json<PublishBody>,
+) -> ApiResult<RevisionOut> {
+    state
+        .catalog
+        .lock()
+        .await
+        .publish(body.id, body.base, body.value, body.generation)
+        .map(|revision| Json(RevisionOut { revision }))
+        .map_err(authority_error)
+}
+
+/// Exclusão condicional com tombstone (G-57).
+async fn catalog_delete(
+    State(state): State<NodeState>,
+    Json(body): Json<DeleteBody>,
+) -> ApiResult<RevisionOut> {
+    state
+        .catalog
+        .lock()
+        .await
+        .delete(body.id, body.base)
+        .map(|revision| Json(RevisionOut { revision }))
+        .map_err(authority_error)
+}
+
+/// Revisão resultante de publicação/exclusão.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RevisionOut {
+    pub revision: u64,
+}
+
 /// Roteador do nó com o estado compartilhado.
 pub fn router(state: NodeState) -> Router {
     Router::new()
@@ -193,5 +303,9 @@ pub fn router(state: NodeState) -> Router {
         .route("/operations", get(list_operations))
         .route("/services", get(list_services))
         .route("/operations/:id", get(get_operation))
+        .route("/catalog/snapshot", get(catalog_snapshot))
+        .route("/catalog/events", get(catalog_events))
+        .route("/catalog/publish", axum::routing::post(catalog_publish))
+        .route("/catalog/delete", axum::routing::post(catalog_delete))
         .with_state(state)
 }

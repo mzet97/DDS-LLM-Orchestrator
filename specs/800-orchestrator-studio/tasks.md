@@ -123,3 +123,13 @@
   `wanted:true/active:false` sobrevivendo ao restart (lio: binário
   instalado era pré-persistência — reinstalado). 41 testes verdes, gates
   limpos. Binário DDS rebuiltado.
+- [x] **T-800-17 · Autoridade de catálogo compartilhado no nó** (P2a; G-44/45/47/49/57)
+  serde nos tipos de fio do `studio-core` (doc de deps atualizado);
+  `catalog_auth.rs` com journal JSONL event-sourced (append+sync, replay
+  no boot, falha rápido em corrupção, `#[serde(default)]` p/ DBs);
+  endpoints `POST /catalog/publish|delete`, `GET /catalog/snapshot`,
+  `GET /catalog/events?since=` com 409/410/410 expirado. 3 testes de
+  autoridade + ciclo de fio (cria→409 obsoleto→atualiza→snapshot→delete→
+  410 tombstone→3 eventos). Vivo sob systemd: ciclo completo + replay do
+  journal no restart (tombstone preservado). 32 testes node+core, gates
+  limpos (só E0602 pré-existente).

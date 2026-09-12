@@ -4,14 +4,15 @@
 //! antes de qualquer efeito — nunca last-writer-wins silencioso. Gerações de
 //! intenção só avançam monotonicamente.
 
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 /// Revisão do catálogo compartilhado (REQ-800).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Revision(pub u64);
 
 /// Geração de intenção de um deployment (REQ-801).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Generation(pub u64);
 
 /// Erro de publicação condicional (REQ-800).
