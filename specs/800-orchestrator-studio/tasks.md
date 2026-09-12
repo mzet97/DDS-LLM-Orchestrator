@@ -190,3 +190,12 @@
   `nodes.rs`: adicionar/selecionar/remover `(apelido, URL)` digitados,
   sem varredura e sem SSH; painel Nós virou registro + conexão. 4 testes.
   G-02/G-04 seguem bloqueados (cadastro SSH com host key fora do escopo).
+- [x] **T-800-28 · Bridge SSH com chave dedicada (G-04, isolado)** (§34)
+  Novo crate `studio-ssh` (russh puro, sem shell): identidade Ed25519 por
+  instalação (PEM cifrada 0600, senha nunca gravada), confiança no handshake
+  real (desconhecido exige aprovação, alterada bloqueia), só `publickey`,
+  sem fallback, sem agent forwarding. Cofre com contexto + persistência
+  JSON (projeto/alias/host/porta/algo/impressão/quem/quando/substituída);
+  `ssh_trust` do Studio virou reexport. 12 testes isolados (servidor
+  descartável em processo): impressão real, persistência pós-reabertura,
+  rotação bloqueada, auth errada sem tentativa de senha. Sem tocar nas VMs.
