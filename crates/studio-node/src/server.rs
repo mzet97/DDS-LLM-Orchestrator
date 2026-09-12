@@ -11,38 +11,58 @@ use axum::{extract::State, http::StatusCode, routing::get, Json, Router};
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
-use crate::catalog_auth::{AuthorityError, CatalogAuthority};
+use crate::actuator::{Actuator, SystemdActuator};
+use crate::catalog_auth::CatalogAuthority;
+
 use crate::operations::{NodeError, OpOutcome, OpRecord, OperationLog};
 use crate::probe::{Probe, SystemdProbe};
 use crate::protocol::{AdminEnvelope, ProtocolError, ProtocolVersion, NODE_PROTOCOL_VERSION};
+pub use crate::routes_catalog::RevisionOut;
+pub use crate::routes_services::{ActuateOut, ServiceStatus};
 
 /// Estado compartilhado do servidor: versão anunciada + log de operações,
 /// com caminho opcional de persistência (P2: operações persistidas) e sonda
 /// de estado efetivo (base do plano/diff, sem efeitos).
 #[derive(Clone)]
 pub struct NodeState {
-    version: ProtocolVersion,
-    log: Arc<Mutex<OperationLog>>,
-    db_path: Option<PathBuf>,
-    probe: Arc<dyn Probe>,
-    catalog: Arc<Mutex<CatalogAuthority>>,
+    pub(crate) version: ProtocolVersion,
+    pub(crate) log: Arc<Mutex<OperationLog>>,
+    pub(crate) db_path: Option<PathBuf>,
+    pub(crate) probe: Arc<dyn Probe>,
+    pub(crate) actuator: Arc<dyn Actuator>,
+    pub(crate) catalog: Arc<Mutex<CatalogAuthority>>,
 }
 
 impl NodeState {
     /// Estado inicial com os serviços próprios declarados (sem persistência).
     #[must_use]
     pub fn new(owned_services: Vec<String>) -> Self {
-        Self::with_probe(owned_services, Arc::new(SystemdProbe))
+        Self::with_parts(
+            owned_services,
+            Arc::new(SystemdProbe),
+            Arc::new(SystemdActuator),
+        )
     }
 
     /// Estado com sonda explícita (testes usam `FakeProbe`).
     #[must_use]
     pub fn with_probe(owned_services: Vec<String>, probe: Arc<dyn Probe>) -> Self {
+        Self::with_parts(owned_services, probe, Arc::new(SystemdActuator))
+    }
+
+    /// Estado com sonda e atuador explícitos (testes).
+    #[must_use]
+    pub fn with_parts(
+        owned_services: Vec<String>,
+        probe: Arc<dyn Probe>,
+        actuator: Arc<dyn Actuator>,
+    ) -> Self {
         Self {
             version: NODE_PROTOCOL_VERSION,
             log: Arc::new(Mutex::new(OperationLog::new(owned_services))),
             db_path: None,
             probe,
+            actuator,
             catalog: Arc::new(Mutex::new(CatalogAuthority::new())),
         }
     }
@@ -71,18 +91,10 @@ impl NodeState {
             log: Arc::new(Mutex::new(log)),
             db_path: Some(db_path),
             probe: Arc::new(SystemdProbe),
+            actuator: Arc::new(SystemdActuator),
             catalog: Arc::new(Mutex::new(catalog)),
         })
     }
-}
-
-/// Serviço próprio: pretendido (log) × efetivo (gerenciador). Divergência é
-/// o diff legível do plano — este endpoint nunca altera o host (G-07).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ServiceStatus {
-    pub service: String,
-    pub wanted: Option<bool>,
-    pub active: bool,
 }
 
 /// Corpo de erro tipado do fio (código estável, mensagem humana e detalhe
@@ -95,9 +107,9 @@ pub struct ApiErrorBody {
     pub details: Option<serde_json::Value>,
 }
 
-type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiErrorBody>)>;
+pub(crate) type ApiResult<T> = Result<Json<T>, (StatusCode, Json<ApiErrorBody>)>;
 
-fn api_error(
+pub(crate) fn api_error(
     status: StatusCode,
     code: &'static str,
     message: String,
@@ -112,7 +124,7 @@ fn api_error(
     )
 }
 
-fn api_error_details(
+pub(crate) fn api_error_details(
     status: StatusCode,
     code: &'static str,
     message: String,
@@ -128,7 +140,7 @@ fn api_error_details(
     )
 }
 
-fn domain_error(err: NodeError) -> (StatusCode, Json<ApiErrorBody>) {
+pub(crate) fn domain_error(err: NodeError) -> (StatusCode, Json<ApiErrorBody>) {
     match err {
         NodeError::OperationIdConflict => api_error(
             StatusCode::CONFLICT,
@@ -195,22 +207,6 @@ async fn list_operations(State(state): State<NodeState>) -> Json<Vec<OpRecord>> 
     Json(records)
 }
 
-/// Plano legível: pretendido × efetivo por serviço próprio. Só lê (G-07).
-async fn list_services(State(state): State<NodeState>) -> Json<Vec<ServiceStatus>> {
-    let log = state.log.lock().await;
-    let mut rows: Vec<ServiceStatus> = log
-        .owned_services()
-        .iter()
-        .map(|service| ServiceStatus {
-            service: service.clone(),
-            wanted: log.wanted(service),
-            active: state.probe.is_active(service),
-        })
-        .collect();
-    rows.sort_by(|a, b| a.service.cmp(&b.service));
-    Json(rows)
-}
-
 async fn get_operation(
     State(state): State<NodeState>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -226,113 +222,33 @@ async fn get_operation(
     }
 }
 
-fn authority_error(err: AuthorityError) -> (StatusCode, Json<ApiErrorBody>) {
-    match err {
-        AuthorityError::Conflict { current } => api_error_details(
-            StatusCode::CONFLICT,
-            "revision_conflict",
-            format!("base obsoleta; vigente: {current:?}"),
-            serde_json::json!({"current": current}),
-        ),
-        AuthorityError::Tombstoned { deleted_at } => api_error(
-            StatusCode::GONE,
-            "tombstoned",
-            format!("id removido em {deleted_at}; recriar exige identidade nova"),
-        ),
-        AuthorityError::CursorExpired => api_error(
-            StatusCode::GONE,
-            "cursor_expired",
-            String::from("cursor fora da retenção; refazer snapshot"),
-        ),
-        AuthorityError::Corrupt { path, detail } => api_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "catalog_corrupt",
-            format!("journal {path}: {detail}"),
-        ),
-    }
-}
-
-/// Corpo de publicação condicional (G-47/57).
-#[derive(Debug, Clone, Deserialize)]
-struct PublishBody {
-    id: String,
-    base: Option<u64>,
-    value: String,
-    generation: u64,
-}
-
-/// Corpo de exclusão condicional (G-57).
-#[derive(Debug, Clone, Deserialize)]
-struct DeleteBody {
-    id: String,
-    base: u64,
-}
-
-/// Snapshot consistente do catálogo compartilhado (§34.8).
-async fn catalog_snapshot(State(state): State<NodeState>) -> Json<studio_core::catalog::Snapshot> {
-    Json(state.catalog.lock().await.snapshot())
-}
-
-/// Eventos contíguos desde `?since=` (G-49).
-async fn catalog_events(
-    State(state): State<NodeState>,
-    axum::extract::Query(params): axum::extract::Query<std::collections::HashMap<String, u64>>,
-) -> ApiResult<Vec<studio_core::catalog::Event>> {
-    let since = params.get("since").copied().unwrap_or(0);
-    state
-        .catalog
-        .lock()
-        .await
-        .events_since(since)
-        .map(Json)
-        .map_err(authority_error)
-}
-
-/// Publicação condicional no catálogo compartilhado (G-47/57).
-async fn catalog_publish(
-    State(state): State<NodeState>,
-    Json(body): Json<PublishBody>,
-) -> ApiResult<RevisionOut> {
-    state
-        .catalog
-        .lock()
-        .await
-        .publish(body.id, body.base, body.value, body.generation)
-        .map(|revision| Json(RevisionOut { revision }))
-        .map_err(authority_error)
-}
-
-/// Exclusão condicional com tombstone (G-57).
-async fn catalog_delete(
-    State(state): State<NodeState>,
-    Json(body): Json<DeleteBody>,
-) -> ApiResult<RevisionOut> {
-    state
-        .catalog
-        .lock()
-        .await
-        .delete(body.id, body.base)
-        .map(|revision| Json(RevisionOut { revision }))
-        .map_err(authority_error)
-}
-
-/// Revisão resultante de publicação/exclusão.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct RevisionOut {
-    pub revision: u64,
-}
-
 /// Roteador do nó com o estado compartilhado.
 pub fn router(state: NodeState) -> Router {
     Router::new()
         .route("/version", get(get_version))
         .route("/apply", axum::routing::post(post_apply))
         .route("/operations", get(list_operations))
-        .route("/services", get(list_services))
+        .route("/services", get(crate::routes_services::list_services))
+        .route(
+            "/services/:service/:action",
+            axum::routing::post(crate::routes_services::actuate_service),
+        )
         .route("/operations/:id", get(get_operation))
-        .route("/catalog/snapshot", get(catalog_snapshot))
-        .route("/catalog/events", get(catalog_events))
-        .route("/catalog/publish", axum::routing::post(catalog_publish))
-        .route("/catalog/delete", axum::routing::post(catalog_delete))
+        .route(
+            "/catalog/snapshot",
+            get(crate::routes_catalog::catalog_snapshot),
+        )
+        .route(
+            "/catalog/events",
+            get(crate::routes_catalog::catalog_events),
+        )
+        .route(
+            "/catalog/publish",
+            axum::routing::post(crate::routes_catalog::catalog_publish),
+        )
+        .route(
+            "/catalog/delete",
+            axum::routing::post(crate::routes_catalog::catalog_delete),
+        )
         .with_state(state)
 }

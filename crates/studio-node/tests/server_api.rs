@@ -365,4 +365,58 @@ mod tests {
         assert_eq!(events.status(), StatusCode::OK);
         assert_eq!(body_json(events).await.as_array().expect("lista").len(), 3);
     }
+
+    #[tokio::test]
+    async fn actuation_is_idempotent_and_scoped() {
+        use studio_node::actuator::FakeActuator;
+        use studio_node::probe::FakeProbe;
+
+        let actuator = FakeActuator::arc();
+        let probe = FakeProbe::with(&[("s", false)]);
+        let state = NodeState::with_parts(vec![String::from("s")], probe, actuator.clone());
+        let app = router(state);
+        let act = |id: &str, service: &str, action: &str| {
+            Request::post(format!("/services/{service}/{action}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"operation_id": id}).to_string(),
+                ))
+                .expect("request valido")
+        };
+
+        let first = app
+            .clone()
+            .oneshot(act("a-1", "s", "start"))
+            .await
+            .expect("rota existe");
+        assert_eq!(first.status(), StatusCode::OK);
+        let out = body_json(first).await;
+        assert_eq!(out["wanted"], serde_json::json!(true));
+        assert_eq!(out["acted"], serde_json::json!(true));
+
+        // FakeProbe é estático (sempre inativo): repetir o id encontra a
+        // mesma divergência e reage — sem duplicar o registro no log (uma
+        // operação) e só enquanto diverge.
+        let again = app
+            .clone()
+            .oneshot(act("a-1", "s", "start"))
+            .await
+            .expect("rota existe");
+        assert_eq!(again.status(), StatusCode::OK);
+
+        let foreign = app
+            .clone()
+            .oneshot(act("a-2", "alheio", "start"))
+            .await
+            .expect("rota existe");
+        assert_eq!(foreign.status(), StatusCode::FORBIDDEN);
+
+        let unknown = app
+            .oneshot(act("a-3", "s", "reiniciar"))
+            .await
+            .expect("rota existe");
+        assert_eq!(unknown.status(), StatusCode::NOT_FOUND);
+
+        assert!(actuator.calls().iter().all(|(service, _)| service == "s"));
+    }
 }

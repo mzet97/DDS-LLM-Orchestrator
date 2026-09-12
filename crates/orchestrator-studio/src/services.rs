@@ -3,7 +3,7 @@
 //! Reutiliza `ServiceStatus` do `studio-node`: pretendido × efetivo.
 //! Divergência é diff, nunca efeito — este painel não altera o host.
 
-use studio_node::server::ServiceStatus;
+use studio_node::server::{ActuateOut, ServiceStatus};
 use thiserror::Error;
 
 /// Erros da leitura de serviços.
@@ -43,6 +43,54 @@ pub fn list_services(base_url: &str) -> Result<Vec<ServiceStatus>, ServicesError
         })
 }
 
+/// Efetiva start/stop com idempotência por operação (RF-05).
+pub fn actuate(
+    base_url: &str,
+    service: &str,
+    start: bool,
+    operation_id: &str,
+) -> Result<ActuateOut, ServicesError> {
+    let url = base_url.trim_end_matches('/');
+    let action = if start { "start" } else { "stop" };
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .map_err(|err| ServicesError::Unreachable {
+            url: String::from(url),
+            detail: err.to_string(),
+        })?;
+    client
+        .post(format!("{url}/services/{service}/{action}"))
+        .json(&serde_json::json!({"operation_id": operation_id}))
+        .send()
+        .map_err(|err| ServicesError::Unreachable {
+            url: String::from(url),
+            detail: err.to_string(),
+        })?
+        .error_for_status()
+        .map_err(|err| ServicesError::Unreachable {
+            url: String::from(url),
+            detail: err.to_string(),
+        })?
+        .json::<ActuateOut>()
+        .map_err(|err| ServicesError::Unreachable {
+            url: String::from(url),
+            detail: err.to_string(),
+        })
+}
+
+/// Novo id de operação para um clique (cada clique é uma intenção nova).
+#[must_use]
+pub fn fresh_operation_id(service: &str) -> String {
+    format!(
+        "gui-{service}-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or(0)
+    )
+}
+
 /// Estado do painel de serviços.
 #[derive(Debug, Clone)]
 pub struct ServicesPanel {
@@ -68,6 +116,23 @@ impl ServicesPanel {
             Ok(list) => {
                 self.list = list;
                 self.error.clear();
+            }
+            Err(err) => {
+                self.error = err.to_string();
+            }
+        }
+    }
+
+    /// Efetiva start/stop na linha e relê o plano em seguida.
+    pub fn actuate_row(&mut self, service: &str, start: bool) {
+        let id = fresh_operation_id(service);
+        match actuate(&self.url.clone(), service, start, &id) {
+            Ok(out) => {
+                self.error.clear();
+                self.refresh();
+                if !out.acted {
+                    self.error = format!("{} já estava convergido", out.service);
+                }
             }
             Err(err) => {
                 self.error = err.to_string();

@@ -123,6 +123,15 @@
   `wanted:true/active:false` sobrevivendo ao restart (lio: binário
   instalado era pré-persistência — reinstalado). 41 testes verdes, gates
   limpos. Binário DDS rebuiltado.
+- [x] **T-800-20 · Atuação idempotente start/stop** (P2/RF-05; G-05/06)
+  `actuator.rs` (`Actuator`, `SystemdActuator` real, `FakeActuator`),
+  `POST /services/:service/start|stop` com `operation_id`: registra,
+  age só se diverge, persiste; repetido convergido não reexecuta;
+  403 fora de escopo, 404 ação boba, 502 falha do gerenciador. GUI com
+  botões ▶/■ por linha. Testes com fakes (incl. sem duplicar registro).
+  Vivo: stop converge trivial, start em unidade inexistente → 502 honesto
+  com intenção registrada (diff visível). `server.rs` 349→207 LOC (split
+  `routes_services`/`routes_catalog` + reexports). Gates limpos.
 - [x] **T-800-17 · Autoridade de catálogo compartilhado no nó** (P2a; G-44/45/47/49/57)
   serde nos tipos de fio do `studio-core` (doc de deps atualizado);
   `catalog_auth.rs` com journal JSONL event-sourced (append+sync, replay

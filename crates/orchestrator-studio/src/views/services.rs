@@ -24,7 +24,9 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
                 ui.label("pretendido");
                 ui.label("efetivo");
                 ui.label("diff");
+                ui.label("ação");
                 ui.end_row();
+                let mut pending: Option<(String, bool)> = None;
                 for row in &panel.list {
                     let wanted = match row.wanted {
                         Some(true) => "on",
@@ -40,7 +42,18 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
                     ui.label(wanted);
                     ui.label(active);
                     ui.label(diff);
+                    ui.horizontal(|ui| {
+                        if ui.button("▶").clicked() {
+                            pending = Some((row.service.clone(), true));
+                        }
+                        if ui.button("■").clicked() {
+                            pending = Some((row.service.clone(), false));
+                        }
+                    });
                     ui.end_row();
+                }
+                if let Some((service, start)) = pending {
+                    panel.actuate_row(&service, start);
                 }
             });
         }
