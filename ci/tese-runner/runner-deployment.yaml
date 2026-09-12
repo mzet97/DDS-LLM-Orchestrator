@@ -27,18 +27,26 @@ spec:
         app: tese-runner
     spec:
       serviceAccountName: tese-runner
+      automountServiceAccountToken: false
       securityContext:
         runAsUser: 1001
         runAsNonRoot: true
+        fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: runner
           # Build bootstrap verificado no .51 (só local, SEM push):
-          # digest sha256:7b542446f6a54217098576759d293c3c4bb0e2356098339a701bd8fbc28386cc
+          # tese-runner:0.2.0 =
+          # sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1
+          # (entrypoint registro+daemon, rustfmt/clippy, libc6-dev; smoke
+          # fmt+clippy+test+build como uid 1001 OK; entrypoint: registra sem
+          # .runner, pula com .runner existente)
           # Na ativação aprovada: push ao Harbor e fixar aqui
-          # harbor.home.arpa/library/tese-runner@sha256:<digest>.
-          image: tese-runner:0.1.0
+          # harbor.home.arpa/tese/tese-runner@sha256:<digest-do-push>.
+          # (projeto `tese` ainda não existe; robot `tese-ci` bloqueado na
+          # credencial admin do Harbor — senha documentada falha com 401.)
+          image: tese-runner:0.2.0
           imagePullPolicy: IfNotPresent
           env:
             - name: GITEA_INSTANCE_URL

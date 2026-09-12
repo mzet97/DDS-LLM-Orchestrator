@@ -8,8 +8,11 @@
 # Sem `on: push` nesta etapa: só `workflow_dispatch` com `ref` opcional.
 # Todos os jobs usam a MESMA revisão imutável resolvida no job `pin`.
 # Prompts canônicos (PROMPT_VERSION:) vivem FORA deste repo (monorepo da
-# dissertação, não versionado aqui): o pacote de validação referencia a
-# origem com commit, sem presumir conteúdo — pendência explícita F1.
+# dissertação, `benchmarks/orchestration/prompts/`, sem versionamento git
+# próprio): dependência VERIFICÁVEL via `ansible/prompts.sha256` — a
+# operadora copia os arquivos para o diretório de validação e o playbook
+# de validação confere cada hash antes de usar. Sem hash conferido, sem
+# validação DDS. Versionar os prompts (ex.: neste repo) é pendência F1.
 
 name: tese-rust-ci
 
@@ -103,11 +106,15 @@ jobs:
     needs: [pin, build]
     runs-on: tese-rust
     steps:
+      # NOTA: upload/download-artifact@v4 presumidos pela combinação
+      # Gitea/runner/Actions; o primeiro CI manual deve CONFIRMAR a
+      # transferência (artefato presente com o nome exato) antes de
+      # considerar este aceite válido.
       - uses: actions/download-artifact@v4
         with:
           name: "tese-rust-${{ needs.pin.outputs.sha }}"
           path: pkg
-      - name: Aceite em diretório independente (inclui teste negativo)
+      - name: Aceite em diretório independente (integridade + funcional)
         run: |
           set -euo pipefail
           rm -rf accept && mkdir accept && cd accept
@@ -124,6 +131,21 @@ jobs:
           sub="$(ls -d neg2/*/)"
           echo adulterado >> "$sub/agent"
           if ( cd "$sub" && sha256sum -c SHA256SUMS ); then echo "NEGATIVO FALHOU: adulteracao passou"; exit 1; fi
+          # Funcional: studio-noded extraído sobe de verdade em porta de
+          # teste (DB temporário) e responde protocolo + serviços.
+          export STUDIO_NODE_PORT=14317 STUDIO_NODE_DB="$PWD/accept-db.json"
+          "$PWD/$dir/studio-noded" & NODE_PID=$!
+          trap 'kill $NODE_PID 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:14317/version && break
+            sleep 1
+          done
+          test "$(curl -s http://127.0.0.1:14317/version)" = '{"major":1,"minor":0}'
+          curl -sf http://127.0.0.1:14317/services | grep -q dds-agent
+          # Funcional: submit-one executa e expõe o contrato real.
+          "$PWD/$dir/submit-one" 2>&1 | grep -q "uso: submit-one"
+          kill $NODE_PID
+          trap - EXIT
           echo "ACEITE OK"
 
 # Publicação SEPARADA e explícita (não parte deste workflow):

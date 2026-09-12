@@ -1,0 +1,53 @@
+# Espelha a política do runner existente para `app: tese-runner`.
+#
+# Defesa em profundidade: o bloqueio efetivo de egress para a LAN já foi
+# observado a partir de pods (internet pública OK, 192.168.1.62 recusado),
+# mas o componente aplicador não foi identificado (flannel padrão não
+# aplica NetworkPolicy). Esta política declara a intenção; a decisão
+# arquitetural (Ansible na operadora, sem SSH no runner) NÃO depende dela.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: tese-runner
+  namespace: ci-runners
+spec:
+  podSelector:
+    matchLabels:
+      app: tese-runner
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: gitea
+      ports:
+        - protocol: TCP
+          port: 3000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: harbor
+      ports:
+        - protocol: TCP
+          port: 80
+        - protocol: TCP
+          port: 443
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16

@@ -34,3 +34,14 @@
   SEM docker socket, SEM chaves SSH.
 - act_runner 0.2.12 com SHA verificado contra o publicado:
   `0b6d1ca5487e737bc67ecb440997dff412dd63d65b291eddcb69aec9cb61ebbf`
+
+## Caminho DDS completo (domínio de teste 77, 2026-09-12)
+- Participantes: `det-responder --domain 77` + `agent --agent-id
+  dds-prova-77 --dds-domain 77 --engine dds` + `submit-one` com
+  `PROMPT_VERSION:` de `seq_B_reviewer_v1.txt`. Diretório e processos
+  próprios; malha operacional (domínio 42) intocada; tudo encerrado após.
+- Resultado: `success:true`, `task_id=0c062488-…`, conteúdo do fixture
+  determinístico; `resp.jsonl` com `request_id == task_id`,
+  `agent_id=dds-prova-77`, `outcome:ok`.
+- Correção de CLI registrada: binários diretos NÃO usam `--` separador
+  (só via `cargo run --`); playbooks F3 ajustados.

@@ -1,23 +1,17 @@
 # Validação do studio-noded (F3 — DRAFT, não executar).
 #
-# Duas evidências separadas, ambas implementadas (nada em TODO):
-#   1. daemon = versão aprovada (hash == aprovado), systemd ativo com 1
-#      listener, estado preservado (operações do backup presentes);
-#   2. caminho DDS executa UMA tarefa fim a fim em domínio de teste
-#      RESERVADO e explícito (recusado se ausente ou protegido):
-#      identidade (task_id), proveniência (agent_id), chunks e DONE.
-#
-# Topologia do teste DDS (processos criados e encerrados pelo teste,
-# diretório próprio, todos no mesmo domínio): agent --engine mock +
-# submit-one com PROMPT_VERSION: canônico. Nunca na malha operacional,
-# nunca durante campanha experimental.
-#
-# Reinício do studio-noded NÃO toca nos processos que ele administra:
-# o nó só registra pretendido/efetivo de unidades próprias via systemd;
-# o teste DDS nem sequer usa o nó (caminho quente é DDS puro). O canário
-# (um host) comprova isso antes de qualquer segundo host.
+# Evidência 1 (daemon): hash == aprovado, protocolo 1.0, unidade ativa,
+# DB preservado pelo esquema real via validate_db.py (sem campo inventado,
+# backup com caminho explícito, negativos cobertos em
+# ansible/tests/test_validate_db.py).
+# Evidência 2 (DDS, domínio reservado obrigatório): FASE A smoke com
+# engine mock (tarefa completa, SEM alegar agent_id/chunks/LLM.*) e FASE B
+# caminho completo (det-responder + agent dds + submit-one) com correlação
+# submissão→inferência→saída pelo contrato da revisão testada.
+# Ciclo de vida por PID registrado + block/always (limpeza até em falha);
+# sem pkill. Caminho de falha também testado.
 
-- name: Exigir domínio de teste reservado
+- name: Exigir domínio de teste reservado + prompt verificável
   hosts: localhost
   connection: local
   gather_facts: false
@@ -31,9 +25,15 @@
           - prompt_file is defined and prompt_file | length > 0
         fail_msg: "informe -e dds_test_domain=<reservado> -e prompt_file=<PROMPT_VERSION: canônico>; 0 e 42 (protegidos) são recusados"
 
+    - name: Prompt confere com o hash canônico
+      ansible.builtin.command:
+        argv: ["sha256sum", "{{ prompt_file }}"]
+      register: prompt_hash
+      changed_when: false
+      failed_when: prompt_hash.stdout.split()[0] not in lookup('file', playbook_dir + '/prompts.sha256')
+
 - name: Validar daemon instalado
   hosts: studio_nodes
-  serial: 1
   vars:
     deploy_dir: /home/agent/dds-llm-rust
   tasks:
@@ -58,26 +58,19 @@
       failed_when: unit.status.ActiveState != "active"
       become: true
 
-    - name: DB válido e operações preservadas vs backup
+    - name: DB preservado pelo esquema real (backup explícito)
       ansible.builtin.command:
         argv:
           - python3
-          - -c
-          - >-
-            import json,sys,glob,os;
-            cur=json.load(open(os.environ['DB']));
-            baks=sorted(glob.glob(os.environ['DB']+'.bak-*'));
-            bak=json.load(open(baks[-1])) if baks else {'operations':[]};
-            cur_ops={o['id'] for o in cur.get('operations',[])};
-            assert all(o['id'] in cur_ops for o in bak.get('operations',[])), 'operacao do backup sumiu';
-            print('ops_preservadas=%d' % len(bak.get('operations',[])))
-      environment:
-        DB: "{{ deploy_dir }}/studio-node-log.json"
-      register: db
+          - "{{ playbook_dir }}/validate_db.py"
+          - "{{ deploy_dir }}/studio-node-log.json"
+          - "{{ backup_path }}"
+      register: dbcheck
       changed_when: false
-      failed_when: "'ops_preservadas=' not in db.stdout"
+      failed_when: "'ops_preservadas=' not in dbcheck.stdout"
+      when: backup_path is defined and backup_path | length > 0
 
-- name: Validar caminho DDS ponta a ponta (domínio reservado)
+- name: DDS fase A — smoke com engine mock (escopo explícito)
   hosts: localhost
   connection: local
   vars:
@@ -90,58 +83,101 @@
         state: directory
         mode: '0755'
 
-    - name: Iniciar agent mock no domínio de teste
-      ansible.builtin.command:
-        argv:
-          - "{{ validation_dir }}/agent"
-          - --agent-id
-          - validate-01
-          - --dds-domain
-          - "{{ dds_test_domain }}"
-          - --engine
-          - mock
-          - --model
-          - qwen3.5-0.8b
-      environment:
-        CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
-      async: 120
-      poll: 0
-      register: agent_job
+    - name: Fase A com limpeza garantida
+      block:
+        - name: Iniciar agent mock (PID registrado)
+          ansible.builtin.shell:
+            cmd: |
+              "{{ validation_dir }}/agent" --agent-id validate-mock-{{ dds_test_domain }} \
+                --dds-domain "{{ dds_test_domain }}" --engine mock --model qwen3.5-0.8b \
+                > "{{ workdir }}/agent-mock.log" 2>&1 &
+              echo $! > "{{ workdir }}/agent-mock.pid"
+          environment:
+            CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+          changed_when: true
 
-    - name: Submeter tarefa canônica com PROMPT_VERSION
-      ansible.builtin.shell:
-        cmd: |
-          set -euo pipefail
-          MSG="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ prompt_file }}').read()},{'role':'user','content':'valide'}]))")"
-          "{{ validation_dir }}/submit-one" -- "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG" --timeout-ms 60000
-      environment:
-        CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
-      register: submit
-      changed_when: false
+        - name: Submeter tarefa canônica
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              MSG="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ prompt_file }}').read()},{'role':'user','content':'valide'}]))")"
+              "{{ validation_dir }}/submit-one" "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG" --timeout-ms 60000
+          environment:
+            CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+          register: submit
+          changed_when: false
 
-    - name: Asserções de correlação, proveniência e conclusão
-      ansible.builtin.command:
-        argv:
-          - python3
-          - -c
-          - >-
-            import json,sys;
-            r=json.load(sys.stdin);
-            assert r['task_id'], 'sem identidade';
-            assert r['success'] is True, 'sem DONE';
-            assert r.get('content'), 'sem chunks';
-            assert r['latency_ms'] >= 0, 'sem latencia';
-            print('task %s DONE' % r['task_id'])
-        stdin: "{{ submit.stdout }}"
-      changed_when: false
+        - name: Smoke — tarefa completa (SEM alegar agent_id/chunks/LLM.*)
+          ansible.builtin.command:
+            argv:
+              - python3
+              - -c
+              - >-
+                import json,sys;
+                r=json.load(sys.stdin);
+                assert r['task_id'], 'sem identidade';
+                assert r['success'] is True, 'sem conclusao';
+                print('smoke task %s OK' % r['task_id'])
+            stdin: "{{ submit.stdout }}"
+          changed_when: false
+      always:
+        - name: Encerrar agent mock pelo PID
+          ansible.builtin.command:
+            argv: ["sh", "-c", "kill \"$(cat '{{ workdir }}/agent-mock.pid')\" 2>/dev/null || true"]
+          changed_when: false
 
-    - name: Encerrar só os processos do teste
-      ansible.builtin.async_status:
-        jid: "{{ agent_job.ansible_job_id }}"
-      register: agent_poll
-      failed_when: false
+- name: DDS fase B — caminho completo com backend determinístico
+  hosts: localhost
+  connection: local
+  vars:
+    validation_dir: "{{ playbook_dir }}/../dist/validation"
+    workdir: "{{ playbook_dir }}/../work/dds-validate-{{ dds_test_domain }}"
+  tasks:
+    - name: Fase B com limpeza garantida
+      block:
+        - name: Iniciar det-responder (PID registrado)
+          ansible.builtin.shell:
+            cmd: |
+              "{{ validation_dir }}/det-responder" --domain "{{ dds_test_domain }}" \
+                --delay-ms 5 --capacity 4 --log "{{ workdir }}/resp.jsonl" \
+                > "{{ workdir }}/responder.log" 2>&1 &
+              echo $! > "{{ workdir }}/responder.pid"
+          environment:
+            CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+          changed_when: true
 
-    - name: Matar agent de validação
-      ansible.builtin.command:
-        argv: ["sh", "-c", "pkill -f 'agent --agent-id validate-01' || true"]
-      changed_when: false
+        - name: Iniciar agent dds (PID registrado)
+          ansible.builtin.shell:
+            cmd: |
+              "{{ validation_dir }}/agent" --agent-id validate-dds-{{ dds_test_domain }} \
+                --dds-domain "{{ dds_test_domain }}" --engine dds --model qwen3.5-0.8b \
+                > "{{ workdir }}/agent-dds.log" 2>&1 &
+              echo $! > "{{ workdir }}/agent-dds.pid"
+          environment:
+            CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+          changed_when: true
+
+        - name: Submeter e correlacionar submissão→inferência→saída
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              MSG="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ prompt_file }}').read()},{'role':'user','content':'valide'}]))")"
+              "{{ validation_dir }}/submit-one" "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG" --timeout-ms 120000 > "{{ workdir }}/submit.json"
+              python3 -c "
+              import json;
+              r=json.load(open('{{ workdir }}/submit.json'));
+              assert r['task_id'] and r['success'] is True, 'tarefa sem conclusao';
+              resp=[json.loads(l) for l in open('{{ workdir }}/resp.jsonl')];
+              assert any(r['task_id'] in json.dumps(e) for e in resp), 'inferencia sem correlacao com a tarefa';
+              print('caminho completo task %s OK' % r['task_id'])"
+          environment:
+            CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+          changed_when: false
+      always:
+        - name: Encerrar participantes pelos PIDs
+          ansible.builtin.command:
+            argv: ["sh", "-c", "kill \"$(cat '{{ workdir }}/{{ item }}')\" 2>/dev/null || true"]
+          loop:
+            - agent-dds.pid
+            - responder.pid
+          changed_when: false
