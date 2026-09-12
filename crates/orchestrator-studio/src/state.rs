@@ -5,6 +5,8 @@
 
 use studio_core::catalog::Snapshot;
 
+use crate::origin::{fetch_node_summary, NodeSummary, OriginError};
+
 /// Uma linha observável da tabela: id, valor atual e revisão por objeto.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemRow {
@@ -18,6 +20,7 @@ pub struct ItemRow {
 pub struct AppState {
     rows: Vec<ItemRow>,
     status: String,
+    node: Option<NodeSummary>,
 }
 
 impl AppState {
@@ -27,6 +30,7 @@ impl AppState {
         Self {
             rows: Vec::new(),
             status: String::from("nenhum catálogo carregado"),
+            node: None,
         }
     }
 
@@ -56,6 +60,37 @@ impl AppState {
     #[must_use]
     pub fn status(&self) -> &str {
         &self.status
+    }
+
+    /// Resumo vivo do nó (versão + operações), quando conectado.
+    #[must_use]
+    pub fn node(&self) -> Option<&NodeSummary> {
+        self.node.as_ref()
+    }
+
+    /// Busca o resumo no nó e atualiza o status; falha preserva o estado
+    /// anterior e registra o motivo (nunca inventa linhas).
+    pub fn refresh_from_node(&mut self, base_url: &str) {
+        match fetch_node_summary(base_url) {
+            Ok(summary) => {
+                let url = base_url.trim_end_matches('/');
+                self.status = format!(
+                    "nó {url} · protocolo {}.{} · {} operação(ões)",
+                    summary.version.major,
+                    summary.version.minor,
+                    summary.operations.len()
+                );
+                self.node = Some(summary);
+            }
+            Err(err @ OriginError::Incompatible { .. }) => {
+                self.status = format!("origem bloqueada: {err}");
+                self.node = None;
+            }
+            Err(err @ OriginError::Unreachable { .. }) => {
+                self.status = format!("nó inalcançável: {err}");
+                self.node = None;
+            }
+        }
     }
 }
 

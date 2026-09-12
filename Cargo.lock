@@ -3298,8 +3298,13 @@ name = "orchestrator-studio"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "axum",
  "eframe",
+ "reqwest",
  "studio-core",
+ "studio-node",
+ "thiserror 1.0.69",
+ "tokio",
 ]
 
 [[package]]
@@ -3792,6 +3797,7 @@ dependencies = [
  "base64",
  "bytes",
  "encoding_rs",
+ "futures-channel",
  "futures-core",
  "futures-util",
  "h2",

@@ -127,6 +127,13 @@ async fn post_apply(
     Ok(Json(outcome))
 }
 
+async fn list_operations(State(state): State<NodeState>) -> Json<Vec<OpRecord>> {
+    let log = state.log.lock().await;
+    let mut records: Vec<OpRecord> = log.records().cloned().collect();
+    records.sort_by(|a, b| a.id.0.cmp(&b.id.0));
+    Json(records)
+}
+
 async fn get_operation(
     State(state): State<NodeState>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -147,6 +154,7 @@ pub fn router(state: NodeState) -> Router {
     Router::new()
         .route("/version", get(get_version))
         .route("/apply", axum::routing::post(post_apply))
+        .route("/operations", get(list_operations))
         .route("/operations/:id", get(get_operation))
         .with_state(state)
 }

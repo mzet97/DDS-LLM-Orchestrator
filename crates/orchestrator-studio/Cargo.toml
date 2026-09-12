@@ -8,8 +8,15 @@ description = "Desktop nativo do DDS Orchestrator Studio (egui), fase 800."
 
 [dependencies]
 studio-core = { path = "../studio-core", version = "0.1" }
+studio-node = { path = "../studio-node", version = "0.1" }
 eframe = "0.36"
 anyhow = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+
+[dev-dependencies]
+tokio = { workspace = true }
+axum = { workspace = true }
 
 [[bin]]
 name = "studio"

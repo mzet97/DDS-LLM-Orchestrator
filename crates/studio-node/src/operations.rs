@@ -86,6 +86,11 @@ impl OperationLog {
         self.records.get(id)
     }
 
+    /// Iterador sobre os registros (base do `GET /operations`).
+    pub fn records(&self) -> impl Iterator<Item = &OpRecord> {
+        self.records.values()
+    }
+
     /// Persiste o log em JSON no caminho dado (P2: operações persistidas).
     pub fn save(&self, path: &Path) -> Result<(), NodeError> {
         let json = serde_json::to_string_pretty(self)

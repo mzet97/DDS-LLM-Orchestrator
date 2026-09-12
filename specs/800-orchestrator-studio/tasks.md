@@ -49,3 +49,15 @@
   (falha → 500 `storage_error`); `STUDIO_NODE_DB` no `studio-noded`.
   17 testes verdes `--locked` (10 lib + 7 integração, incl. restart que
   recarrega via HTTP). clippy/fmt limpos. Sem commit (§29).
+- [x] **T-800-08 · Origem remota GUI→nó** (P1/P2; G-01)
+  `studio-node`: `GET /operations` (lista ordenada por id).
+  `orchestrator-studio`: `origin.rs` (`fetch_node_summary` bloqueante com
+  timeout 3s + gate `NODE_PROTOCOL_VERSION.accepts`; `Incompatible`
+  bloqueia, `Unreachable` preserva estado), `AppState::refresh_from_node`
+  com status vivo, GUI com campo de URL + botão "Conectar ao nó".
+  Render vazio do T-800-04 confirmado visualmente pelo usuário ao iniciar.
+  5 testes da origem verdes (2 integração contra servidor efêmero real;
+  `spawn_blocking` documentado p/ runtime tokio). clippy/fmt limpos.
+  Instância viva em 127.0.0.1:4317 reimplantada com o endpoint novo:
+  `/operations` retorna o `manual-1` persistido do processo anterior.
+  Sem commit (§29).
