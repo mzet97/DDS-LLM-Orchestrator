@@ -176,3 +176,9 @@
   Ao vivo: modelos listados e geração real OK em :8082
   (Qwen3.5-0.8B, 32 tokens). Criar unidade nova com parâmetros arbitrários
   segue inexistente no nó — declarado no plano, sem simular.
+- [x] **T-800-24 · studio-noded com bind remoto + deploy na .62** (§34)
+  `STUDIO_NODE_BIND` (padrão localhost; 2 testes). Deploy em 192.168.1.62
+  (Ubuntu 24.04, peer do orchestrator): binário 1.7MB em ~/dds-llm-rust,
+  unidade systemd `studio-noded` ativa com bind na LAN e DB persistido.
+  Ao vivo: /version 1.0, /services com dds-agent wanted=null/active=false,
+  /operations vazio. Sem atuação remota nesta tarefa (só leitura, G-46).
