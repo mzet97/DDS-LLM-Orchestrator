@@ -2,7 +2,7 @@
 # Servidor SSH descartável para validação da GUI do Studio em loopback.
 #
 # Uso exclusivo: roteiro de validação visual do painel SSH
-# (specs/800-orchestrator-studio/roteiro-gui-ssh.md). Nenhuma VM, nenhum
+# (scripts/ROTEIRO-GUI-SSH.md). Nenhuma VM, nenhum
 # host real, nenhum authorized_keys fora daqui.
 #
 #   ./studio-ssh-descartavel.sh start   # sobe em 127.0.0.1:porta livre
