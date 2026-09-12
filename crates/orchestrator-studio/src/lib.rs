@@ -6,6 +6,8 @@
 //! build desktop nativo; somente leitura real, sem dados fictícios).
 
 pub mod agents;
+#[cfg(feature = "dds")]
+pub mod dds_observe;
 pub mod inference;
 pub mod origin;
 pub mod state;

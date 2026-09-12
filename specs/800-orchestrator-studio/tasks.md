@@ -88,5 +88,13 @@
   descarta só o turno falho, "Nova sessão" limpa; GUI com transcript em
   scroll. Tabela de operações do nó (`op_summary` exaustivo) no painel do
   nó. Teste de fio: 2 envios → 2º corpo com 3 mensagens. 16 testes verdes,
-  gates limpos. Ferramentas/observabilidade são DDS-nativas sem HTTP —
-  próximo slice é o Studio lendo o domínio DDS (P7/P9).
+  gates limpos.
+- [x] **T-800-13 · Topologia DDS ao vivo no GUI** (P7/P9; G-41/42)
+  `dds_observe.rs` (feature `dds`, HTTP-only sem ela): `observe()` abre um
+  `DataSpace` efêmero (ownership 0, só leitura) e drena agentes/tool
+  calls/métricas na mesma janela; `DdsState` + painel Topologia (domínio,
+  janela, grades). Lio: `DataSpace::new` exige contexto Tokio (criar dentro
+  do `block_on`) e `CYCLONEDDS_URI` explícito como nos vivos. Smoke
+  `STUDIO_LIVE_DDS=1` no domínio 42: agentes reais observados. `main.rs`
+  271→55 LOC (split em `views/`: node/catalog/inference/agents/dispatch/
+  topology). Gates limpos com e sem `dds`.

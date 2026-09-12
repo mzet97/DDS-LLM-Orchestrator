@@ -15,9 +15,16 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+dds-dataspace = { path = "../dds-dataspace", version = "=0.1.0", optional = true }
+dds-contract = { path = "../dds-contract", version = "=0.1.0", features = ["dds"], optional = true }
+futures = { workspace = true, optional = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+dds = ["dep:dds-dataspace", "dep:dds-contract", "dep:futures", "dds-dataspace/dds"]
 
 [dev-dependencies]
-tokio = { workspace = true }
 axum = { workspace = true }
 serde_json = { workspace = true }
 

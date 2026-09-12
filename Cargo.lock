@@ -3299,7 +3299,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "dds-contract",
+ "dds-dataspace",
  "eframe",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",
