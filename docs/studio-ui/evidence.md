@@ -34,3 +34,9 @@
 - `--lib`: 48 verdes (incl. `agent_editor` 3, `tools` 3, `pickers` 3).
 - `--test editor_kittest`: 2 verdes (digitar→avançar→voltar; vazio bloqueia com erro local).
 - Total do crate: 72 passed, 0 failed; build, clippy e fmt limpos.
+
+### UI-4 — operações e colaboração (nesta execução, `cargo --offline`)
+
+- `--lib`: 57+ verdes (incl. `workflows` 2, `operations` 5, `review` 3).
+- `--test review_kittest`: 1 verde (exemplo rotulado → conflito → decisão).
+- Total do crate: 83 passed, 0 failed; build, clippy e fmt limpos.

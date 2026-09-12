@@ -10,11 +10,14 @@ pub mod launch;
 pub mod machines;
 pub mod models;
 pub mod node;
+pub mod operations;
 pub mod orchestrators;
 pub mod overview;
+pub mod review;
 pub mod services;
 pub mod shared_catalog;
 pub mod ssh;
 pub mod tools;
 #[cfg(feature = "dds")]
 pub mod topology;
+pub mod workflows;

@@ -26,9 +26,9 @@ não existência de arquivo.
 
 ## UI-4 — Operações e colaboração
 
-- [ ] UI-4.1 T10 workflows (sequência/fork-join/serial fiéis; intenção única por clique). (UI-R13 · UI-G25/G26)
-- [ ] UI-4.2 T11 operações/logs (abas por tipo, scroll estável, sem confirmação inventada). (UI-R18 · UI-G29/G30/G31/G40)
-- [ ] UI-4.3 T12 revisão/conflitos (base × local × remota; rascunho preservado). (UI-R15/R16 · UI-G28/G32/G33/G34)
+- [x] UI-4.1 T10 workflows (`workflows.rs`: dependências explícitas, 1 intenção por gesto). (UI-R13 · UI-G25/G26)
+- [x] UI-4.2 T11 operações/logs (`operations.rs`: abas por tipo, buffer 10k, "Parar de acompanhar"). (UI-R18 · UI-G29/G30/G31/G40)
+- [x] UI-4.3 T12 revisão/conflitos (`review.rs` + `review_kittest.rs`: 3 vias, exemplo rotulado, sem sobrescrita). (UI-R15/R16 · UI-G28/G32/G33/G34)
 
 ## UI-5 — Integrações e preview
 

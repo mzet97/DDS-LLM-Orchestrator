@@ -18,12 +18,15 @@ use orchestrator_studio::launch::LaunchState;
 use orchestrator_studio::machines::MachineLedger;
 use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::nodes::NodeRegistry;
+use orchestrator_studio::operations::OperationsPanel;
 use orchestrator_studio::orchestrators::OrchestratorPanel;
+use orchestrator_studio::review::ReviewState;
 use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::shell::{CommandItem, ShellContext};
 use orchestrator_studio::ssh_session::SshSession;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::tools::ToolsPanel;
+use orchestrator_studio::workflows::WorkflowPanel;
 use orchestrator_studio::workload::DispatchState;
 use studio_core::catalog::Catalog;
 
@@ -42,6 +45,9 @@ enum Section {
     Agents,
     AgentEditor,
     Tools,
+    Workflows,
+    Operations,
+    Review,
     Dispatch,
     Models,
     Services,
@@ -65,6 +71,9 @@ impl Section {
             Self::Agents => "Agentes",
             Self::AgentEditor => "Novo agente",
             Self::Tools => "Ferramentas",
+            Self::Workflows => "Workflows",
+            Self::Operations => "Operações",
+            Self::Review => "Revisão",
             Self::Dispatch => "Despacho",
             Self::Models => "Modelos GGUF",
             Self::Services => "Serviços",
@@ -88,6 +97,9 @@ impl Section {
             Self::Agents,
             Self::AgentEditor,
             Self::Tools,
+            Self::Workflows,
+            Self::Operations,
+            Self::Review,
             Self::Dispatch,
             Self::Models,
             Self::Services,
@@ -127,6 +139,9 @@ struct StudioApp {
     definitions: DefinitionStore,
     editor: AgentEditor,
     tools: ToolsPanel,
+    workflows: WorkflowPanel,
+    operations: OperationsPanel,
+    review: ReviewState,
     machines: MachineLedger,
     orchestrators: OrchestratorPanel,
     models: ModelsState,
@@ -157,6 +172,9 @@ impl StudioApp {
             definitions: DefinitionStore::new(),
             editor: AgentEditor::new("def-wizard-1"),
             tools: ToolsPanel::new(),
+            workflows: WorkflowPanel::new(),
+            operations: OperationsPanel::new(),
+            review: ReviewState::new("", 0),
             machines: MachineLedger::new(),
             orchestrators: OrchestratorPanel::new(),
             models: ModelsState::new(),
@@ -267,6 +285,9 @@ impl eframe::App for StudioApp {
                 }
                 Section::AgentEditor => views::agent_editor::show(ui, &mut self.editor),
                 Section::Tools => views::tools::show(ui, &mut self.tools),
+                Section::Workflows => views::workflows::show(ui, &mut self.workflows),
+                Section::Operations => views::operations::show(ui, &mut self.operations),
+                Section::Review => views::review::show(ui, &mut self.review),
                 Section::Models => views::models::show(ui, &mut self.models),
                 Section::Services => views::services::show(ui, &mut self.services),
                 Section::Shared => views::shared_catalog::show(ui, &mut self.shared),
