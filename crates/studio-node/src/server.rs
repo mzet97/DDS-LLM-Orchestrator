@@ -12,25 +12,35 @@ use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex;
 
 use crate::operations::{NodeError, OpOutcome, OpRecord, OperationLog};
+use crate::probe::{Probe, SystemdProbe};
 use crate::protocol::{AdminEnvelope, ProtocolError, ProtocolVersion, NODE_PROTOCOL_VERSION};
 
 /// Estado compartilhado do servidor: versão anunciada + log de operações,
-/// com caminho opcional de persistência (P2: operações persistidas).
-#[derive(Debug, Clone)]
+/// com caminho opcional de persistência (P2: operações persistidas) e sonda
+/// de estado efetivo (base do plano/diff, sem efeitos).
+#[derive(Clone)]
 pub struct NodeState {
     version: ProtocolVersion,
     log: Arc<Mutex<OperationLog>>,
     db_path: Option<PathBuf>,
+    probe: Arc<dyn Probe>,
 }
 
 impl NodeState {
     /// Estado inicial com os serviços próprios declarados (sem persistência).
     #[must_use]
     pub fn new(owned_services: Vec<String>) -> Self {
+        Self::with_probe(owned_services, Arc::new(SystemdProbe))
+    }
+
+    /// Estado com sonda explícita (testes usam `FakeProbe`).
+    #[must_use]
+    pub fn with_probe(owned_services: Vec<String>, probe: Arc<dyn Probe>) -> Self {
         Self {
             version: NODE_PROTOCOL_VERSION,
             log: Arc::new(Mutex::new(OperationLog::new(owned_services))),
             db_path: None,
+            probe,
         }
     }
 
@@ -46,8 +56,18 @@ impl NodeState {
             version: NODE_PROTOCOL_VERSION,
             log: Arc::new(Mutex::new(log)),
             db_path: Some(db_path),
+            probe: Arc::new(SystemdProbe),
         })
     }
+}
+
+/// Serviço próprio: pretendido (log) × efetivo (gerenciador). Divergência é
+/// o diff legível do plano — este endpoint nunca altera o host (G-07).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ServiceStatus {
+    pub service: String,
+    pub wanted: Option<bool>,
+    pub active: bool,
 }
 
 /// Corpo de erro tipado do fio (código estável, mensagem humana).
@@ -134,6 +154,22 @@ async fn list_operations(State(state): State<NodeState>) -> Json<Vec<OpRecord>> 
     Json(records)
 }
 
+/// Plano legível: pretendido × efetivo por serviço próprio. Só lê (G-07).
+async fn list_services(State(state): State<NodeState>) -> Json<Vec<ServiceStatus>> {
+    let log = state.log.lock().await;
+    let mut rows: Vec<ServiceStatus> = log
+        .owned_services()
+        .iter()
+        .map(|service| ServiceStatus {
+            service: service.clone(),
+            wanted: log.wanted(service),
+            active: state.probe.is_active(service),
+        })
+        .collect();
+    rows.sort_by(|a, b| a.service.cmp(&b.service));
+    Json(rows)
+}
+
 async fn get_operation(
     State(state): State<NodeState>,
     axum::extract::Path(id): axum::extract::Path<String>,
@@ -155,6 +191,7 @@ pub fn router(state: NodeState) -> Router {
         .route("/version", get(get_version))
         .route("/apply", axum::routing::post(post_apply))
         .route("/operations", get(list_operations))
+        .route("/services", get(list_services))
         .route("/operations/:id", get(get_operation))
         .with_state(state)
 }

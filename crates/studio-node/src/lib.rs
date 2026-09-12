@@ -7,5 +7,6 @@
 //! memória e o fio é JSON via serde (transporte e `studio-storage` vêm depois).
 
 pub mod operations;
+pub mod probe;
 pub mod protocol;
 pub mod server;

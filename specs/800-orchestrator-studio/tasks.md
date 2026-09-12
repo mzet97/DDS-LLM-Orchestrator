@@ -114,3 +114,12 @@
   entregando a porta ao systemd. DB persistente agora em
   `~/.local/share/studio-node/operations.json` (DB de teste em /tmp
   aposentado; GUI mostra 0 ops até novos applies).
+- [x] **T-800-16 · Plano pretendido × efetivo (G-07)** (P2)
+  `probe.rs` (`Probe`, `SystemdProbe` real, `FakeProbe`), `wanted()` com
+  índice de inserção (`order`, `#[serde(default)]` lê DBs antigos),
+  `GET /services` (só lê, nunca altera o host), cliente `services.rs` +
+  painel Serviços com coluna de divergência. 3 testes novos (wanted ordena
+  o último, endpoint com fake, fio+erro). Vivo sob systemd: `dds-agent`
+  `wanted:true/active:false` sobrevivendo ao restart (lio: binário
+  instalado era pré-persistência — reinstalado). 41 testes verdes, gates
+  limpos. Binário DDS rebuiltado.

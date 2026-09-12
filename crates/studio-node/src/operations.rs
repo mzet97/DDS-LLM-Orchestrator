@@ -47,6 +47,9 @@ pub enum NodeError {
 pub struct OperationLog {
     owned_services: Vec<String>,
     records: HashMap<OperationId, OpRecord>,
+    /// Ordem de inserção (define "último"; `default` lê DBs antigos sem ela).
+    #[serde(default)]
+    order: Vec<OperationId>,
 }
 
 impl OperationLog {
@@ -56,6 +59,7 @@ impl OperationLog {
         Self {
             owned_services,
             records: HashMap::new(),
+            order: Vec::new(),
         }
     }
 
@@ -76,7 +80,8 @@ impl OperationLog {
             return Err(NodeError::OperationIdConflict);
         }
         let record = OpRecord { id: id.clone(), op };
-        self.records.insert(id, record.clone());
+        self.records.insert(id.clone(), record.clone());
+        self.order.push(id);
         Ok(OpOutcome::Applied(record))
     }
 
@@ -84,6 +89,28 @@ impl OperationLog {
     #[must_use]
     pub fn reconcile(&self, id: &OperationId) -> Option<&OpRecord> {
         self.records.get(id)
+    }
+
+    /// Estado pretendido de um serviço: último `SetService` na ordem de
+    /// inserção (`None` sem registro — inclui DBs antigos sem `order`).
+    #[must_use]
+    pub fn wanted(&self, service: &str) -> Option<bool> {
+        self.order
+            .iter()
+            .rev()
+            .find_map(|id| match &self.records.get(id)?.op {
+                AdminOp::SetService {
+                    service: name,
+                    running,
+                } if name == service => Some(*running),
+                AdminOp::SetService { .. } | AdminOp::Bootstrap { .. } => None,
+            })
+    }
+
+    /// Serviços próprios declarados.
+    #[must_use]
+    pub fn owned_services(&self) -> &[String] {
+        &self.owned_services
     }
 
     /// Iterador sobre os registros (base do `GET /operations`).
@@ -208,6 +235,25 @@ mod tests {
 
         assert!(back.reconcile(&op_id("op-1")).is_some());
         assert!(back.reconcile(&op_id("inexistente")).is_none());
+    }
+
+    #[test]
+    fn wanted_tracks_latest_set_service_in_order() {
+        use crate::protocol::AdminOp;
+        let mut log = log_with("s");
+        for (id, running) in [("op-1", true), ("op-2", false)] {
+            log.apply(
+                op_id(id),
+                AdminOp::SetService {
+                    service: String::from("s"),
+                    running,
+                },
+            )
+            .expect("aplica");
+        }
+
+        assert_eq!(log.wanted("s"), Some(false));
+        assert_eq!(log.wanted("outro"), None);
     }
 
     #[test]

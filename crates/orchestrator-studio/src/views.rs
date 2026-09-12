@@ -6,5 +6,6 @@ pub mod dispatch;
 pub mod inference;
 pub mod models;
 pub mod node;
+pub mod services;
 #[cfg(feature = "dds")]
 pub mod topology;

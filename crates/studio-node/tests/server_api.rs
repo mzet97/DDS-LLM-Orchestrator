@@ -215,4 +215,62 @@ mod tests {
 
         assert!(OperationLog::load(&path).is_err());
     }
+
+    #[tokio::test]
+    async fn services_show_wanted_vs_active_without_effects() {
+        use studio_node::probe::FakeProbe;
+        use studio_node::server::ServiceStatus;
+
+        let probe = FakeProbe::with(&[("s-on", true), ("s-off", false)]);
+        let state = NodeState::with_probe(vec![String::from("s-on"), String::from("s-off")], probe);
+        let app = router(state);
+        let set = |id: &str, service: &str, running: bool| {
+            Request::post("/apply")
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({
+                        "protocol": {"major": 1, "minor": 0},
+                        "operation_id": id,
+                        "op": {"kind": "set_service", "service": service, "running": running},
+                    })
+                    .to_string(),
+                ))
+                .expect("request valido")
+        };
+        for (id, service, running) in [("w-1", "s-on", true), ("w-2", "s-off", true)] {
+            let applied = app
+                .clone()
+                .oneshot(set(id, service, running))
+                .await
+                .expect("rota existe");
+            assert_eq!(applied.status(), StatusCode::OK);
+        }
+
+        let response = app
+            .oneshot(
+                Request::get("/services")
+                    .body(Body::empty())
+                    .expect("request valida"),
+            )
+            .await
+            .expect("rota existe");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = body_json(response).await;
+        let rows: Vec<ServiceStatus> = serde_json::from_value(body).expect("lista de servicos");
+        assert_eq!(
+            rows,
+            vec![
+                ServiceStatus {
+                    service: String::from("s-off"),
+                    wanted: Some(true),
+                    active: false,
+                },
+                ServiceStatus {
+                    service: String::from("s-on"),
+                    wanted: Some(true),
+                    active: true,
+                },
+            ]
+        );
+    }
 }
