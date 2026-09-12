@@ -3306,6 +3306,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2",
  "studio-core",
  "studio-node",
  "thiserror 1.0.69",

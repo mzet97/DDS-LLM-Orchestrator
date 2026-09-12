@@ -98,3 +98,10 @@
   `STUDIO_LIVE_DDS=1` no domínio 42: agentes reais observados. `main.rs`
   271→55 LOC (split em `views/`: node/catalog/inference/agents/dispatch/
   topology). Gates limpos com e sem `dds`.
+- [x] **T-800-14 · Inventário de modelos GGUF** (P4; G-09)
+  `models.rs`: `inventory()` lista `.gguf` com tamanho + SHA-256 em blocos
+  (artefato ≠ instância carregada) + `ModelsState`; painel Modelos com
+  diretório editável. 2 testes (fixtures: só-gguf, tamanho, digest estável
+  e determinístico, erro tipado em dir ausente). Fixture corrigida por
+  contagem real de bytes. Diretório real tem GGUFs legíveis. Binário DDS
+  rebuiltado com o painel.

@@ -13,6 +13,7 @@ eframe = "0.36"
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 thiserror = { workspace = true }
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 dds-dataspace = { path = "../dds-dataspace", version = "=0.1.0", optional = true }

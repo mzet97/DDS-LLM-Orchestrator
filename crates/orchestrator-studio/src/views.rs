@@ -4,6 +4,7 @@ pub mod agents;
 pub mod catalog;
 pub mod dispatch;
 pub mod inference;
+pub mod models;
 pub mod node;
 #[cfg(feature = "dds")]
 pub mod topology;

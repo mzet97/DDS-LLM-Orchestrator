@@ -9,6 +9,7 @@ use anyhow::Result;
 use eframe::egui;
 use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::inference::InferenceState;
+use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::workload::DispatchState;
 use studio_core::catalog::Catalog;
@@ -19,6 +20,7 @@ struct StudioApp {
     node_url: String,
     inference: InferenceState,
     agents: AgentsState,
+    models: ModelsState,
     dispatch: DispatchState,
     #[cfg(feature = "dds")]
     dds: orchestrator_studio::dds_observe::DdsState,
@@ -32,6 +34,7 @@ impl StudioApp {
             node_url: String::from("http://127.0.0.1:4317"),
             inference: InferenceState::new(),
             agents: AgentsState::new(),
+            models: ModelsState::new(),
             dispatch: DispatchState::new(),
             #[cfg(feature = "dds")]
             dds: orchestrator_studio::dds_observe::DdsState::new(),
@@ -49,6 +52,7 @@ impl eframe::App for StudioApp {
             views::node::show(ui, &mut self.state, &mut self.node_url);
             views::inference::show(ui, &mut self.inference);
             views::agents::show(ui, &mut self.agents);
+            views::models::show(ui, &mut self.models);
             views::dispatch::show(ui, &mut self.dispatch);
             #[cfg(feature = "dds")]
             views::topology::show(ui, &mut self.dds);

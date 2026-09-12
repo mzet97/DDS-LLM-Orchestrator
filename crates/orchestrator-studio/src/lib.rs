@@ -9,6 +9,7 @@ pub mod agents;
 #[cfg(feature = "dds")]
 pub mod dds_observe;
 pub mod inference;
+pub mod models;
 pub mod origin;
 pub mod state;
 pub mod workload;
