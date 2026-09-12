@@ -182,3 +182,11 @@
   unidade systemd `studio-noded` ativa com bind na LAN e DB persistido.
   Ao vivo: /version 1.0, /services com dds-agent wanted=null/active=false,
   /operations vazio. Sem atuação remota nesta tarefa (só leitura, G-46).
+- [x] **T-800-25 · studio-noded também na .61 (GPU)** (§34)
+  Mesmo binário/unidade do T-800-24 com bind na LAN da .61 (RTX 3080).
+  Ao vivo: /version 1.0 nas duas (.61 e .62), dds-agent parado sem
+  pretendido em ambas. Dois nós administráveis + local = 3 origens.
+- [x] **T-800-26 · Registro de nós conhecidos na GUI** (P3-admin parcial)
+  `nodes.rs`: adicionar/selecionar/remover `(apelido, URL)` digitados,
+  sem varredura e sem SSH; painel Nós virou registro + conexão. 4 testes.
+  G-02/G-04 seguem bloqueados (cadastro SSH com host key fora do escopo).

@@ -12,6 +12,7 @@ use orchestrator_studio::catalog_remote::SharedCatalog;
 use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::launch::LaunchState;
 use orchestrator_studio::models::ModelsState;
+use orchestrator_studio::nodes::NodeRegistry;
 use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::workload::DispatchState;
@@ -71,7 +72,7 @@ struct StudioApp {
     section: Section,
     state: AppState,
     catalog: Catalog,
-    node_url: String,
+    registry: NodeRegistry,
     inference: InferenceState,
     launch: LaunchState,
     agents: AgentsState,
@@ -89,7 +90,7 @@ impl StudioApp {
             section: Section::Overview,
             state: AppState::new(),
             catalog: Catalog::new(),
-            node_url: String::from("http://127.0.0.1:4317"),
+            registry: NodeRegistry::new(),
             inference: InferenceState::new(),
             launch: LaunchState::new(),
             agents: AgentsState::new(),
@@ -146,7 +147,7 @@ impl eframe::App for StudioApp {
                         proof,
                     );
                 }
-                Section::Node => views::node::show(ui, &mut self.state, &mut self.node_url),
+                Section::Node => views::node::show(ui, &mut self.state, &mut self.registry),
                 Section::Inference => views::inference::show(ui, &mut self.inference),
                 Section::Launch => {
                     let known: Vec<String> = self

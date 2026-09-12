@@ -12,6 +12,7 @@ pub mod dds_observe;
 pub mod inference;
 pub mod launch;
 pub mod models;
+pub mod nodes;
 pub mod origin;
 pub mod overview;
 pub mod services;
