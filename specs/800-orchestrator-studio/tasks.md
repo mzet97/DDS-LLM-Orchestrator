@@ -105,3 +105,12 @@
   e determinístico, erro tipado em dir ausente). Fixture corrigida por
   contagem real de bytes. Diretório real tem GGUFs legíveis. Binário DDS
   rebuiltado com o painel.
+- [x] **T-800-15 · studio-noded sob systemd (user)** (P2)
+  `packaging/systemd/studio-noded.service` (user unit: `Restart=on-failure`,
+  singleton pelo gerenciador, `EnvironmentFile`) + env de exemplo.
+  Binário instalado em `~/.local/bin`, unit habilitada e **ativa**, 1
+  listener em 4317 servindo `/version`. Lio: `--now` falhou sem user
+  manager e houve crash-loop contra instância setsid antiga — resolvido
+  entregando a porta ao systemd. DB persistente agora em
+  `~/.local/share/studio-node/operations.json` (DB de teste em /tmp
+  aposentado; GUI mostra 0 ops até novos applies).

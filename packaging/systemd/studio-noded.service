@@ -1,0 +1,17 @@
+[Unit]
+Description=DDS Orchestrator Studio Node (administrative protocol)
+Documentation=https://github.com/mzet97/DDS-LLM-Orchestrator
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/studio-noded
+EnvironmentFile=-%h/.config/studio-noded/env
+Restart=on-failure
+RestartSec=5
+# Singleton pelo gerenciador: nunca duas instâncias do mesmo serviço.
+# Distinto da recuperação pelo orquestrador-monitor (SDD §30).
+
+[Install]
+WantedBy=default.target
