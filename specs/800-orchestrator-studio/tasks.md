@@ -158,3 +158,10 @@
   Evidência GPU (G-14 parcial): `rocm-smi --showpidgpus` mostra o
   llama-server (PID 1001835, build ROCm) com GPU[1] e 7.4GB VRAM em uso;
   geração real de 64 tokens OK. 26 testes do Studio, gates limpos.
+- [x] **T-800-21 · Inventário GGUF sem travar + navegação lateral** (P4; §30)
+  Causa do travamento: SHA-256 de 70GB (15 arquivos) rodava na thread de UI.
+  Agora: listagem instantânea (só metadados) + hash em thread dedicada com
+  barra de progresso, `request_repaint` por frame e botão Cancelar; layout
+  refeito com `Panel::left` de navegação (Catálogo/Nó/Inferência/Agentes/
+  Despacho/Modelos/Serviços/Compartilhado/Topologia) + painel central com
+  rolagem, conforme §30. 26 testes do Studio, gates limpos.

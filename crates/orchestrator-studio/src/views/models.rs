@@ -1,39 +1,75 @@
-//! Painel de modelos: inventário de GGUFs em disco.
+//! Painel de modelos: inventário assíncrono (P4 local).
 
 use eframe::egui;
 use orchestrator_studio::models::ModelsState;
 
-/// Diretório, botão de inventário, erro e tabela de artefatos.
-pub fn show(ui: &mut egui::Ui, models: &mut ModelsState) {
-    ui.collapsing("Modelos (arquivos GGUF em disco)", |ui| {
-        let mut dir_text = models.dir.display().to_string();
-        ui.horizontal(|ui| {
-            ui.label("diretório:");
-            if ui.text_edit_singleline(&mut dir_text).changed() {
-                models.dir = dir_text.into();
-            }
-            if ui.button("Inventariar").clicked() {
-                models.refresh();
-            }
-        });
-        if !models.error.is_empty() {
-            ui.label(&models.error);
+pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
+    state.poll();
+    ui.heading("Modelos (arquivos GGUF em disco)");
+    ui.horizontal(|ui| {
+        let mut dir = state.dir.display().to_string();
+        ui.label("Diretório:");
+        if ui.text_edit_singleline(&mut dir).changed() {
+            state.dir = dir.into();
         }
-        if models.list.is_empty() {
-            ui.label("Nenhum GGUF inventariado. Clique Inventariar.");
-        } else {
-            egui::Grid::new("models_grid").show(ui, |ui| {
-                ui.label("arquivo");
-                ui.label("tamanho");
-                ui.label("sha-256");
-                ui.end_row();
-                for artifact in &models.list {
-                    ui.label(&artifact.file_name);
-                    ui.label(format!("{} bytes", artifact.size_bytes));
-                    ui.label(artifact.sha256_hex.chars().take(16).collect::<String>());
-                    ui.end_row();
-                }
-            });
+        if ui.button("Inventariar").clicked() && !state.is_busy() {
+            state.refresh();
+        }
+        if state.is_busy() && ui.button("Cancelar hash").clicked() {
+            state.cancel();
         }
     });
+    if state.is_busy() {
+        ui.ctx().request_repaint();
+    }
+    if let Some(progress) = &state.hashing {
+        ui.add(
+            egui::ProgressBar::new(progress.done as f32 / progress.total.max(1) as f32)
+                .text(format!(
+                    "hash SHA-256 {}/{} — {}",
+                    progress.done, progress.total, progress.current
+                ))
+                .show_percentage(),
+        );
+    }
+    ui.label("P4 local; nada é criado.");
+    if !state.error.is_empty() {
+        ui.label(&state.error);
+    }
+    if state.list.is_empty() && !state.is_busy() {
+        ui.label("Nenhum .gguf listado. Ajuste o diretório e clique em Inventariar.");
+        return;
+    }
+    egui::Grid::new("models-artifacts")
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label("Arquivo");
+            ui.label("Tamanho");
+            ui.label("SHA-256 (duplo clique seleciona)");
+            ui.end_row();
+            for artifact in &state.list {
+                ui.label(&artifact.file_name);
+                ui.label(format!(
+                    "{:.1} MiB",
+                    artifact.size_bytes as f64 / 1_048_576.0
+                ));
+                ui.label(if artifact.sha256_hex.is_empty() {
+                    "calculando…"
+                } else {
+                    &artifact.sha256_hex
+                });
+                ui.end_row();
+            }
+        });
+    let hashed = state
+        .list
+        .iter()
+        .filter(|item| !item.sha256_hex.is_empty())
+        .count();
+    ui.label(format!(
+        "{} arquivo(s), {} com SHA-256, total {:.1} GiB. Leitura apenas: nada é deletado.",
+        state.list.len(),
+        hashed,
+        state.list.iter().map(|item| item.size_bytes).sum::<u64>() as f64 / 1_073_741_824.0
+    ));
 }
