@@ -168,4 +168,23 @@ mod tests {
             assert!(ratio >= 4.5, "{theme:?}: {ratio:.2}");
         }
     }
+
+    #[test]
+    fn all_used_text_pairs_meet_contrast() {
+        for theme in [ResolvedTheme::Dark, ResolvedTheme::Light] {
+            let colors = palette(theme);
+            let pairs = [
+                ("secondary/bg", colors.text_secondary, colors.background),
+                ("secondary/surface", colors.text_secondary, colors.surface),
+                ("on_accent/accent", colors.on_accent, colors.accent),
+                ("success/bg", colors.success_text, colors.background),
+                ("warning/bg", colors.warning_text, colors.background),
+                ("danger/bg", colors.danger_text, colors.background),
+            ];
+            for (name, text, background) in pairs {
+                let ratio = contrast_ratio(TextPair { text, background });
+                assert!(ratio >= 4.5, "{theme:?} {name}: {ratio:.2}");
+            }
+        }
+    }
 }

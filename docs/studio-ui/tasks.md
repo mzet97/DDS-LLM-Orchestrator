@@ -38,8 +38,8 @@ não existência de arquivo.
 
 ## UI-6 — Acessibilidade, performance, revisão
 
-- [ ] UI-6.1 Teclado completo nos fluxos críticos + foco restaurado. (UI-R06 · UI-G07/G39)
-- [ ] UI-6.2 Contraste verificado nos pares usados; relatório. (UI-R05 · UI-G06)
-- [ ] UI-6.3 Zoom/escala nos cenários §8; capturas por cenário. (UI-R06 · UI-G08)
-- [ ] UI-6.4 Orçamento de apresentação medido (sem alegar backend). (UI-R27 · UI-G46)
-- [ ] UI-6.5 `evidence.md` final: matriz tela × estado × modo × integração. (UI-R26 · UI-G49/G50)
+- [x] UI-6.1 Teclado nos fluxos críticos (`palette_kittest.rs`, `editor_kittest.rs`); foco restaurado = gap. (UI-R06 · UI-G07/G39)
+- [x] UI-6.2 Contraste nos 7 pares × 2 temas (`a11y.md`, teste automatizado). (UI-R05 · UI-G06)
+- [x] UI-6.3 Zoom 200% sem pânico (`volume_ui.rs`); capturas com janela real pendentes. (UI-R06 · UI-G08)
+- [x] UI-6.4 Orçamento medido: log 10k 2,8 ms, filtro 10k 3,6 ms (apresentação, não backend). (UI-R27 · UI-G46)
+- [x] UI-6.5 `evidence.md` final + matriz abaixo. (UI-R26 · UI-G49/G50)

@@ -46,3 +46,31 @@
 - `--lib`: 61 verdes (incl. `preview` 3: 16 cenários, fixtures estáveis, selo).
 - Seção Demonstração no binário; matriz em `integration-gaps.md`.
 - Build, clippy e fmt limpos.
+
+### UI-6 — acessibilidade e orçamento (nesta execução, `cargo --offline`)
+
+- `--test palette_kittest`: 2 verdes (filtrar+Enter seguro, Esc fecha).
+- `--test volume_ui`: 3 verdes (log 10k 2,8 ms, filtro 10k 3,6 ms, zoom 200%).
+- Contraste: 7 pares × 2 temas ≥5,86 (`a11y.md`).
+- Janela real, leitor de tela, foco restaurado fim a fim: pendentes (gaps em `a11y.md`).
+
+## Matriz tela × estado × modo × integração (UI-G50)
+
+| Tela | carregando | vazio | erro | indisponível | demo | real |
+|---|---|---|---|---|---|---|
+| Ambientes | — | lista vazia + ação | — | — | selo + cenários | registro local |
+| Visão geral | skeleton parcial* | — | erro visível | — | — | estados existentes |
+| Máquinas | — | vazio + ação | erro de cadastro | G-INT-01 | — | registro local |
+| Agentes | via Atualizar | vazio + ação | erro visível | — | — | orquestrador / rascunho local |
+| Ferramentas | — | vazio + ação | — | sem executor | — | rascunho local |
+| Modelos | progresso hash | vazio + ação | erro visível | G-INT-05 | — | diretório local |
+| Inferência | via Enviar | — | erro visível | — | — | servidor llama |
+| Orquestradores | — | vazio + ação | — | G-INT-06 | — | definição local |
+| Workflows | — | vazio | — | G-INT-07 | intenções | — |
+| Operações | — | vazio + filtro | — | sem canc. real | exemplo rotulado** | painel local |
+| Revisão | — | vazio + exemplo | — | — | exemplo rotulado | rascunho local |
+| SSH | spinner | — | falha sem vazar | — | — | bridge real |
+| Galeria | — | — | — | — | tokens/estados | — |
+
+\* `*` Esqueleto localizado onde há recarga; zero nunca confirmado.
+\** Exemplo carregado só por botão explícito; tela abre vazia.

@@ -113,9 +113,13 @@ pub fn show_palette(
     items: &[CommandItem],
 ) -> Option<CommandItem> {
     let mut picked: Option<CommandItem> = None;
+    let mut escape = false;
     egui::Window::new("Paleta de comandos")
         .open(open)
         .show(ui.ctx(), |ui| {
+            if ui.input(|input| input.key_pressed(egui::Key::Escape)) {
+                escape = true;
+            }
             let response = ui.text_edit_singleline(query);
             response.request_focus();
             let ranked = filter_commands(items, query);
@@ -135,7 +139,7 @@ pub fn show_palette(
                 }
             });
         });
-    if picked.is_some() {
+    if picked.is_some() || escape {
         *open = false;
         query.clear();
     }
