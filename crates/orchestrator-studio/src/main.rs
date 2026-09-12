@@ -9,11 +9,14 @@ use anyhow::Result;
 use eframe::egui;
 use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::catalog_remote::SharedCatalog;
+use orchestrator_studio::design::{self, Theme};
+use orchestrator_studio::gallery::GalleryState;
 use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::launch::LaunchState;
 use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::nodes::NodeRegistry;
 use orchestrator_studio::services::ServicesPanel;
+use orchestrator_studio::shell::{CommandItem, ShellContext};
 use orchestrator_studio::ssh_session::SshSession;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::workload::DispatchState;
@@ -34,6 +37,7 @@ enum Section {
     Services,
     Shared,
     Topology,
+    Gallery,
 }
 
 impl Section {
@@ -51,6 +55,7 @@ impl Section {
             Self::Services => "Serviços",
             Self::Shared => "Catálogo compartilhado",
             Self::Topology => "Topologia DDS",
+            Self::Gallery => "Galeria",
         }
     }
 
@@ -68,12 +73,29 @@ impl Section {
             Self::Services,
             Self::Shared,
             Self::Topology,
+            Self::Gallery,
         ]
+    }
+
+    fn command_entries() -> Vec<CommandItem> {
+        Self::all()
+            .iter()
+            .map(|section| CommandItem {
+                title: format!("Ir para {}", section.label()),
+                section: String::from("Navegação"),
+                dangerous: false,
+            })
+            .collect()
     }
 }
 
 struct StudioApp {
     section: Section,
+    shell: ShellContext,
+    theme: Theme,
+    palette_open: bool,
+    palette_query: String,
+    gallery: GalleryState,
     state: AppState,
     catalog: Catalog,
     registry: NodeRegistry,
@@ -93,6 +115,11 @@ impl StudioApp {
     fn new() -> Self {
         Self {
             section: Section::Overview,
+            shell: ShellContext::default(),
+            theme: Theme::default(),
+            palette_open: false,
+            palette_query: String::new(),
+            gallery: GalleryState::new(design::ResolvedTheme::Light),
             state: AppState::new(),
             catalog: Catalog::new(),
             registry: NodeRegistry::new(),
@@ -112,6 +139,32 @@ impl StudioApp {
 
 impl eframe::App for StudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let resolved = self.theme.resolve(None);
+        design::apply(ui.ctx(), resolved);
+        self.gallery.theme = resolved;
+        self.shell.theme = self.theme;
+        if ui.input(|input| input.key_pressed(egui::Key::K) && input.modifiers.command) {
+            self.palette_open = true;
+        }
+        egui::Panel::top("topbar").show(ui, |ui| {
+            orchestrator_studio::shell::show_top_bar(ui, &mut self.shell, &mut self.palette_open);
+        });
+        if self.palette_open {
+            let entries = Section::command_entries();
+            if let Some(picked) = orchestrator_studio::shell::show_palette(
+                ui,
+                &mut self.palette_open,
+                &mut self.palette_query,
+                &entries,
+            ) {
+                if let Some(title) = picked.title.strip_prefix("Ir para ") {
+                    if let Some(section) = Section::all().iter().find(|item| item.label() == title)
+                    {
+                        self.section = *section;
+                    }
+                }
+            }
+        }
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.label(self.state.status());
         });
@@ -180,6 +233,7 @@ impl eframe::App for StudioApp {
                     );
                 }
                 Section::Catalog => views::catalog::show(ui, &mut self.catalog, &mut self.state),
+                Section::Gallery => orchestrator_studio::gallery::show(ui, &self.gallery),
             });
         });
     }

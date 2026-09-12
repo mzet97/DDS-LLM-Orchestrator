@@ -9,6 +9,8 @@ pub mod agents;
 pub mod catalog_remote;
 #[cfg(feature = "dds")]
 pub mod dds_observe;
+pub mod design;
+pub mod gallery;
 pub mod inference;
 pub mod launch;
 pub mod models;
@@ -16,6 +18,7 @@ pub mod nodes;
 pub mod origin;
 pub mod overview;
 pub mod services;
+pub mod shell;
 pub mod ssh_session;
 pub mod ssh_trust;
 pub mod state;
