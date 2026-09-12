@@ -8,6 +8,7 @@ mod views;
 use anyhow::Result;
 use eframe::egui;
 use orchestrator_studio::agent_defs::DefinitionStore;
+use orchestrator_studio::agent_editor::AgentEditor;
 use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::catalog_remote::SharedCatalog;
 use orchestrator_studio::design::{self, Theme};
@@ -22,6 +23,7 @@ use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::shell::{CommandItem, ShellContext};
 use orchestrator_studio::ssh_session::SshSession;
 use orchestrator_studio::state::AppState;
+use orchestrator_studio::tools::ToolsPanel;
 use orchestrator_studio::workload::DispatchState;
 use studio_core::catalog::Catalog;
 
@@ -38,6 +40,8 @@ enum Section {
     Launch,
     Ssh,
     Agents,
+    AgentEditor,
+    Tools,
     Dispatch,
     Models,
     Services,
@@ -59,6 +63,8 @@ impl Section {
             Self::Launch => "Subir inferência",
             Self::Ssh => "SSH dedicado",
             Self::Agents => "Agentes",
+            Self::AgentEditor => "Novo agente",
+            Self::Tools => "Ferramentas",
             Self::Dispatch => "Despacho",
             Self::Models => "Modelos GGUF",
             Self::Services => "Serviços",
@@ -80,6 +86,8 @@ impl Section {
             Self::Launch,
             Self::Ssh,
             Self::Agents,
+            Self::AgentEditor,
+            Self::Tools,
             Self::Dispatch,
             Self::Models,
             Self::Services,
@@ -117,6 +125,8 @@ struct StudioApp {
     agents: AgentsState,
     agents_tab: views::agents::AgentsTab,
     definitions: DefinitionStore,
+    editor: AgentEditor,
+    tools: ToolsPanel,
     machines: MachineLedger,
     orchestrators: OrchestratorPanel,
     models: ModelsState,
@@ -145,6 +155,8 @@ impl StudioApp {
             agents: AgentsState::new(),
             agents_tab: views::agents::AgentsTab::default(),
             definitions: DefinitionStore::new(),
+            editor: AgentEditor::new("def-wizard-1"),
+            tools: ToolsPanel::new(),
             machines: MachineLedger::new(),
             orchestrators: OrchestratorPanel::new(),
             models: ModelsState::new(),
@@ -253,6 +265,8 @@ impl eframe::App for StudioApp {
                         &mut self.agents_tab,
                     );
                 }
+                Section::AgentEditor => views::agent_editor::show(ui, &mut self.editor),
+                Section::Tools => views::tools::show(ui, &mut self.tools),
                 Section::Models => views::models::show(ui, &mut self.models),
                 Section::Services => views::services::show(ui, &mut self.services),
                 Section::Shared => views::shared_catalog::show(ui, &mut self.shared),

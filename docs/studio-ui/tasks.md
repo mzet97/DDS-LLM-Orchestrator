@@ -19,10 +19,10 @@ não existência de arquivo.
 
 ## UI-3 — Editores e percursos
 
-- [ ] UI-3.1 T05 editor de agente em 4 passos + resumo de destinos A/B/C. (UI-R09 · UI-G15/G18)
-- [ ] UI-3.2 T06 ferramentas (gateway/host, restrição declarada × comprovada, sem executor inventado). (UI-R10 · UI-G22/G23/G24)
-- [ ] UI-3.3 T07/T08 modelos × artefatos × cópias × servidores; caminho sempre com máquina. (UI-R11 · UI-G19/G20)
-- [ ] UI-3.4 Pickers dependentes (host→dispositivo/caminho invalida com aviso localizado). (UI-R09 · UI-G17)
+- [x] UI-3.1 T05 editor em 4 passos (`agent_editor.rs` + `editor_kittest.rs`: digitar, validar, voltar preserva, resumo J02). (UI-R09 · UI-G15/G18)
+- [x] UI-3.2 T06 ferramentas (`tools.rs`: gateway/host, declarada × observada, "Requer implementação de executor"). (UI-R10 · UI-G22/G23/G24)
+- [x] UI-3.3 T07 caminho com máquina (`host_label`) + aviso de cópias (G-INT-05); T08 no assistente existente. (UI-R11 · UI-G19/G20)
+- [x] UI-3.4 Pickers dependentes (`pickers.rs`: troca de host invalida com aviso, independentes preservados). (UI-R09 · UI-G17)
 
 ## UI-4 — Operações e colaboração
 

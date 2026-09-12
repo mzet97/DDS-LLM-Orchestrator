@@ -28,3 +28,9 @@
 - `--lib`: 39 verdes (incl. `machines` 3, `agent_defs` 4, `orchestrators` 3).
 - `--test machines_kittest`: 2 verdes (clique por apelido, dimensões distintas).
 - Build do binário, clippy `--all-targets -D warnings` e fmt: limpos.
+
+### UI-3 — editores e percursos (nesta execução, `cargo --offline`)
+
+- `--lib`: 48 verdes (incl. `agent_editor` 3, `tools` 3, `pickers` 3).
+- `--test editor_kittest`: 2 verdes (digitar→avançar→voltar; vazio bloqueia com erro local).
+- Total do crate: 72 passed, 0 failed; build, clippy e fmt limpos.

@@ -6,6 +6,7 @@
 //! build desktop nativo; somente leitura real, sem dados fictícios).
 
 pub mod agent_defs;
+pub mod agent_editor;
 pub mod agents;
 pub mod catalog_remote;
 #[cfg(feature = "dds")]
@@ -20,9 +21,11 @@ pub mod nodes;
 pub mod orchestrators;
 pub mod origin;
 pub mod overview;
+pub mod pickers;
 pub mod services;
 pub mod shell;
 pub mod ssh_session;
 pub mod ssh_trust;
 pub mod state;
+pub mod tools;
 pub mod workload;

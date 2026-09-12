@@ -12,6 +12,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         if ui.text_edit_singleline(&mut dir).changed() {
             state.dir = dir.into();
         }
+        ui.label("máquina deste diretório:");
+        ui.text_edit_singleline(&mut state.host_label);
         if ui.button("Inventariar").clicked() && !state.is_busy() {
             state.refresh();
         }
@@ -67,9 +69,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         .filter(|item| !item.sha256_hex.is_empty())
         .count();
     ui.label(format!(
-        "{} arquivo(s), {} com SHA-256, total {:.1} GiB. Leitura apenas: nada é deletado.",
+        "{} arquivo(s) em {}, {} com SHA-256, total {:.1} GiB. Leitura apenas: nada é deletado.",
         state.list.len(),
+        state.host_label,
         hashed,
         state.list.iter().map(|item| item.size_bytes).sum::<u64>() as f64 / 1_073_741_824.0
     ));
+    ui.group(|ui| {
+        ui.strong("Capacidade indisponível");
+        ui.label("Cópias por host e servidores que utilizam cada artefato vêm do inventário integrado (G-INT-05). Um diálogo local não confirma arquivo remoto; copiar caminho não transfere arquivo.");
+    });
 }

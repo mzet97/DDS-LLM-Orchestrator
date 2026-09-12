@@ -105,6 +105,8 @@ enum HashMsg {
 /// Estado do painel de modelos com hash assíncrono e cancelamento.
 pub struct ModelsState {
     pub dir: PathBuf,
+    /// Máquina a que este diretório pertence (T07: "Arquivo em X").
+    pub host_label: String,
     pub list: Vec<ModelArtifact>,
     pub hashing: Option<HashProgress>,
     pub error: String,
@@ -118,6 +120,7 @@ impl ModelsState {
     pub fn new() -> Self {
         Self {
             dir: PathBuf::from("/home/mzet/projetos/tese/models"),
+            host_label: String::from("esta máquina"),
             list: Vec::new(),
             hashing: None,
             error: String::new(),
