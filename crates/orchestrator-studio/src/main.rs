@@ -7,7 +7,7 @@
 use anyhow::Result;
 use eframe::egui;
 use orchestrator_studio::state::AppState;
-use studio_core::Catalog;
+use studio_core::catalog::Catalog;
 
 struct StudioApp {
     state: AppState,

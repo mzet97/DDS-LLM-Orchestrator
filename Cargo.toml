@@ -23,6 +23,7 @@ members = [
     "crates/det-responder",
     "crates/studio-core",
     "crates/orchestrator-studio",
+    "crates/studio-node",
 ]
 
 [workspace.package]

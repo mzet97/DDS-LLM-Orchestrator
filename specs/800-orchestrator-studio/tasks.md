@@ -3,13 +3,43 @@
 - [x] **T-800-01 · Guarda de revisão condicional do catálogo** (REQ-800/801)
   `RevisionGuard::publish` aceita só `base == current`, avança geração
   monotonicamente e rejeita obsoleto sem mutação. Implementado + verificado;
-  commit pendente de autorização (§29 do prompt SDD).
+  comitado no merge `12c974c` (PR #8).
 - [x] **T-800-02 · Auditoria P0 reutilizar × não-duplicar** (REQ-802)
-  `audit.md` com file:line verificado nesta execução. Sem commit
-  (pendente de autorização, §29 do prompt SDD).
+  `audit.md` com file:line verificado nesta execução. Comitado no merge
+  `12c974c` (PR #8).
 - [x] **T-800-03 · Snapshot/cursor + tombstone no studio-core** (RF-31/36; G-49/57)
   `Catalog`: revisão por objeto, tombstone persistente (recriação exige id
-  novo), snapshot+cursor contíguos, expiração fora da retenção. 4 testes
-  verdes. Sem commit (pendente de autorização, §29 do prompt SDD).
-- [ ] **T-800-04 · Esqueleto `orchestrator-studio` (egui) read-only real** (G-01)
-- [ ] **T-800-05 · Esqueleto `studio-node` + protocolo versionado** (G-05/06)
+  novo), snapshot+cursor contíguos, expiração fora da retenção. 7 testes
+  verdes no crate. Comitado no merge `12c974c` (PR #8).
+- [x] **T-800-04 · Esqueleto `orchestrator-studio` (egui) read-only real** (G-01 parcial)
+  `AppState` puro reflete `Snapshot` real (`studio_core::catalog`), ordena por
+  id, `refresh` substitui sem acumular, estado inicial vazio honesto; bin
+  `studio` (eframe 0.36, `App::ui` + `Panel`/`CentralPanel`) só lê. 3 testes
+  verdes (`cargo test -p orchestrator-studio`), clippy sem lints reais
+  (só `unknown lint clippy::warnings` pré-existente do workspace), fmt limpo.
+  Correção pendente de commit: import `studio_core::catalog::Catalog` em
+  `main.rs` (§29 do prompt SDD).
+- [x] **T-800-05 · Esqueleto `studio-node` + protocolo versionado** (G-05/06 local)
+  `studio-node`: `ProtocolVersion` 1.0 com `accepts`/`check` (mesmo major,
+  par nunca mais novo; incompatível bloqueia com erro tipado, §31),
+  `AdminEnvelope` (`operation_id` + `AdminOp`: `Bootstrap`/`SetService`) com
+  fio JSON, `OperationLog` idempotente (repetição idêntica → `AlreadyApplied`,
+  mesmo id com payload distinto → `OperationIdConflict`, serviço alheio →
+  `OutOfScope`) + `reconcile` por id. 8 testes verdes (`--locked`), guarda
+  provada por mutação, clippy/fmt limpos. Sem commit (§29).
+  Pendente p/ G-05/06 integral: persistência (`studio-storage`), systemd e
+  2º host/VM (bloqueado por ambiente).
+- [x] **T-800-06 · Transporte HTTP localhost do `studio-node`** (P2; G-05/06)
+  `server.rs` (axum 0.7): `GET /version`, `POST /apply` (gate de protocolo +
+  aplicação idempotente), `GET /operations/:id`; erros do domínio viram
+  status via `match` exaustivo (400 `incompatible_protocol`, 403
+  `out_of_scope`, 404 `unknown_operation`, 409 `operation_id_conflict`).
+  Bin `studio-noded` (porta via `STUDIO_NODE_PORT`, serviços via
+  `STUDIO_NODE_SERVICES`). 14 testes verdes (`--locked`: 6 de servidor via
+  `tower::oneshot` em ciclo real request/response). E2E com servidor
+  destacado + curl: version/applied/already_applied/reconcile/403
+  confirmados; servidor encerrado após a prova. clippy/fmt limpos
+  (corrigido `clippy::double_must_use` em `router`). Sem commit (§29).
+  Nota: `server.rs` com 246 LOC puras (faixa de alerta 200–250) — próxima
+  edição no arquivo deve dividi-lo (testes p/ `tests/` ou handlers p/
+  módulo próprio).
