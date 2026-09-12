@@ -70,6 +70,15 @@ if "$ROOT/ansible/validate_db.py" "$DB" "$WORK/backup-v1.json" >/dev/null 2>&1 \
 fi
 echo "hash diverge do aprovado: falha detectada como esperado"
 
+echo "-- falha de boot de versao instalada + rollback com estado"
+cp /bin/false "$DEPLOY/studio-noded"
+PIDS=("$(start_node "$DEPLOY/studio-noded")")
+booted=0
+for _ in $(seq 1 5); do curl -sf "http://127.0.0.1:$PORT/version" >/dev/null && booted=1 && break; sleep 1; done
+stop_node "${PIDS[0]}"
+test "$booted" = "0" || { echo "VERSAO QUEBRADA SUBIU (ruim)"; exit 1; }
+echo "versao instalada nao inicializa: rollback com estado preservado"
+
 echo "-- rollback para v1 + validação"
 cp "$BIN_V1" "$DEPLOY/studio-noded"
 test "$(sha256sum < "$DEPLOY/studio-noded" | cut -d' ' -f1)" = "$H1"
