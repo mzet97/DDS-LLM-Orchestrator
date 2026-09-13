@@ -1,18 +1,37 @@
-# CI da tese no Gitea Actions (F1 — DRAFT, sem gatilho automático).
+# CI da tese no Gitea Actions (F1 — workflow_dispatch, sem gatilho automático).
 #
 # Repositório espelhado: mzet97/DDS-LLM-Orchestrator (este repo; raiz do
 # workspace, SEM prefixo src/rust). CycloneDDS vem do REGISTRO
 # (=3.0.1/=1.2.1, fixos no Cargo.toml + lockfile) — sem receita por caminho.
-# Toolchain homologado: rust-toolchain.toml (1.95) vale para CI e imagem.
+# Toolchain homologado: Rust 1.95 + rustfmt + clippy + make/g++ JÁ NA IMAGEM
+# do runner (tese-runner, referência por digest no manifesto) — o job NÃO
+# instala dependências (sem dtolnay/rust-toolchain, sem apt-get).
 #
-# Sem `on: push` nesta etapa: só `workflow_dispatch` com `ref` opcional.
-# Todos os jobs usam a MESMA revisão imutável resolvida no job `pin`.
+# Comandos ALINHADOS ao aceite homologado (ci/tese-runner/aceite.sh):
+#   fmt    : cargo fmt --all -- --check
+#   clippy : cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+#   test   : cargo test --workspace --all-features --locked --no-fail-fast -- --test-threads=1
+# Diferenças INTENCIONAIS em relação ao aceite, registradas:
+#   - paralelismo: --test-threads=1 em ambos (homologado; evita corrida
+#     entre suítes DDS no mesmo namespace);
+#   - CYCLONEDDS_URI: NÃO sobrescrito aqui — usa o ENV da imagem
+#     (file:///etc/cyclonedds.xml, interface autodetermine + multicast
+#     default). A sobreescrita anterior por config vazia foi removida;
+#   - build do job `build`: pacotes específicos de implantação/validação
+#     (-p studio-node -p agent -p orchestrator / -p client -p det-responder)
+#     em vez do --workspace completo do aceite — o pacote do artefato
+#     lista binários obrigatórios e falha se algum faltar.
+#
+# Actions de transferência de artefatos: upload/download-artifact@v4
+# (backend v4 suportado pelo Gitea ≥1.22; instância em 1.26.1). Fixadas
+# por SHA de commit (imutável); v6/v7 NÃO são suportadas pelo Gitea.
+# checkout também fixado por SHA.
+#
+# Sem `on: push`: só `workflow_dispatch` com `ref` opcional (SHA imutável
+# no input). Todos os jobs usam a MESMA revisão resolvida no job `pin`.
 # Prompts canônicos (PROMPT_VERSION:) vivem FORA deste repo (monorepo da
-# dissertação, `benchmarks/orchestration/prompts/`, sem versionamento git
-# próprio): dependência VERIFICÁVEL via `ansible/prompts.sha256` — a
-# operadora copia os arquivos para o diretório de validação e o playbook
-# de validação confere cada hash antes de usar. Sem hash conferido, sem
-# validação DDS. Versionar os prompts (ex.: neste repo) é pendência F1.
+# dissertação): dependência VERIFICÁVEL via `ansible/prompts.sha256`.
+# Versionar os prompts neste repo é pendência F1.
 
 name: tese-rust-ci
 
@@ -24,13 +43,16 @@ on:
         required: false
         default: ''
 
+env:
+  CARGO_TERM_COLOR: never
+
 jobs:
   pin:
     runs-on: tese-rust
     outputs:
       sha: "${{ steps.resolve.outputs.sha }}"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: "${{ inputs.ref || github.sha }}"
           persist-credentials: false
@@ -46,34 +68,29 @@ jobs:
     needs: pin
     runs-on: tese-rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: "${{ needs.pin.outputs.sha }}"
           persist-credentials: false
       - run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ needs.pin.outputs.sha }}"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.95'
-          components: rustfmt, clippy
-      - run: cargo fmt --locked --check
-      - run: cargo clippy --locked --all-targets --features dds -- -D warnings
-      - run: cargo test --locked --features dds
-        env:
-          CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+          id -u | grep -qx 1001 || { echo "UID inesperado: $(id)"; exit 1; }
+          rustc --version | grep -q 1.95.0 || { echo "toolchain inesperada"; exit 1; }
+      # Comandos homologados no aceite (ver cabeçalho). Sem rust-toolchain:
+      # a imagem do runner já contém a toolchain 1.95 + componentes.
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-features --locked --no-fail-fast -- --test-threads=1
 
   build:
     needs: [pin, check]
     runs-on: tese-rust
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: "${{ needs.pin.outputs.sha }}"
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: '1.95'
       - name: Build release (implantação)
         run: cargo build --locked --release -p studio-node -p agent -p orchestrator --features dds
       - name: Build release (validação)
@@ -96,7 +113,7 @@ jobs:
           printf '{"commit":"%s","arch":"%s","toolchain":"%s","deps":"%s"}\n' "$sha" "$arch" "$toolchain" "$deps" > "$out/manifest.json"
           ( cd "$out" && sha256sum -c SHA256SUMS )
           tar -czf "tese-rust-$arch-$sha.tar.gz" -C dist "$arch"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: "tese-rust-${{ needs.pin.outputs.sha }}"
           path: tese-rust-*.tar.gz
@@ -106,11 +123,9 @@ jobs:
     needs: [pin, build]
     runs-on: tese-rust
     steps:
-      # NOTA: upload/download-artifact@v4 presumidos pela combinação
-      # Gitea/runner/Actions; o primeiro CI manual deve CONFIRMAR a
-      # transferência (artefato presente com o nome exato) antes de
-      # considerar este aceite válido.
-      - uses: actions/download-artifact@v4
+      # Transferência REAL pelo serviço de artefatos do Gitea (backend v4):
+      # o que chega em pkg/ veio do serviço, não de resíduo do workspace.
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: "tese-rust-${{ needs.pin.outputs.sha }}"
           path: pkg
@@ -142,10 +157,17 @@ jobs:
           done
           test "$(curl -s http://127.0.0.1:14317/version)" = '{"major":1,"minor":0}'
           curl -sf http://127.0.0.1:14317/services | grep -q dds-agent
-          # Funcional: submit-one executa e expõe o contrato real.
-          "$PWD/$dir/submit-one" 2>&1 | grep -q "uso: submit-one"
           kill $NODE_PID
+          wait $NODE_PID 2>/dev/null || true
           trap - EXIT
+          # Funcional: submit-one sem argumentos deve RECUSAR com exit 2
+          # e mensagem de uso (contrato do executável, sem máscara de pipe).
+          set +e
+          out="$("$PWD/$dir/submit-one" 2>&1)"
+          rc=$?
+          set -e
+          echo "$out" | grep -q "uso: submit-one"
+          test "$rc" -eq 2 || { echo "submit-one sem args: rc=$rc (esperado 2)"; exit 1; }
           echo "ACEITE OK"
 
 # Publicação SEPARADA e explícita (não parte deste workflow):

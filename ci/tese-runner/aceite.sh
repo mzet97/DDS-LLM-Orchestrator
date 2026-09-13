@@ -24,14 +24,35 @@ CPUS="${CPUS:-4}"
 CLAIM_REPS="${CLAIM_REPS:-5}"
 PHASE="${1:?fase: build|bootstrap|all}"
 
+fail() { echo "ACEITE_FALHOU: $*" >&2; exit 1; }
+
+# Guarda destrutiva: WORK é alvo de rm -rf. Recusar caminhos vazios,
+# raiz, áreas de usuário/sistema e qualquer coisa fora da área exclusiva
+# do teste (/tmp/tese-* ou /var/tmp/tese-*), sem ".." e com profundidade
+# mínima. Nenhuma limpeza destrutiva sobre caminho arbitrário de env.
+validate_work() {
+  local w="${1:?}"
+  case "$w" in
+    /tmp/tese-*|/var/tmp/tese-*) ;;
+    *) return 1 ;;
+  esac
+  case "$w" in
+    *..*|"/tmp"|"") return 1 ;;
+  esac
+  [ "$w" != "/" ] || return 1
+  return 0
+}
+validate_work "$WORK" || fail "WORK recusado pela guarda destrutiva: '$WORK' (use /tmp/tese-*)"
+
 # Este script roda NO .51 (onde a imagem é construída/testada). O checkout
 # da revisão vem da operadora via git archive sobre SSH — o .51 não tem o
 # repositório. Variante local: LOCAL_TARBALL=<tar.gz> para pular o archive.
-fail() { echo "ACEITE_FALHOU: $*" >&2; exit 1; }
 
 run_build() {
   echo "=== ACEITE build: rev=$GIT_REV image=$IMAGE work=$WORK mem=$MEM cpus=$CPUS ==="
-  sudo rm -rf "$WORK"; mkdir -p "$WORK" || fail "mkdir $WORK"
+  rm -rf "$WORK" || fail "rm -rf $WORK"
+  [ ! -e "$WORK" ] || fail "$WORK persistiu apos remocao"
+  mkdir -p "$WORK" || fail "mkdir $WORK"
   if [ -n "${LOCAL_TARBALL:-}" ]; then
     tar -xzf "$LOCAL_TARBALL" -C "$WORK" || fail "extrair $LOCAL_TARBALL"
     [ -f "$WORK/Cargo.toml" ] || fail "extracao sem Cargo.toml (tarball velho/vazio?)"
@@ -80,27 +101,80 @@ run_build() {
 
 run_bootstrap() {
   echo "=== ACEITE bootstrap: entrypoint em ambiente descartável (SEM Gitea real) ==="
-  # 1) Sem GITEA_*: falha fechada, sem efeito.
-  OUT=$(docker run --rm "$IMAGE" 2>&1); RC=$?
-  echo "$OUT" | head -3
-  [ $RC -ne 0 ] || fail "entrypoint sem GITEA_* deveria falhar (rc=$RC)"
-  echo "bootstrap fail-closed OK (rc=$RC)"
+  local BS="$WORK/bootstrap"; mkdir -p "$BS"
 
-  # 2) Com GITEA_* apontando para endereço INEXISTENTE: tenta registro,
-  #    falha por rede — nunca toca o Gitea real; e com .runner existente,
-  #    pula o registro e segue para o daemon.
-  docker run --rm --entrypoint sh "$IMAGE" -c '
-      mkdir -p /data && echo "{}" > /data/.runner
-      GITEA_INSTANCE_URL=http://127.0.0.1:9 \
-      GITEA_RUNNER_REGISTRATION_TOKEN=dummy-nao-usado \
-      GITEA_RUNNER_NAME=teste GITEA_RUNNER_LABELS=teste \
-      timeout 5 /usr/local/bin/entrypoint.sh 2>&1 | head -4
-    ' 2>&1 | tee "$WORK/../aceite-bootstrap.log" | head -6
-  echo "bootstrap .runner-existente/pula-registro executado (ver log)"
+  # Stub de act_runner: registra chamadas/args (não sensíveis) em
+  # /stub.log e simula o contrato do entrypoint (register cria .runner;
+  # daemon fica em loop até o timeout do verificador). Um {} em .runner
+  # apenas exercita o ramo do script — credenciais/daemon reais são
+  # comprovados no piloto, não aqui.
+  local STUB='#!/bin/sh
+log() { echo "STUB $*" >> /tmp/stub.log; }
+if [ "$1" = "register" ]; then
+  log "register $*"
+  if [ "${STUB_REGISTER_FAILS:-}" = "1" ]; then exit 3; fi
+  echo "{}" > /data/.runner
+  exit 0
+fi
+if [ "$1" = "daemon" ]; then
+  log "daemon $*"
+  [ -f /data/.runner ] || { log "daemon-sem-estado"; exit 4; }
+  while :; do sleep 1; done
+fi
+exit 9'
 
-  # 3) Executa como UID 1001 direto (imagem pronta não exige preparo).
-  # Saída capturada em variável: grep -q fecha o pipe cedo, o docker morre
-  # por SIGPIPE e o pipefail marca falha espúria (bug corrigido do script).
+  # 1) Sem GITEA_*: falha fechada, sem efeito e SEM chamar o runner.
+  OUT=$(docker run --rm --entrypoint sh -e STUB="$STUB" "$IMAGE" -c '
+      printf "%s\n" "$STUB" > /tmp/act_runner && chmod +x /tmp/act_runner && export PATH=/tmp:$PATH
+      mkdir -p /data; cd /data; rm -f /tmp/stub.log
+      set +e; timeout 5 /usr/local/bin/entrypoint.sh 2>&1; rc=$?; set -e
+      echo "ENTRY_RC=$rc"; test ! -f /tmp/stub.log && echo "NO_RUNNER_CALL" || cat /tmp/stub.log'       2>/dev/null || true)
+  echo "$OUT" | head -4 | tee "$BS/failclosed.log"
+  echo "$OUT" | grep -q "GITEA_INSTANCE_URL ausente" || fail "fail-closed: mensagem esperada ausente"
+  echo "$OUT" | grep -q "NO_RUNNER_CALL" || fail "fail-closed: entrypoint chamou o runner sem config"
+
+  # 2) Primeiro boot: registra UMA vez (stub), cria estado e encaminha ao
+  #    daemon com a config anunciada.
+  OUT=$(docker run --rm --entrypoint sh -e STUB="$STUB" "$IMAGE" -c '
+      printf "%s\n" "$STUB" > /tmp/act_runner && chmod +x /tmp/act_runner && export PATH=/tmp:$PATH
+      mkdir -p /data; cd /data; rm -f /tmp/stub.log
+      export GITEA_INSTANCE_URL=http://127.0.0.1:9 GITEA_RUNNER_REGISTRATION_TOKEN=dummy
+      export GITEA_RUNNER_NAME=aceite GITEA_RUNNER_LABELS=aceite
+      set +e; timeout 4 /usr/local/bin/entrypoint.sh; rc=$?; set -e
+      echo "ENTRY_RC=$rc"; cat /tmp/stub.log; test -f /data/.runner && echo STATE_CREATED'       2>/dev/null || true)
+  echo "$OUT" | head -6 | tee "$BS/firstboot.log"
+  echo "$OUT" | grep -q "STUB register register --no-interactive --instance http://127.0.0.1:9 --token "     || fail "first boot: register nao chamado com args esperados"
+  echo "$OUT" | grep -q -- "-- --labels aceite" || echo "$OUT" | grep -q -- "--labels aceite" || fail "first boot: labels ausentes no register"
+  echo "$OUT" | grep -q "STUB daemon daemon --config /config.yaml"     || fail "first boot: daemon nao encaminhado com a config anunciada"
+  echo "$OUT" | grep -q STATE_CREATED || fail "first boot: estado .runner nao criado"
+
+  # 3) Boot seguinte com estado existente: NAO registra; daemon direto.
+  OUT=$(docker run --rm --entrypoint sh -e STUB="$STUB" "$IMAGE" -c '
+      printf "%s\n" "$STUB" > /tmp/act_runner && chmod +x /tmp/act_runner && export PATH=/tmp:$PATH
+      mkdir -p /data; cd /data; echo "{}" > /data/.runner; rm -f /tmp/stub.log
+      export GITEA_INSTANCE_URL=http://127.0.0.1:9 GITEA_RUNNER_REGISTRATION_TOKEN=dummy
+      export GITEA_RUNNER_NAME=aceite GITEA_RUNNER_LABELS=aceite
+      set +e; timeout 4 /usr/local/bin/entrypoint.sh; rc=$?; set -e
+      echo "ENTRY_RC=$rc"; cat /tmp/stub.log'       2>/dev/null || true)
+  echo "$OUT" | head -4 | tee "$BS/secondboot.log"
+  echo "$OUT" | grep -q "STUB register register" && fail "second boot: registrou de novo (duplicacao)"
+  echo "$OUT" | grep -q "STUB daemon daemon --config /config.yaml"     || fail "second boot: daemon nao encaminhado"
+
+  # 4) NEGATIVO do verificador: registro que falha (stub exit 3) deve
+  #    terminar o entrypoint com código != 0 — e o próprio aceite
+  #    demonstra que falha de verificação => exit != 0 do aceite.
+  OUT=$(docker run --rm --entrypoint sh -e STUB="$STUB" "$IMAGE" -c '
+      printf "%s\n" "$STUB" > /tmp/act_runner && chmod +x /tmp/act_runner && export PATH=/tmp:$PATH
+      mkdir -p /data; cd /data; rm -f /tmp/stub.log
+      export GITEA_INSTANCE_URL=http://127.0.0.1:9 GITEA_RUNNER_REGISTRATION_TOKEN=dummy
+      export GITEA_RUNNER_NAME=aceite GITEA_RUNNER_LABELS=aceite STUB_REGISTER_FAILS=1
+      set +e; timeout 4 /usr/local/bin/entrypoint.sh; rc=$?; set -e
+      echo "ENTRY_RC=$rc"'       2>/dev/null || true)
+  echo "$OUT" | head -2 | tee "$BS/negative.log"
+  RC_NEG=$(echo "$OUT" | grep -oE "ENTRY_RC=[0-9]+" | cut -d= -f2)
+  [ -n "$RC_NEG" ] && [ "$RC_NEG" -ne 0 ]     || fail "negativo: registro falhando deveria encerrar !=0 (obtido: '$RC_NEG')"
+
+  # 5) uid 1001 sem preparo (captura em variável; grep -q + SIGPIPE).
   UIDOUT=$(docker run --rm --entrypoint sh "$IMAGE" -c 'id; rustc --version')
   echo "$UIDOUT" | grep -q "uid=1001" || fail "imagem não executa como uid 1001 (saída: $UIDOUT)"
   echo "ACEITE_BOOTSTRAP_OK"
