@@ -53,11 +53,19 @@ spec:
           # sha256:33c1468b…) permanece no registry como diagnóstico
           # (deps de build incompletas; claim flaky pré-fix).
           # Pull: robot$tese+tese-ci (Pull+Push apenas no projeto tese).
-          image: harbor.home.arpa/tese/tese-runner@sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d
+          # Aplicado em 13/09 (piloto F1): referência por DIGEST via mirror
+          # interno do k3s (registries.yaml -> HTTP do svc harbor-registry;
+          # sem exigir CA no runtime do K3s) + imagePullSecrets com robot
+          # pull-only (robot$tese+tese-pull). O digest é o MESMO índice OCI
+          # publicado como tag 0.2.1 no Harbor.
+          image: harbor.harbor.svc.cluster.local/tese/tese-runner@sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d
           imagePullPolicy: IfNotPresent
           env:
             - name: GITEA_INSTANCE_URL
-              value: http://gitea-http.gitea.svc.cluster.local:3000
+              # HTTPS validado: traefik (192.168.1.51:443) + cert local-ca;
+              # CA montada via ConfigMap tese-ca-publica e aplicada ao
+              # act_runner (SSL_CERT_FILE), git (GIT_SSL_CAINFO) e curl.
+              value: https://gitea.home.arpa
             - name: GITEA_RUNNER_REGISTRATION_TOKEN
               valueFrom:
                 secretKeyRef:
