@@ -330,7 +330,8 @@ impl DataSpace {
         let q_llm_result = qos::profiles::llm_result().map_err(err)?;
         let q_ctx_snap = qos::profiles::context_snapshot().map_err(err)?;
         let q_ctx_upd = qos::profiles::context_update().map_err(err)?;
-        let q_tool = qos::profiles::tool_call().map_err(err)?;
+        let q_tool = qos::profiles::tool_call(None).map_err(err)?;
+        let q_tool_writer = qos::profiles::tool_call(Some(ownership_strength)).map_err(err)?;
         let q_trace = qos::profiles::execution_trace().map_err(err)?;
         let q_sec_snap = qos::profiles::security_snapshot().map_err(err)?;
         let q_sec_upd = qos::profiles::security_update().map_err(err)?;
@@ -458,7 +459,8 @@ impl DataSpace {
                 .map_err(err)?;
 
         let tool_call_writer =
-            DataWriter::with_qos(&publisher, &tool_call_topic, Some(&q_tool)).map_err(err)?;
+            DataWriter::with_qos(&publisher, &tool_call_topic, Some(&q_tool_writer))
+                .map_err(err)?;
         let execution_trace_writer =
             DataWriter::with_qos(&publisher, &execution_trace_topic, Some(&q_trace))
                 .map_err(err)?;

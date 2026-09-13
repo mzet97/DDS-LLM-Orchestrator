@@ -155,6 +155,16 @@ async fn diag_claim_dumps_sets_on_timeout() {
     let data_space_one = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).expect("ds-1");
     let data_space_two = DataSpace::new(DOMAIN, DataSpace::STRENGTH_AGENT).expect("ds-2");
     let observer = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).expect("observer");
+    // Publicação das requests por papel CLIENT (como na produção, quem
+    // submete é mais fraco que quem executa). Com o Ownership::Exclusive
+    // do tópico por instância (key=call_id), publicar pelo DataSpace do
+    // gateway-1 (ORCHESTRATOR) fazia dele o owner de TODAS as instâncias
+    // — as conclusões do gateway-2 (AGENT, mais fraco) eram suprimidas
+    // perante os readers quando o desempate por GUID caía no gateway-1
+    // (diagnóstico 2026-09-13: 21/100 vs 100/100). Nenhuma propriedade
+    // de aceite muda: mesmas 100 chamadas, duplicatas, claim store
+    // compartilhado e timeout.
+    let requester = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).expect("requester");
 
     let registry_one = {
         let registry = ToolRegistry::new();
@@ -225,13 +235,11 @@ async fn diag_claim_dumps_sets_on_timeout() {
     let written_set: HashSet<String> = (0..TOTAL).map(|i| i.to_string()).collect();
     for i in 0..TOTAL {
         let call = make_tool_call(i);
-        service_one
-            .data_space()
+        requester
             .write_tool_call(call.clone())
             .await
             .expect("escreve tool call");
-        service_one
-            .data_space()
+        requester
             .write_tool_call(call)
             .await
             .expect("duplicate delivery");

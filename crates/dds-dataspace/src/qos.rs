@@ -248,13 +248,24 @@ pub mod profiles {
     }
 
     /// `ToolCall.Request`: Reliable(10s), TransientLocal, KeepLast(5), Exclusive.
-    pub fn tool_call() -> DdsResult<Qos> {
-        QosBuilder::new()
+    ///
+    /// `strength`: papel do writer (cliente=10, agente=100, orq=200);
+    /// `None` para tópico/reader. Sem a strength do papel, o Exclusive
+    /// cai no desempate por GUID — o mesmo tipo de bug OP1/OP2 já
+    /// corrigido em `tasks`: um único writer (por sorte de GUID) passa
+    /// a deter as instâncias que toca, suprimindo as conclusões dos
+    /// executores perante os readers (reproduzido no diagnóstico de
+    /// 2026-09-13: claim 21/100 sem strength, 100/100 com).
+    pub fn tool_call(strength: Option<i32>) -> DdsResult<Qos> {
+        let mut builder = QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
             .durability(Durability::TransientLocal)
             .history(History::KeepLast(5))
-            .ownership(Ownership::Exclusive)
-            .build()
+            .ownership(Ownership::Exclusive);
+        if let Some(strength) = strength {
+            builder = builder.ownership_strength(strength);
+        }
+        builder.build()
     }
 
     /// `Security.PolicySnapshot`/`Security.PolicyUpdate`: no Python ambos usam

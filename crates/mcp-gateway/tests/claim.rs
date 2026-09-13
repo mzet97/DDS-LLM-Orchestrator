@@ -98,6 +98,16 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
     let data_space_one = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).expect("ds-1");
     let data_space_two = DataSpace::new(DOMAIN, DataSpace::STRENGTH_AGENT).expect("ds-2");
     let observer = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).expect("observer");
+    // Publicação das requests por papel CLIENT (como na produção, quem
+    // submete é mais fraco que quem executa). Com o Ownership::Exclusive
+    // do tópico por instância (key=call_id), publicar pelo DataSpace do
+    // gateway-1 (ORCHESTRATOR) fazia dele o owner de TODAS as instâncias
+    // — as conclusões do gateway-2 (AGENT, mais fraco) eram suprimidas
+    // perante os readers quando o desempate por GUID caía no gateway-1
+    // (diagnóstico 2026-09-13: 21/100 vs 100/100). Nenhuma propriedade
+    // de aceite muda: mesmas 100 chamadas, duplicatas, claim store
+    // compartilhado e timeout.
+    let requester = DataSpace::new(DOMAIN, DataSpace::STRENGTH_CLIENT).expect("requester");
 
     let registry_one = {
         let registry = ToolRegistry::new();
@@ -162,13 +172,11 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
 
     for i in 0..total {
         let call = make_tool_call(i);
-        service_one
-            .data_space()
+        requester
             .write_tool_call(call.clone())
             .await
             .expect("escreve tool call");
-        service_one
-            .data_space()
+        requester
             .write_tool_call(call)
             .await
             .expect("duplicate delivery");
@@ -187,5 +195,6 @@ async fn claim_prevents_duplicate_execution_with_two_gateways() {
     run_one.abort();
     run_two.abort();
     assert_eq!(exec_count.load(Ordering::SeqCst), total);
+    requester.shutdown().await.unwrap();
     observer.shutdown().await.unwrap();
 }
