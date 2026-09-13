@@ -31,9 +31,10 @@ fail() { echo "ACEITE_FALHOU: $*" >&2; exit 1; }
 
 run_build() {
   echo "=== ACEITE build: rev=$GIT_REV image=$IMAGE work=$WORK mem=$MEM cpus=$CPUS ==="
-  rm -rf "$WORK"; mkdir -p "$WORK"
+  sudo rm -rf "$WORK"; mkdir -p "$WORK" || fail "mkdir $WORK"
   if [ -n "${LOCAL_TARBALL:-}" ]; then
-    tar -xzf "$LOCAL_TARBALL" -C "$WORK"
+    tar -xzf "$LOCAL_TARBALL" -C "$WORK" || fail "extrair $LOCAL_TARBALL"
+    [ -f "$WORK/Cargo.toml" ] || fail "extracao sem Cargo.toml (tarball velho/vazio?)"
   else
     OPERADORA="${OPERADORA:-mzet@localhost}"
     ssh "$OPERADORA" "cd ~/projetos/tese/src/rust && git archive $GIT_REV" | tar -x -C "$WORK" \
