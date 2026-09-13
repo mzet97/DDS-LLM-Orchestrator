@@ -22,10 +22,12 @@
 #     em vez do --workspace completo do aceite — o pacote do artefato
 #     lista binários obrigatórios e falha se algum faltar.
 #
-# Actions de transferência de artefatos: upload/download-artifact@v4
-# (backend v4 suportado pelo Gitea ≥1.22; instância em 1.26.1). Fixadas
-# por SHA de commit (imutável); v6/v7 NÃO são suportadas pelo Gitea.
-# checkout também fixado por SHA.
+# Actions de transferência de artefatos: as OFICIAIS upload/download
+# -artifact@v4 abortam em não-GitHub (GHESNotSupportedError — tentativa 2
+# do piloto, job build do run nº2). Usados os forks compatíveis com o
+# backend v4 do Gitea (≥1.22; instância 1.26.1): ChristopherHX/gitea-
+# {upload,download}-artifact, fixados por SHA de commit (imutável).
+# v6/v7 não são suportadas pelo Gitea; checkout também fixado por SHA.
 #
 # Sem `on: push`: só `workflow_dispatch` com `ref` opcional (SHA imutável
 # no input). Todos os jobs usam a MESMA revisão resolvida no job `pin`.
@@ -113,7 +115,7 @@ jobs:
           printf '{"commit":"%s","arch":"%s","toolchain":"%s","deps":"%s"}\n' "$sha" "$arch" "$toolchain" "$deps" > "$out/manifest.json"
           ( cd "$out" && sha256sum -c SHA256SUMS )
           tar -czf "tese-rust-$arch-$sha.tar.gz" -C dist "$arch"
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: ChristopherHX/gitea-upload-artifact@81f940d004763f986ba3582c007fd842dd5cb0d7 # v4 sem check GHES (fork oficial p/ Gitea)
         with:
           name: "tese-rust-${{ needs.pin.outputs.sha }}"
           path: tese-rust-*.tar.gz
@@ -125,7 +127,7 @@ jobs:
     steps:
       # Transferência REAL pelo serviço de artefatos do Gitea (backend v4):
       # o que chega em pkg/ veio do serviço, não de resíduo do workspace.
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: ChristopherHX/gitea-download-artifact@75635f32b4c1c41c4b3d64e8f85210112ed4c9c7 # v4 sem check GHES
         with:
           name: "tese-rust-${{ needs.pin.outputs.sha }}"
           path: pkg
