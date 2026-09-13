@@ -58,6 +58,8 @@ pub fn show(ui: &mut egui::Ui, session: &mut SshSession, registry: &NodeRegistry
     });
     ui.separator();
     ui.label("Alvo (use o registro de Nós; digite usuário e comando):");
+    // Linhas separadas: em 800x600 a linha única clipava o campo usuário
+    // (defeito de layout G-04) — controles essenciais precisam caber.
     ui.horizontal(|ui| {
         ui.label("host:");
         ui.text_edit_singleline(&mut session.config.target.host);
@@ -66,6 +68,8 @@ pub fn show(ui: &mut egui::Ui, session: &mut SshSession, registry: &NodeRegistry
         if ui.text_edit_singleline(&mut port).changed() {
             session.config.target.port = port.parse().unwrap_or(session.config.target.port);
         }
+    });
+    ui.horizontal(|ui| {
         ui.label("usuário:");
         ui.text_edit_singleline(&mut session.config.target.username);
     });

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Config CycloneDDS do runner tese (CI em contêiner).
+     Descoberta determinística entre participants do MESMO namespace de
+     rede: interface determinada automaticamente + multicast default.
+     Sem esta config, a seleção default do CycloneDDS em bridge docker
+     resulta em associação parcial de leitores (tópico keyless com
+     Ownership::Exclusive suprime o writer de força menor perante
+     readers que só enxergam o owner) — reproduzido no diagnóstico de
+     2026-09-13: claim.rs via 21/100 sem este arquivo, 100/100 com ele.
+     Jobs são isolados por contêiner; nenhum host real é alcançado. -->
+<CycloneDDS xmlns="https://cdds.io/config">
+  <Domain Id="any">
+    <General>
+      <Interfaces>
+        <NetworkInterface autodetermine="true"/>
+      </Interfaces>
+      <AllowMulticast>default</AllowMulticast>
+    </General>
+  </Domain>
+</CycloneDDS>
