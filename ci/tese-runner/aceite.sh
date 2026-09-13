@@ -45,7 +45,7 @@ run_build() {
   # imagem nova a cada fase — sem pacotes de sessão anterior).
   docker run --rm --entrypoint sh --memory "$MEM" --cpus "$CPUS" \
     -v "$WORK":/work -w /work -e CARGO_HOME=/work/.cargo-home \
-    "$IMAGE" /bin/sh -exc '
+    "$IMAGE" -exc '
       echo "== toolchain =="; rustc --version; cargo --version; cmake --version | head -1; node --version
       echo "== uid =="; id
       echo "== fmt =="; cargo fmt --all -- --check
@@ -96,8 +96,10 @@ run_bootstrap() {
   echo "bootstrap .runner-existente/pula-registro executado (ver log)"
 
   # 3) Executa como UID 1001 direto (imagem pronta não exige preparo).
-  docker run --rm --entrypoint sh "$IMAGE" -c 'id; rustc --version' \
-    | grep -q "uid=1001" || fail "imagem não executa como uid 1001"
+  # Saída capturada em variável: grep -q fecha o pipe cedo, o docker morre
+  # por SIGPIPE e o pipefail marca falha espúria (bug corrigido do script).
+  UIDOUT=$(docker run --rm --entrypoint sh "$IMAGE" -c 'id; rustc --version')
+  echo "$UIDOUT" | grep -q "uid=1001" || fail "imagem não executa como uid 1001 (saída: $UIDOUT)"
   echo "ACEITE_BOOTSTRAP_OK"
 }
 
