@@ -36,17 +36,17 @@ spec:
           type: RuntimeDefault
       containers:
         - name: runner
-          # Build bootstrap verificado no .51 (só local, SEM push):
-          # tese-runner:0.2.0 =
-          # sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1
-          # (entrypoint registro+daemon, rustfmt/clippy, libc6-dev; smoke
-          # fmt+clippy+test+build como uid 1001 OK; entrypoint: registra sem
-          # .runner, pula com .runner existente)
-          # Na ativação aprovada: push ao Harbor e fixar aqui
-          # harbor.home.arpa/tese/tese-runner@sha256:<digest-do-push>.
-          # (projeto `tese` ainda não existe; robot `tese-ci` bloqueado na
-          # credencial admin do Harbor — senha documentada falha com 401.)
-          image: tese-runner:0.2.0
+          # Imagem publicada no Harbor (projeto `tese`, privado) em 2026-09-12.
+          # Proveniência: candidata local tese-runner:0.2.0 (só local no .51),
+          # ID sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1
+          # — o digest do REGISTRY saiu IDÊNTICO ao ID local (conferidos no
+          # push, no pull por digest e no header docker-content-digest).
+          # Smoke uid 1001: rustc/cargo 1.95.0, rustfmt 1.9.0, clippy 0.1.95,
+          # cmake 3.22.1, node v24.21.0, act_runner v0.2.12; /data gravável;
+          # SEM docker.sock/kubeconfig/chaves SSH; entrypoint falha fechado
+          # sem GITEA_* e registra somente com GITEA_* (pula com .runner).
+          # Pull: robot$tese+tese-ci (Pull+Push apenas no projeto tese, 180d).
+          image: harbor.home.arpa/tese/tese-runner@sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1
           imagePullPolicy: IfNotPresent
           env:
             - name: GITEA_INSTANCE_URL

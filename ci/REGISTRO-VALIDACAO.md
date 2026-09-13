@@ -52,6 +52,73 @@
   `Permission denied` com as chaves locais (porta 22 aberta); Harbor
   `GET /v2/` responde 401 + `WWW-Authenticate: Bearer` (desafio normal,
   credencial robot ainda não disponibilizada).
+  → RESOLVIDOS em 2026-09-12 (seções abaixo).
+
+## SSH administrativo restaurado (2026-09-12, com autorização expressa)
+- Pub `homelab-secure-edge-ansible` (`SHA256:Eu2fDEXUZ93PJx1A3cOSer8VJ0mPMsWko7QiSgUXJuA`)
+  cadastrada no `authorized_keys` do .51 por append; entradas
+  pré-existentes preservadas (2 no total, fingerprints conferidos).
+- Tentativa controlada única: `ssh -i ~/.ssh/homelab-secure-edge -o
+  IdentitiesOnly=yes k8s1@192.168.1.51 'echo SSH_OK; docker --version'`
+  → `SSH_OK`, Docker 29.4.0, exit 0. Host key validada (nunca
+  `StrictHostKeyChecking=no`).
+
+## Imagem `tese-runner:0.2.0` — reconciliação, testes e push (2026-09-12)
+- Reconciliação: ID local no .51
+  `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
+  == digest registrado em `ci/tese-runner/runner-deployment.yaml` —
+  SEM divergência, sem rebuild.
+- Smoke uid 1001: `uid=1001(runner)`; rustc/cargo 1.95.0, rustfmt 1.9.0,
+  clippy 0.1.95, cmake 3.22.1, node v24.21.0, act_runner v0.2.12;
+  `/data` gravável (DATA_OK).
+- Superfície: SEM docker.sock; SEM kubeconfig (root e $HOME); find
+  id_rsa/id_ed25519/known_hosts (maxdepth 4): nada; `entrypoint.sh`
+  presente 0755; falha FECHADA sem `GITEA_*`; tentativa de registro
+  apenas contra endereço inexistente (127.0.0.1:9) — Gitea real
+  intocado (F3 permanece bloqueado).
+- Harbor (autorizado): projeto `tese` criado PRIVADO; robot
+  `robot$tese+tese-ci` — somente Pull+Push de repositório no projeto
+  `tese`, duração 180d; segredo em arquivo 0600 fora de git (caminho:
+  `~/.config/dds-orchestrator/secrets/harbor-tese-robot.env`).
+- Infra necessária ao push TLS: CA do Harbor instalada no .51 em
+  `/etc/docker/certs.d/harbor.home.arpa/ca.crt` e
+  `/etc/containerd/certs.d/harbor.home.arpa/ca.crt` (+ pool do sistema);
+  docker reiniciado 1x (iperf3-server religado; k3s/containerd do
+  cluster intocados).
+- Push: `tese-runner:0.2.0` → digest do REGISTRY
+  `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
+  — IDÊNTICO ao ID local (provenância 1:1); pull por digest OK;
+  header `docker-content-digest` confere. Manifesto fixado em
+  `harbor.home.arpa/tese/tese-runner@sha256:33c1468b…9d5d1`.
+- Pendente (exigem autorizações próprias): aplicar o Deployment,
+  registrar/ativar o runner no Gitea (F3), executar workflow, promover
+  release.
+
+## GUI Studio — painel SSH dedicado, descartável (2026-09-12)
+- Ambiente: app forçado a X11 (XWayland) para automação por xdotool
+  ( Wayland/KDE sem injetor de entrada; uinput inacessível neste kernel:
+  /dev/uinput nobody:nobody, chown negado). Janela "DDS Orchestrator
+  Studio" real, controles reais.
+- Fluxo: servidor descartável 127.0.0.1:50235 (impressão host
+  `SHA256:jZfPU5zi0EkG8/n9gupExHuWvLHfKpRNnNhsjPOXvco`, conferida por
+  ssh-keygen E pelo bloco da GUI com zoom de captura — IDÊNTICAS);
+  identidade Ed25519 gerada pela GUI em `/tmp/studio-gui-ssh/gui`
+  (determinística; `.pub` cadastrada via add-pub; fingerprint
+  `SHA256:tjHywDqIkBv/Uy6898DLEtiPqCJLHBvoCtxfi90OCNU`); handshake real:
+  3 conexões `[preauth]` no log do sshd.
+- BUG 1 encontrado e CORRIGIDO: painel nunca definia
+  `session.config.trust_path` → aprovação falhava com `arquivo de
+  confiança ilegível em :` (caminho vazio). Fix: `views/ssh.rs` define
+  `<diretório>/trust.json` (mesmo fluxo dos testes). 92/92 testes do
+  crate passando (inclui aprovação→Idle→persistência).
+- BUG 2 (ABERTO): após o 1º `Conectar e executar`, a janela para de
+  processar eventos (hover/teclado/windowmove sem efeito; frames
+  idênticos; threads sem spin visível) — o clique de aprovação não
+  avalia na sessão X11 automatizada. Suspeita: laço de repaint/eventos
+  (winit/egui) no caminho X11 — exige triage com mouse físico.
+- Erro sem vazamento: a falha exibida (`Falhou (sem fallback): arquivo
+  de confiança ilegível em …`) contém apenas texto do erro — sem senha,
+  sem caminho de chave privada, sem token.
 
 ## Caminho DDS completo (domínio de teste 77, 2026-09-12)
 - Participantes: `det-responder --domain 77` + `agent --agent-id
