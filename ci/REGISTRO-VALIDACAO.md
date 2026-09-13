@@ -82,7 +82,67 @@
   (`docker login`) para o push; `docker logout` após o uso e o arquivo
   local da credencial removido.
 
-## Compilação e testes reais na imagem publicada (2026-09-13)
+## Imagem `tese-runner:0.2.1` — APROVADA no aceite completo (2026-09-13)
+- Dockerfile/commit: 9321e31 (fix arbitragem + tool_call strength) sobre
+  d1f32b9 (make/g++, RUSTUP_TOOLCHAIN, HOME/CARGO_HOME uid 1001,
+  /etc/cyclonedds.xml + CYCLONEDDS_URI) — branch studio/phase-800-node.
+- Aceite reproduzível: `ci/tese-runner/aceite.sh` (fases build|bootstrap,
+  LOCAL_TARBALL da revisão, MEM/CPUS/CLAIM_REPS explícitos), rodando como
+  root no .51 (chown 1001), containers uid 1001 SEM apt-get/sudo/setpriv.
+- Resultados (rev 9321e31, imagem 0.2.1):
+  - bootstrap: fail-closed sem GITEA_* ✓; com .runner existente pula
+    registro ✓ (endereço inexistente; Gitea real intocado — F3 intacto);
+    executa como uid 1001 ✓.
+  - build: toolchain ✓ (rustc/cargo 1.95.0, node v24.21.0, make/g++);
+    `fmt --check` ✓; `clippy -D warnings` ✓; `cargo fetch` ✓; SUÍTE
+    COMPLETA `--no-fail-fast -- --test-threads=1` **0 falhas** (44+
+    suítes ok, incluindo claim e claim_diag); release build ✓
+    (agent/context-store/dds-bench como uid 1001).
+  - claim ×5 (estado novo cada): 5/5 OK (~0.85s cada; antes do fix:
+    loteria com timeouts de 30.8s).
+- Publicação: push via robot$tese+tese-ci; **digest do registry (índice
+  da tag 0.2.1): sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d**
+  (header docker-content-digest); pull por digest pelo Docker do .51 ✓
+  (não valida K3s — Deployment não aplicado); execução uid 1001 sem
+  preparo ✓. Objetos OCI: manifest amd64
+  sha256:88261ef750ee47f181d5e1982af71faea83c93dc54e39e008a0eb4db726c5f61;
+  config sha256:0b000c11879ad343d1b64f29dde30728cf66fee3e6d6568111ba1f431de6a36d;
+  10 camadas.
+- Manifesto `runner-deployment.yaml` fixado em
+  `harbor.home.arpa/tese/tese-runner@sha256:cee13047…58917d`.
+- 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
+  incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
+
+## Falha do claim — causa raiz e correção (2026-09-13, commit 9321e31)
+- Sintoma: `claim_prevents_duplicate_execution_with_two_gateways` timeout
+  30.8s no contêiner (4 e 16 CPUs — não era contenção) e flaky fora dele.
+- Diagnóstico por conjuntos (`tests/claim_diag.rs`, decorador de
+  ClaimStore + handler gravador): SEMPRE 100/100 executados exatamente
+  1× (claims 100 únicos, 300 duplicatas refutadas); a perda estava no
+  OBSERVADOR — via exatamente as conclusões do gateway-1 (21/100, 54/54
+  em outro run) e NENHUMA do gateway-2.
+- Causa raiz (tracing Cyclone finest): writers de `ToolCall.Request`
+  (key=call_id, `Ownership::Exclusive`) com `ownership_strength=0` —
+  a força do papel do DataSpace NUNCA foi propagada para esse tópico
+  (tasks propagava). Owner por instância decidido por GUID (determinístico
+  por processo, aleatório entre runs): quando o GUID do writer do gw-1
+  vencia, ele detinha as instâncias e suprimia as conclusões do gw-2
+  perante os readers — o mesmo tipo de bug OP1/OP2 documentado para
+  Tasks. Não era descoberta/config de rede (lo, bridge nova, network
+  none e XMLs variados todos flaky do mesmo modo).
+- Correções: (1) produto — `profiles::tool_call(Option<i32>)` aplica a
+  strength do papel no writer (paridade com tasks e com a arbitragem do
+  in_memory); (2) testes claim/claim_diag — requests publicadas por
+  DataSpace CLIENT (topologia de produção: quem submete é mais fraco que
+  quem executa; o executor vence a arbitragem da instância que conclui).
+  Propriedades de aceite preservadas: 100 chamadas, duplicadas, claim
+  store compartilhado, timeout 30s, dois gateways arbitrando.
+- Evidência de estabilidade: 6/6 runs locais ~0.85s + 5/5 no aceite em
+  contêiner (estado novo cada).
+- Escopo da evidência mantido: dois serviços no MESMO processo com
+  claim store em memória compartilhado — não é prova de exclusão
+  distribuída entre máquinas.
+## Compilação e testes na 0.2.0 (rodada DIAGNÓSTICA, 2026-09-13)
 - Referência executada POR DIGEST:
   `harbor.home.arpa/tese/tese-runner@sha256:33c1468b…9d5d1`.
 - Código: checkout limpo de `cfe3ff2` (git archive → tar), em

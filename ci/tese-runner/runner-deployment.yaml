@@ -36,19 +36,24 @@ spec:
           type: RuntimeDefault
       containers:
         - name: runner
-          # Imagem publicada no Harbor (projeto `tese`, privado) em 2026-09-12.
-          # Proveniência OCI verificada: a referência @sha256 abaixo é o
-          # ÍNDICE OCI sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1
-          # (docker inspect .Id no store containerd) → manifesto amd64
-          # sha256:2e1d3232755038404ce1066342940c7e93019b9e43317ff5fcabcaf8f21c22c5
-          # → config sha256:1f672ebd668f8a48bd4ccce5bb4756ac00fef875040a991fea634c828165184c
-          # + 8 camadas. Candidata: build local tese-runner:0.2.0 no .51.
-          # Smoke uid 1001: rustc/cargo 1.95.0, rustfmt 1.9.0, clippy 0.1.95,
-          # cmake 3.22.1, node v24.21.0, act_runner v0.2.12; /data gravável;
-          # SEM docker.sock/kubeconfig/chaves SSH; entrypoint falha fechado
-          # sem GITEA_* e registra somente com GITEA_* (pula com .runner).
-          # Pull: robot$tese+tese-ci (Pull+Push apenas no projeto tese, 180d).
-          image: harbor.home.arpa/tese/tese-runner@sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1
+          # Imagem APROVADA no aceite de 2026-09-13 (revisão 9321e31):
+          # tese-runner:0.2.1 — build+deps completos (make/g++, toolchain
+          # fixada, HOME/CARGO_HOME uid 1001, /etc/cyclonedds.xml com
+          # CYCLONEDDS_URI). Aceite: bootstrap fail-closed OK; fmt/clippy
+          # OK; SUÍTE COMPLETA --no-fail-fast 0 falhas; release build OK;
+          # claim×5 estado novo OK (fix da arbitragem: strength do papel
+          # propagada ao ToolCall.Request + requests publicadas como
+          # CLIENT — ver commit 9321e31). Pull/execute por digest como
+          # uid 1001 SEM apt-get/sudo/setpriv verificados.
+          # Objetos OCI: índice sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d
+          # (docker-content-digest da tag 0.2.1) → manifest amd64
+          # sha256:88261ef750ee47f181d5e1982af71faea83c93dc54e39e008a0eb4db726c5f61
+          # → config sha256:0b000c11879ad343d1b64f29dde30728cf66fee3e6d6568111ba1f431de6a36d
+          # + 10 camadas. Candidata anterior 0.2.0 (índice
+          # sha256:33c1468b…) permanece no registry como diagnóstico
+          # (deps de build incompletas; claim flaky pré-fix).
+          # Pull: robot$tese+tese-ci (Pull+Push apenas no projeto tese).
+          image: harbor.home.arpa/tese/tese-runner@sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d
           imagePullPolicy: IfNotPresent
           env:
             - name: GITEA_INSTANCE_URL
