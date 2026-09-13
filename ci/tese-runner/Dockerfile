@@ -57,9 +57,12 @@ RUN echo 'runner:x:1001:1001:CI:/data:/bin/sh' >> /etc/passwd \
 COPY --chown=1001:1001 entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY cyclonedds.xml /etc/cyclonedds.xml
 RUN chmod +x /usr/local/bin/entrypoint.sh
-# Descoberta DDS determinística no namespace do contêiner (ver comentário
-# no XML): sem isto, readers perdem writers de força menor em tópicos
-# keyless+Exclusive (claim.rs via 21/100; com config, 100/100).
+# Descoberta DDS uniforme nos jobs do runner (config efetiva no XML:
+# interface selecionada automaticamente + multicast em default).
+# NÃO é a correção da falha de claim — a causa raiz era a arbitragem
+# por GUID (ownership_strength ausente no ToolCall.Request), corrigida
+# no código em 9321e31. Este arquivo apenas padroniza a descoberta
+# entre participants do mesmo namespace de rede do job.
 ENV CYCLONEDDS_URI=file:///etc/cyclonedds.xml
 ENV HOME=/data
 USER 1001
