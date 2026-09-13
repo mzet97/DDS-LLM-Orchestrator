@@ -40,7 +40,9 @@ run_build() {
     ssh "$OPERADORA" "cd ~/projetos/tese/src/rust && git archive $GIT_REV" | tar -x -C "$WORK" \
       || fail "git archive de $GIT_REV"
   fi
-  chown -R 1001:1001 "$WORK" 2>/dev/null || sudo chown -R 1001:1001 "$WORK"
+  # Rodar este script como root no .51 (infra): o chown precisa valer
+  # para o uid 1001 dos contêineres — sem sudo best-effort silencioso.
+  chown -R 1001:1001 "$WORK" || fail "chown 1001 em $WORK (rode como root)"
 
   # Container ÚNICO para toda a fase build (CARGO_HOME aquecido no volume;
   # imagem nova a cada fase — sem pacotes de sessão anterior).
