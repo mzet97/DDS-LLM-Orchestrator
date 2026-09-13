@@ -9,7 +9,27 @@
 use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use eframe::egui;
 use studio_ssh::{Approval, BridgeError, SshTarget};
+
+/// Log de depuração do painel (ativar com `STUDIO_SSH_DEBUG=1`). Nunca
+/// registra senha, conteúdo de chave nem a configuração completa.
+pub(crate) fn debug_log(msg: &str) {
+    if std::env::var_os("STUDIO_SSH_DEBUG").is_some() {
+        eprintln!("[ssh-gui] {msg}");
+    }
+}
+
+/// Nome curto da fase para log (sem conteúdo de saída nem configuração).
+fn fase_nome(phase: &SshPhase) -> &'static str {
+    match phase {
+        SshPhase::Idle => "Idle",
+        SshPhase::NeedsApproval { .. } => "NeedsApproval",
+        SshPhase::Running => "Running",
+        SshPhase::Done { .. } => "Done",
+        SshPhase::Failed { .. } => "Failed",
+    }
+}
 
 /// Alvo + credenciais de sessão (senha só em memória, nunca persistida).
 #[derive(Debug, Clone)]
@@ -49,6 +69,7 @@ pub struct SshSession {
     pub config: SshSessionConfig,
     pub phase: SshPhase,
     receiver: Option<mpsc::Receiver<SshMsg>>,
+    repaint: Option<egui::Context>,
 }
 
 impl SshSession {
@@ -71,7 +92,14 @@ impl SshSession {
             },
             phase: SshPhase::Idle,
             receiver: None,
+            repaint: None,
         }
+    }
+
+    /// Registra o contexto egui para acordar a UI a partir da thread de
+    /// conexão (egui::Context é Clone + Send + Sync em egui 0.36).
+    pub fn set_repaint_source(&mut self, ctx: egui::Context) {
+        self.repaint = Some(ctx);
     }
 
     /// Dispara a execução em thread; a UI segue livre (`poll` drena).
@@ -84,11 +112,19 @@ impl SshSession {
         }
         let config = self.config.clone();
         let (tx, rx) = mpsc::channel();
+        let repaint = self.repaint.clone();
+        debug_log("start: thread de conexão disparada");
         std::thread::spawn(move || {
-            let _ = tx.send(SshMsg::Finished(runner(config)));
+            let outcome = runner(config);
+            debug_log("thread: conclusão recebida; acordando a UI");
+            let _ = tx.send(SshMsg::Finished(outcome));
+            if let Some(ctx) = repaint {
+                ctx.request_repaint();
+            }
         });
         self.receiver = Some(rx);
         self.phase = SshPhase::Running;
+        debug_log("start: fase -> Running");
     }
 
     /// Caminho real: ponte síncrona da `studio_ssh` em thread dedicada.
@@ -115,7 +151,7 @@ impl SshSession {
         }
         if let Some(outcome) = finished {
             self.receiver = None;
-            self.phase = match outcome {
+            let next = match outcome {
                 Ok(output) => SshPhase::Done { output },
                 Err(BridgeError::UnknownHost {
                     key_type,
@@ -129,21 +165,34 @@ impl SshSession {
                     error: err.to_string(),
                 },
             };
+            debug_log(&format!("poll: fase -> {}", fase_nome(&next)));
+            self.phase = next;
+            if let Some(ctx) = &self.repaint {
+                ctx.request_repaint();
+            }
         }
     }
 
     /// Aprovação explícita do operador sobre a impressão EXIBIDA (a ser
     /// conferida por fonte independente). Persiste e volta a `Idle`.
     pub fn approve_displayed(&mut self, approved_by: &str) -> Result<(), String> {
+        debug_log("aprovar: handler disparado");
         let (key_type, fingerprint) = match &self.phase {
             SshPhase::NeedsApproval {
                 key_type,
                 fingerprint,
             } => (key_type.clone(), fingerprint.clone()),
-            _ => return Err(String::from("nada a aprovar")),
+            _ => {
+                debug_log("aprovar: nada a aprovar na fase atual");
+                return Err(String::from("nada a aprovar"));
+            }
         };
         let mut file =
-            studio_ssh::TrustFile::open(&self.config.trust_path).map_err(|err| err.to_string())?;
+            studio_ssh::TrustFile::open(&self.config.trust_path).map_err(|err| {
+                debug_log("aprovar: cofre falhou ao abrir");
+                err.to_string()
+            })?;
+        debug_log("aprovar: cofre aberto");
         let replaced = file
             .store()
             .approvals()
@@ -172,7 +221,11 @@ impl SshSession {
             approval.replaced = replaced;
         }
         file.store_mut().approve(approval);
-        file.save().map_err(|err| err.to_string())?;
+        file.save().map_err(|err| {
+            debug_log("aprovar: cofre falhou ao persistir");
+            err.to_string()
+        })?;
+        debug_log("aprovar: cofre persistido; fase -> Idle");
         self.phase = SshPhase::Idle;
         Ok(())
     }

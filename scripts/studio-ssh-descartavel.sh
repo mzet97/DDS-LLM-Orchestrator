@@ -56,9 +56,27 @@ case "${1:-}" in
     fi
     ;;
   stop)
-    test -f "$PIDFILE" && kill "$(cat "$PIDFILE")" 2>/dev/null || true
-    rm -f "$PIDFILE"
-    echo "parado"
+    if test -f "$PIDFILE"; then
+      PID="$(cat "$PIDFILE")"
+      PORT="$(cat "$PORTFILE" 2>/dev/null || echo '?')"
+      kill "$PID" 2>/dev/null || true
+      for _ in 1 2 3 4 5; do
+        kill -0 "$PID" 2>/dev/null || break
+        sleep 0.3
+      done
+      if kill -0 "$PID" 2>/dev/null; then
+        echo "ERRO: pid $PID ainda vivo — servidor NÃO encerrado"
+        exit 1
+      fi
+      if ss -ltn 2>/dev/null | grep -q "127.0.0.1:$PORT "; then
+        echo "ERRO: porta $PORT ainda com listener"
+        exit 1
+      fi
+      rm -f "$PIDFILE"
+      echo "parado e confirmado: pid $PID inexistente, porta $PORT sem listener"
+    else
+      echo "parado (sem pidfile)"
+    fi
     ;;
   *)
     echo "uso: $0 {start|add-pub <f.pub>|status|stop}" >&2; exit 2

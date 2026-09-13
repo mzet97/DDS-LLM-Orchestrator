@@ -63,6 +63,60 @@
   → `SSH_OK`, Docker 29.4.0, exit 0. Host key validada (nunca
   `StrictHostKeyChecking=no`).
 
+## Mudanças de infraestrutura do .51 (2026-09-12, autorizadas)
+- CA pública do Harbor instalada (fonte: CA já validada da operadora —
+  certificado público, sem chave privada):
+  - `/etc/docker/certs.d/harbor.home.arpa/ca.crt` (0644)
+  - `/etc/containerd/certs.d/harbor.home.arpa/ca.crt` (0644)
+  - `/usr/local/share/ca-certificates/local-root-ca.crt` +
+    `update-ca-certificates` (confiança do sistema).
+  Mantidos no host (NÃO removidos): necessários a pull/push TLS
+  futuros do runner. Reversíveis removendo os arquivos +
+  `update-ca-certificates --fresh`.
+- `systemctl restart docker` executado 1x (o containerd store do
+  Docker 29 lê `certs.d` apenas no arranque). Afetados: container
+  `iperf3-server` (parado e religado em seguida — Up confirmado);
+  k3s e seu containerd NÃO foram reiniciados (instância separada);
+  pods do cluster seguiram Running.
+- Robot `robot$tese+tese-ci` credenciado no docker config do k8s1
+  (`docker login`) para o push; `docker logout` após o uso e o arquivo
+  local da credencial removido.
+
+## Compilação e testes reais na imagem publicada (2026-09-13)
+- Referência executada POR DIGEST:
+  `harbor.home.arpa/tese/tese-runner@sha256:33c1468b…9d5d1`.
+- Código: checkout limpo de `cfe3ff2` (git archive → tar), em
+  `/tmp/tese-compile-cfe3ff2` (dono uid 1001), `CARGO_HOME` próprio;
+  sem credenciais, docker socket ou kubeconfig montados.
+- Recursos: `--memory 8g/16g --cpus 4/16` (duas rodadas p/ discriminar
+  contenção); rede do container liberada apenas para `cargo fetch`
+  (crates.io) — o build final roda `--offline`.
+- Comandos executados como uid 1001 (via setpriv), na ordem do
+  `security.yml`:
+  1. `cargo fetch --locked` ✓
+  2. `cargo fmt --all -- --check` ✓
+  3. `cargo clippy --workspace --all-targets --all-features --locked
+     -- -D warnings` ✓ (compila CycloneDDS 11.0.0 embutido via cmake)
+  4. `cargo test --workspace --all-features --locked --
+     --test-threads=1` → 44 suítes `ok` + **1 FALHA**:
+     - `mcp-gateway/tests/claim.rs:183`
+       `claim_prevents_duplicate_execution_with_two_gateways` — 100
+       tool calls não completaram no timeout de 30s (30.82s com 4
+       CPUs; 30.83s com 16 CPUs). Reproduzível e INDEPENDENTE de
+       recursos. Suspeita: descoberta/entrega DDS dentro do network
+       namespace do container. **ABERTO p/ triage — bloqueia o uso do
+       runner p/ essa suíte.**
+  5. `cargo build --workspace --all-features --locked --offline
+     --release` ✓ **COMPILACAO_OK** (0 erros) — artefatos uid 1001 em
+     `target/release`: `agent` (4.7 MB), `context-store` (2.0 MB),
+     `dds-bench` (2.0 MB) + `.fingerprint`/`deps` (652 itens).
+     Nota de limpeza: um `.cargo-lock` root-órfão de um run anterior
+     foi removido antes da rodada final.
+- Lacuna encontrada no Dockerfile da imagem: faltam `make` e `g++`
+  para o CycloneDDS embutido (só gcc foi instalado). Contornada por
+  run com apt-get + `setpriv` para uid 1001 — incorporar ao Dockerfile
+  na próxima iteração.
+
 ## Imagem `tese-runner:0.2.0` — reconciliação, testes e push (2026-09-12)
 - Reconciliação: ID local no .51
   `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
@@ -85,40 +139,71 @@
   `/etc/containerd/certs.d/harbor.home.arpa/ca.crt` (+ pool do sistema);
   docker reiniciado 1x (iperf3-server religado; k3s/containerd do
   cluster intocados).
-- Push: `tese-runner:0.2.0` → digest do REGISTRY
-  `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
-  — IDÊNTICO ao ID local (provenância 1:1); pull por digest OK;
-  header `docker-content-digest` confere. Manifesto fixado em
-  `harbor.home.arpa/tese/tese-runner@sha256:33c1468b…9d5d1`.
+- Push: `tese-runner:0.2.0` → aceito pelo registry. Objetos OCI
+  identificados (não são um objeto só):
+  - `docker image inspect .Id` (store containerd) reporta o digest do
+    **índice OCI**: `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
+    — é a referência fixada no manifesto (`@sha256:33c1468b…`).
+  - Índice → 1 manifesto amd64
+    `sha256:2e1d3232755038404ce1066342940c7e93019b9e43317ff5fcabcaf8f21c22c5`
+    (oci.image.manifest.v1+json, 1813 B).
+  - Manifest → config
+    `sha256:1f672ebd668f8a48bd4ccce5bb4756ac00fef875040a991fea634c828165184c`
+    + 8 camadas (OCI layer tar+gzip).
+- Pull por digest `@sha256:33c1468b…` executado pelo **Docker do .51**
+  (não valida pull pelo runtime do K3s — o Deployment ainda não foi
+  aplicado); header `docker-content-digest` do registry confere com o
+  índice.
 - Pendente (exigem autorizações próprias): aplicar o Deployment,
   registrar/ativar o runner no Gitea (F3), executar workflow, promover
   release.
 
-## GUI Studio — painel SSH dedicado, descartável (2026-09-12)
-- Ambiente: app forçado a X11 (XWayland) para automação por xdotool
-  ( Wayland/KDE sem injetor de entrada; uinput inacessível neste kernel:
-  /dev/uinput nobody:nobody, chown negado). Janela "DDS Orchestrator
-  Studio" real, controles reais.
-- Fluxo: servidor descartável 127.0.0.1:50235 (impressão host
-  `SHA256:jZfPU5zi0EkG8/n9gupExHuWvLHfKpRNnNhsjPOXvco`, conferida por
-  ssh-keygen E pelo bloco da GUI com zoom de captura — IDÊNTICAS);
-  identidade Ed25519 gerada pela GUI em `/tmp/studio-gui-ssh/gui`
-  (determinística; `.pub` cadastrada via add-pub; fingerprint
-  `SHA256:tjHywDqIkBv/Uy6898DLEtiPqCJLHBvoCtxfi90OCNU`); handshake real:
-  3 conexões `[preauth]` no log do sshd.
-- BUG 1 encontrado e CORRIGIDO: painel nunca definia
-  `session.config.trust_path` → aprovação falhava com `arquivo de
-  confiança ilegível em :` (caminho vazio). Fix: `views/ssh.rs` define
-  `<diretório>/trust.json` (mesmo fluxo dos testes). 92/92 testes do
-  crate passando (inclui aprovação→Idle→persistência).
-- BUG 2 (ABERTO): após o 1º `Conectar e executar`, a janela para de
-  processar eventos (hover/teclado/windowmove sem efeito; frames
-  idênticos; threads sem spin visível) — o clique de aprovação não
-  avalia na sessão X11 automatizada. Suspeita: laço de repaint/eventos
-  (winit/egui) no caminho X11 — exige triage com mouse físico.
-- Erro sem vazamento: a falha exibida (`Falhou (sem fallback): arquivo
-  de confiança ilegível em …`) contém apenas texto do erro — sem senha,
-  sem caminho de chave privada, sem token.
+## GUI Studio — painel SSH dedicado, descartável (2026-09-12/13)
+- Ambiente: app forçado a X11 (XWayland), apenas no processo de teste
+  (`env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE DISPLAY=:0`), para
+  automação por xdotool (Wayland/KDE sem injetor; uinput inacessível
+  neste kernel: /dev/uinput nobody:nobody, chown negado). Janela real
+  "DDS Orchestrator Studio" (bin `target/debug/studio` da revisão
+  cfe3ff2+, `STUDIO_SSH_DEBUG=1` para instrumentação em stderr).
+- Aceite CONCLUÍDO em 2026-09-13, fluxo completo pelos controles:
+  servidor descartável → Gerar identidade (GUI) → add-pub → Conectar →
+  bloco `Host desconhecido` com impressão IDÊNTICA à do terminal
+  (conferida por zoom de captura) → **Aprovar e salvar no cofre**
+  (trust.json gravado) → reconectar → **Saída: PROVA_OK** → erro
+  controlado (servidor parado; `Connection refused`) sem senha, sem
+  caminho de chave privada, sem token → reinício do app → reconexão
+  direta (aprovação persistida recuperada, sem novo prompt).
+- Correções registradas:
+  - BUG 1 (CORRIGIDO, commit 27790df): painel não definia
+    `trust_path` → aprovação falhava com `arquivo de confiança
+    ilegível em :`. Fix: `views/ssh.rs` → `aplicar_diretorio()` define
+    `<diretório>/trust.json`. Regressão nova
+    (`aplicar_diretorio_configura_identidade_e_cofre`) reproduz a
+    falha na versão sem fix (FAILED) e passa com o fix.
+  - BUG 2 (CORRIGIDO, mesmo commit): a thread de conexão não acordava
+    a UI ao concluir — `request_repaint` só existia com fase Running;
+    nas transições para NeedsApproval/Done/Failed o frame não rodava
+    (eventos enfileirados sem avaliação — interpretação correta do
+    antigo "congelamento"). Fix: `SshSession::set_repaint_source(ctx)`
+    + `ctx.request_repaint()` na thread e pós-transição (egui 0.36:
+    Context Clone+Send+Sync). Log `STUDIO_SSH_DEBUG` registra
+    start/fase/thread/cofre — sem senha nem conteúdo de chave.
+- Correções de interpretação:
+  - A identidade Ed25519 NÃO é determinística: `PrivateKey::random`
+    por geração + `encrypt(passphrase)`. Teste novo
+    (`identidade_aleatoria.rs`): mesma senha em diretórios novos →
+    públicas DIFERENTES; identidade existente conserva a fingerprint
+    ao desbloquear.
+  - O painel TEM campo `usuário` (linha host/porta/usuário) — ficava
+    CLIPADO na janela 800x600. Com janela 1300x720 o campo fica
+    visível e foi preenchido explicitamente (`mzet`). Config inicial:
+    string vazia (nada de usuário implícito).
+- Instrumentação: `STUDIO_SSH_DEBUG=1` registra handler de botões,
+  transições de fase (Idle/Running/NeedsApproval/Done/Failed),
+  conclusão da thread e abertura/persistência do cofre — sem segredos.
+- Evidências (capturas sanitizadas — senha sempre mascarada, sem
+  chaves) movidas para `~/projetos/tese/evidencias/2026-09-12-gui-ssh/`
+  (fora de /tmp); verificação de sanitização no relatório da rodada.
 
 ## Caminho DDS completo (domínio de teste 77, 2026-09-12)
 - Participantes: `det-responder --domain 77` + `agent --agent-id

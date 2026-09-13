@@ -8,7 +8,17 @@ use eframe::egui;
 use orchestrator_studio::nodes::NodeRegistry;
 use orchestrator_studio::ssh_session::{SshPhase, SshSession};
 
+/// Aplica o diretório informado no painel: identidade e cofre ficam
+/// juntos no mesmo diretório. Regressão G-04: `trust_path` precisa
+/// acompanhar `identity_pem` — sem isso a aprovação falhava com
+/// "arquivo de confiança ilegível em :" (caminho vazio).
+pub fn aplicar_diretorio(session: &mut SshSession, dir: &str) {
+    session.config.identity_pem = std::path::PathBuf::from(dir).join("studio_ed25519");
+    session.config.trust_path = std::path::PathBuf::from(dir).join("trust.json");
+}
+
 pub fn show(ui: &mut egui::Ui, session: &mut SshSession, registry: &NodeRegistry) {
+    session.set_repaint_source(ui.ctx().clone());
     session.poll();
     ui.heading("SSH dedicado (bridge integrada, G-04)");
     if matches!(session.phase, SshPhase::Running) {
@@ -24,8 +34,7 @@ pub fn show(ui: &mut egui::Ui, session: &mut SshSession, registry: &NodeRegistry
             .map(|parent| parent.display().to_string())
             .unwrap_or_default();
         if ui.text_edit_singleline(&mut dir).changed() {
-            session.config.identity_pem = std::path::PathBuf::from(&dir).join("studio_ed25519");
-            session.config.trust_path = std::path::PathBuf::from(&dir).join("trust.json");
+            aplicar_diretorio(session, &dir);
         }
         if ui.button("Gerar identidade").clicked() {
             let dir = std::path::PathBuf::from(&dir);
@@ -105,4 +114,37 @@ pub fn show(ui: &mut egui::Ui, session: &mut SshSession, registry: &NodeRegistry
         }
     }
     ui.label("Cofre: aprovações por host:porta com contexto; chave alterada bloqueia.");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Regressão G-04: informar o diretório no painel precisa configurar
+    /// identidade E cofre. O bug antigo deixava `trust_path` vazio e a
+    /// aprovação falhava com "arquivo de confiança ilegível em :".
+    #[test]
+    fn aplicar_diretorio_configura_identidade_e_cofre() {
+        let mut session = SshSession::new();
+        assert!(session.config.trust_path.as_os_str().is_empty());
+
+        aplicar_diretorio(&mut session, "/tmp/studio-gui-regressao");
+
+        assert_eq!(
+            session.config.identity_pem,
+            std::path::PathBuf::from("/tmp/studio-gui-regressao/studio_ed25519")
+        );
+        assert_eq!(
+            session.config.trust_path,
+            std::path::PathBuf::from("/tmp/studio-gui-regressao/trust.json")
+        );
+    }
+
+    /// O campo usuário do alvo começa vazio e é preenchido explicitamente
+    /// pelo operador — nada de usuário implícito.
+    #[test]
+    fn usuario_do_alvo_comeca_vazio() {
+        let session = SshSession::new();
+        assert!(session.config.target.username.is_empty());
+    }
 }
