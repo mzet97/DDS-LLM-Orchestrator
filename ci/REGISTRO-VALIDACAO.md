@@ -139,9 +139,27 @@
   store compartilhado, timeout 30s, dois gateways arbitrando.
 - Evidência de estabilidade: 6/6 runs locais ~0.85s + 5/5 no aceite em
   contêiner (estado novo cada).
-- Escopo da evidência mantido: dois serviços no MESMO processo com
-  claim store em memória compartilhado — não é prova de exclusão
-  distribuída entre máquinas.
+- Propriedade EFETIVAMENTE demonstrada (delimitação precisa): dois
+  serviços ToolCallService no MESMO processo, com claim store
+  compartilhado em memória (MemoryClaimStore), recebendo as 100
+  requisições duplicadas via DDS, executando cada chamada exatamente
+  uma vez e tornando as conclusões observáveis ao reader da topologia
+  testada (após a correção da arbitragem em 9321e31). RESSALVA: isso
+  NÃO comprova exclusão distribuída entre máquinas — nem persistência
+  de claims entre processos (FileClaimStore aparece apenas em
+  exactly_once), nem particionamento de rede; propriedades de cenários
+  posteriores.
+- Interpretações descartadas com evidência (não reabrir sem fato novo):
+  descoberta/config de rede como causa da falha do claim — lo, bridge
+  nova, --network none e variações de XML reproduziram o MESMO padrão
+  de falha pré-fix; o tracing finest mostrou ownership_strength=0 em
+  todos os writers (causa real).
+- Correção de documentação (13/09, pré-ativação, commit 32651ca):
+  comentários do Dockerfile/cyclonedds.xml que atribuíam a correção à
+  descoberta, chamavam o tópico de keyless e afirmavam "nenhum host
+  real alcançado" foram reescritos (config efetiva: autodetermine +
+  multicast default; jobs alcançam endpoints da CI). QoS/descoberta
+  NÃO alteradas nesta correção; a tag 0.2.1 NÃO foi substituída.
 ## Compilação e testes na 0.2.0 (rodada DIAGNÓSTICA, 2026-09-13)
 - Referência executada POR DIGEST:
   `harbor.home.arpa/tese/tese-runner@sha256:33c1468b…9d5d1`.
