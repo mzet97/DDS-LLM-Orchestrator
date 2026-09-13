@@ -44,6 +44,23 @@ spec:
           port: 80
         - protocol: TCP
           port: 443
+    # HTTPS validado do Gitea (https://gitea.home.arpa -> traefik). O
+    # svclb faz DNAT: o destino EFETIVO do pacote é o POD do traefik em
+    # kube-system (8443/8000), não 192.168.1.51:443 — permitir pelo
+    # destino pós-DNAT (correção do piloto F1: a regra pelo IP do node
+    # era rejeitada pelo policy engine, derrubando o checkout do job).
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: traefik
+      ports:
+        - protocol: TCP
+          port: 8443
+        - protocol: TCP
+          port: 8000
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
