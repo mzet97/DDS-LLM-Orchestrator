@@ -187,11 +187,10 @@ impl SshSession {
                 return Err(String::from("nada a aprovar"));
             }
         };
-        let mut file =
-            studio_ssh::TrustFile::open(&self.config.trust_path).map_err(|err| {
-                debug_log("aprovar: cofre falhou ao abrir");
-                err.to_string()
-            })?;
+        let mut file = studio_ssh::TrustFile::open(&self.config.trust_path).map_err(|err| {
+            debug_log("aprovar: cofre falhou ao abrir");
+            err.to_string()
+        })?;
         debug_log("aprovar: cofre aberto");
         let replaced = file
             .store()

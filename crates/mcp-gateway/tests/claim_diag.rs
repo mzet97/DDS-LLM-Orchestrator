@@ -204,7 +204,8 @@ async fn diag_claim_dumps_sets_on_timeout() {
                 };
                 if call.status == status::COMPLETED {
                     assert_eq!(call.error_message, "");
-                    seen.lock().await
+                    seen.lock()
+                        .await
                         .insert(call.call_id.trim_start_matches("tool-call-").to_owned());
                 }
             }
@@ -221,8 +222,7 @@ async fn diag_claim_dumps_sets_on_timeout() {
 
     tokio::time::sleep(Duration::from_millis(750)).await;
 
-    let written_set: HashSet<String> =
-        (0..TOTAL).map(|i| i.to_string()).collect();
+    let written_set: HashSet<String> = (0..TOTAL).map(|i| i.to_string()).collect();
     for i in 0..TOTAL {
         let call = make_tool_call(i);
         service_one
@@ -266,7 +266,11 @@ async fn diag_claim_dumps_sets_on_timeout() {
     );
     let nunca: Vec<_> = written_set.difference(&claimed_all).collect();
     println!("DIAG nunca reivindicados ({}): {:?}", nunca.len(), nunca);
-    println!("DIAG handler executou: {} únicos ({} chamadas)", executed_guard.len(), count.load(Ordering::SeqCst));
+    println!(
+        "DIAG handler executou: {} únicos ({} chamadas)",
+        executed_guard.len(),
+        count.load(Ordering::SeqCst)
+    );
     let reclamados_sem_exec: Vec<_> = claimed_all.difference(&executed_guard).collect();
     println!(
         "DIAG reivindicados mas NÃO executados ({}): {:?}",

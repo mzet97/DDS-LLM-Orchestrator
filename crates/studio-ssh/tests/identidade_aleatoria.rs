@@ -7,11 +7,7 @@
 use studio_ssh::{generate, public_fingerprint, unlock};
 
 fn temp_dir(tag: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "studio-id-rand-{}-{}",
-        std::process::id(),
-        tag
-    ));
+    let dir = std::env::temp_dir().join(format!("studio-id-rand-{}-{}", std::process::id(), tag));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }
@@ -62,7 +58,10 @@ fn identidade_existente_preserva_fingerprint_ao_desbloquear() {
     let privada = unlock(&paths.private_pem, senha).expect("desbloqueia");
     let privada_pub_linha = format!(
         "{} studio-teste",
-        privada.public_key().to_openssh().expect("publica em openssh")
+        privada
+            .public_key()
+            .to_openssh()
+            .expect("publica em openssh")
     );
     let esperada = std::fs::read_to_string(&paths.public_openssh).expect("lê .pub");
     let esperada_b64 = esperada.split_whitespace().nth(1).expect("campo da chave");
