@@ -25,6 +25,7 @@ pub fn show(ui: &mut egui::Ui, session: &mut SshSession, registry: &NodeRegistry
             .unwrap_or_default();
         if ui.text_edit_singleline(&mut dir).changed() {
             session.config.identity_pem = std::path::PathBuf::from(&dir).join("studio_ed25519");
+            session.config.trust_path = std::path::PathBuf::from(&dir).join("trust.json");
         }
         if ui.button("Gerar identidade").clicked() {
             let dir = std::path::PathBuf::from(&dir);
