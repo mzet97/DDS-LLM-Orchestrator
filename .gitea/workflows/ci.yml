@@ -142,12 +142,14 @@ jobs:
           mkdir neg1 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg1
           sub="$(ls -d neg1/*/)"
           rm "$sub/submit-one"
-          if ( cd "$sub" && sha256sum -c SHA256SUMS ); then echo "NEGATIVO FALHOU: remocao passou"; exit 1; fi
+          set +e; ( cd "$sub" && sha256sum -c SHA256SUMS ) >/dev/null 2>&1; rc_neg=$?; set -e
+          [ "$rc_neg" -ne 0 ] || { echo "NEGATIVO FALHOU: remocao passou"; exit 1; }
           # Negativo 2: checksum adulterado deve falhar.
           mkdir neg2 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg2
           sub="$(ls -d neg2/*/)"
           echo adulterado >> "$sub/agent"
-          if ( cd "$sub" && sha256sum -c SHA256SUMS ); then echo "NEGATIVO FALHOU: adulteracao passou"; exit 1; fi
+          set +e; ( cd "$sub" && sha256sum -c SHA256SUMS ) >/dev/null 2>&1; rc_neg=$?; set -e
+          [ "$rc_neg" -ne 0 ] || { echo "NEGATIVO FALHOU: adulteracao passou"; exit 1; }
           # Funcional: studio-noded extraído sobe de verdade em porta de
           # teste (DB temporário) e responde protocolo + serviços.
           export STUDIO_NODE_PORT=14317 STUDIO_NODE_DB="$PWD/accept-db.json"
