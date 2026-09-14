@@ -1,0 +1,64 @@
+# Teardown do ensaio F3 (isolado no .62): remove SOMENTE os recursos
+# identificados desta execução — unidade de ensaio, diretório de deploy
+# e staging da operadora. Nunca toca o studio-noded operacional.
+- name: Teardown do ensaio F3
+  hosts: studio_nodes
+  vars:
+    f3_run_id: "{{ f3_run_id | mandatory }}"
+    service_name: "studio-noded-f3-test-{{ f3_run_id }}"
+    unit_path: "/etc/systemd/system/{{ service_name }}.service"
+    deploy_dir: "{{ ansible_env.HOME }}/f3-test/{{ f3_run_id }}"
+    staging_base: "{{ playbook_dir }}/../staging/{{ f3_run_id }}"
+  tasks:
+    - name: Proteção — teardown só de unidades de ensaio
+      ansible.builtin.assert:
+        that:
+          - service_name is match('^studio-noded-f3-test-')
+          - service_name != 'studio-noded'
+        fail_msg: "recusado: teardown só de unidades studio-noded-f3-test-*"
+
+    - name: Parar unidade de ensaio
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: stopped
+      become: true
+      failed_when: false
+
+    - name: Confirmar término do processo de ensaio
+      ansible.builtin.shell:
+        cmd: |
+          pid="$(systemctl show -p MainPID --value {{ service_name }})"
+          [ "$pid" = "0" ] && exit 0
+          for _ in $(seq 1 10); do kill -0 "$pid" 2>/dev/null || exit 0; sleep 1; done
+          echo "processo $pid ainda vivo"; exit 1
+      args:
+        executable: /bin/bash
+      become: true
+      changed_when: false
+
+    - name: Remover unidade e recarregar systemd
+      ansible.builtin.file:
+        path: "{{ unit_path }}"
+        state: absent
+      become: true
+      notify: Reload systemd
+
+    - name: Remover diretório de deploy do ensaio [HOST]
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}"
+        state: absent
+
+    - name: Remover staging da operadora [OPERADORA]
+      ansible.builtin.file:
+        path: "{{ staging_base }}"
+        state: absent
+      delegate_to: localhost
+
+    - name: Flush dos handlers (daemon-reload)
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+      become: true

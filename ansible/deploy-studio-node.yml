@@ -1,39 +1,62 @@
-# CD do studio-noded (F3 — DRAFT, não executar).
+# CD do studio-noded (F3). Playbook REAL usado no ensaio isolado do .62
+# (2026-09-14) e reutilizável para canário futuro com outros parâmetros.
 #
 # Contrato demonstrado (nada em TODO):
-#   pull por digest → extração → integridade → backup com caminho
-#   REGISTRADO (sem sorted) → instalação → flush + prontidão →
-#   verificação (hash == aprovado, listener do PID da unidade, DB via
-#   validate_db.py) → rollback = reexecutar com a ref anterior.
-# Onde cada arquivo existe: [OPERADORA] ou [HOST].
+#   pull por digest → NOME do pacote lido do artefato e VALIDADO (não
+#   derivado do digest OCI) → integridade (SHA256SUMS) e hash do binário
+#   == aprovado ANTES de copiar qualquer coisa → backup identificado →
+#   instalação (binário + lib/libddsc.so* do pacote) → unidade systemd
+#   com LD_LIBRARY_PATH do próprio diretório → flush + prontidão →
+#   verificação (hash instalado, listener do PID da unidade, DB via
+#   script transferido pelo módulo `script`).
+# Rollback = reexecutar com a ref/valores anteriores.
 #
-# Fronteira: Ansible instala/atualiza a plataforma; o Studio administra os
-# recursos operacionais. Sem desfazer GUI, trocar identidades ou duplicar.
+# Proteções do ensaio (defaults): unidade/porta/bind/diretório EXCLUSIVOS,
+# recusa tocar 'studio-noded' (operacional) ou a porta 4317, bind
+# 127.0.0.1. Onde cada arquivo existe: [OPERADORA] ou [HOST].
 #
-# Uso futuro (após aprovações F1/F2 separadas), canário em UM host:
-#   ansible-playbook -i inventory.ini deploy-studio-node.yml \
-#     -e harbor_ref=sha256:<digest> -e tese_approved_sha256=<hex> \
-#     -e studio_node_bind=192.168.1.62 -e canary_host=orc62
-# Rollback: repetir com harbor_ref/tese_approved_sha256 anteriores.
+# Ensaio F3 (executado em 2026-09-14):
+#   ansible-playbook -i inventory-f3.ini deploy-studio-node.yml \
+#     -e harbor_ref=sha256:ca4836d7831fb07fb6fb869439f62d52ca172c763169226c2f2e068892382a76 \
+#     -e tese_approved_sha256=<hex do studio-noded> -e f3_run_id=<id>
 
-- name: Deploy studio-noded versionado (canário explícito)
+- name: Deploy studio-noded versionado (canário/ensaio explícito)
   hosts: studio_nodes
   vars:
-    deploy_dir: /home/agent/dds-llm-rust # [HOST]
-    service_name: studio-noded
-    ca_file: "{{ lookup('env', 'XDG_CONFIG_HOME') | default('~/.config', true) }}/dds-orchestrator/pki/local-root-ca.crt" # [OPERADORA]
-    staging_base: "{{ playbook_dir }}/../staging/{{ harbor_ref | regex_replace('[^0-9a-f]', '') }}" # [OPERADORA]
+    # ── Identidade da execução (staging novo por execução) ──
+    f3_run_id: "{{ ansible_date_time.epoch | default(lookup('pipe', 'date +%s')) }}"
+    # ── Artefato aprovado (registro de promoção) ──
+    harbor_ref: "{{ omit }}"
+    tese_approved_sha256: "{{ omit }}"
+    pkg_name: ""              # nome exato do .tar.gz; vazio = descobrir
+                              # NO staging e VALIDAR (não derivar do digest)
+    # ── Alvo do ensaio (todos sob parametrização; defaults isolados) ──
+    service_name: "studio-noded-f3-test-{{ f3_run_id }}"
+    unit_path: "/etc/systemd/system/{{ service_name }}.service"
+    deploy_dir: "{{ ansible_env.HOME }}/f3-test/{{ f3_run_id }}"
+    node_port: "24317"
+    node_bind: "127.0.0.1"
+    owned_service: "f3-probe-{{ f3_run_id }}"   # recurso inofensivo do /apply
+    service_user: "{{ ansible_user }}"
+    db_file: "{{ deploy_dir }}/studio-node-log.json"
+    # ── Operadora ──
+    ca_file: "{{ lookup('env', 'XDG_CONFIG_HOME') | default(lookup('env','HOME') + '/.config', true) }}/dds-orchestrator/pki/local-root-ca.crt"
+    staging_base: "{{ playbook_dir }}/../staging/{{ f3_run_id }}"
   tasks:
-    - name: Exigir referência promovida + canário de um host
+    - name: Exigir referência promovida + UM host + parâmetros sãos
       ansible.builtin.assert:
         that:
           - harbor_ref is defined and harbor_ref is match('^sha256:[0-9a-f]{64}$')
           - tese_approved_sha256 is defined and tese_approved_sha256 is match('^[0-9a-f]{64}$')
-          - studio_node_bind is defined and studio_node_bind | length > 0
-          - canary_host is defined and canary_host | length > 0
           - ansible_play_hosts | length == 1
-          - inventory_hostname == canary_host
-        fail_msg: "deploy exige digest, hash aprovado, bind e UM canário (canary_host); aborta se a seleção tiver mais de um host"
+          - canary_host is defined and inventory_hostname == canary_host
+          # Proteção ao operacional: nunca a unidade/porta do serviço real.
+          - service_name != 'studio-noded'
+          - node_port != '4317'
+          - node_bind in ['127.0.0.1', 'localhost']
+          - pkg_name is not match('/')
+          - pkg_name is not match('..')
+        fail_msg: "exige digest OCI, hash aprovado, UM canário; ensaio nunca usa studio-noded/4317 e bind só loopback"
 
     - name: Staging novo por execução [OPERADORA]
       ansible.builtin.file:
@@ -56,29 +79,49 @@
       register: pull
       changed_when: true
 
-    - name: Extrair pacote e conferir caminhos [OPERADORA]
+    - name: Descobrir o NOME exato do pacote puxado [OPERADORA]
+      ansible.builtin.set_fact:
+        pkg_name: "{{ lookup('fileglob', staging_base + '/pkg/tese-rust-*.tar.gz') | basename }}"
+      when: pkg_name | length == 0
+
+    - name: Validar nome do pacote (recusa caminhos/nome inesperados)
+      ansible.builtin.assert:
+        that:
+          - pkg_name is match('^tese-rust-x86_64-[0-9a-f]{40}\\.tar\\.gz$')
+        fail_msg: "nome de pacote inesperado: '{{ pkg_name }}' (esperado tese-rust-x86_64-<sha40>.tar.gz do registro de promoção)"
+
+    - name: Extrair pacote [OPERADORA]
       ansible.builtin.unarchive:
-        src: "{{ staging_base }}/pkg/tese-rust-{{ host_arch }}-{{ harbor_ref | regex_replace('^sha256:', '') }}.tar.gz"
+        src: "{{ staging_base }}/pkg/{{ pkg_name }}"
         dest: "{{ staging_base }}"
         remote_src: true
       delegate_to: localhost
 
-    - name: Conferir integridade + hash do binário aprovado [OPERADORA]
+    - name: Integridade do pacote ANTES de qualquer instalação [OPERADORA]
       ansible.builtin.command:
         argv: ["sha256sum", "-c", "SHA256SUMS"]
-        chdir: "{{ staging_base }}/{{ host_arch }}"
+        chdir: "{{ staging_base }}/x86_64"
       delegate_to: localhost
       changed_when: false
 
+    - name: Hash do binário no staging == aprovado ANTES de copiar [OPERADORA]
+      ansible.builtin.command:
+        argv: ["sha256sum", "studio-noded"]
+        chdir: "{{ staging_base }}/x86_64"
+      delegate_to: localhost
+      register: staging_hash
+      changed_when: false
+      failed_when: staging_hash.stdout.split()[0] != tese_approved_sha256
+
     - name: Estado atual do DB (ausência inicial é caso explícito) [HOST]
       ansible.builtin.stat:
-        path: "{{ deploy_dir }}/studio-node-log.json"
+        path: "{{ db_file }}"
       register: db_stat
 
-    - name: Backup do DB com caminho registrado [HOST]
+    - name: Backup do DB com caminho identificado [HOST]
       ansible.builtin.copy:
-        src: "{{ deploy_dir }}/studio-node-log.json"
-        dest: "{{ deploy_dir }}/studio-node-log.json.bak-{{ harbor_ref | regex_replace('[^0-9a-f]', '') }}"
+        src: "{{ db_file }}"
+        dest: "{{ db_file }}.bak-{{ f3_run_id }}"
         remote_src: true
         mode: '0644'
       register: backup
@@ -96,23 +139,30 @@
 
     - name: Instalar binário aprovado [HOST]
       ansible.builtin.copy:
-        src: "{{ staging_base }}/{{ host_arch }}/studio-noded"
+        src: "{{ staging_base }}/x86_64/studio-noded"
         dest: "{{ deploy_dir }}/studio-noded"
         mode: '0755'
-      notify: Restart studio-noded
+      notify: Restart unidade de ensaio
 
-    - name: Instalar unidade systemd (bind explícito da LAN) [HOST]
+    - name: Instalar bibliotecas do pacote (lib/libddsc.so*) [HOST]
+      ansible.builtin.copy:
+        src: "{{ staging_base }}/x86_64/lib/"
+        dest: "{{ deploy_dir }}/lib/"
+        mode: preserve
+      # Estrutura do pacote preservada; localização só para o serviço.
+
+    - name: Instalar unidade systemd do ensaio [HOST]
       ansible.builtin.template:
         src: studio-noded.service.j2
-        dest: /etc/systemd/system/studio-noded.service
+        dest: "{{ unit_path }}"
         mode: '0644'
       become: true
       notify: Reload systemd
 
-    - name: Habilitar e iniciar [HOST]
+    - name: Iniciar (sem enable — unidade descartável do ensaio) [HOST]
       ansible.builtin.systemd:
         name: "{{ service_name }}"
-        enabled: true
+        enabled: false
         state: started
         daemon_reload: true
       become: true
@@ -120,9 +170,9 @@
     - name: Executar handlers ANTES das verificações finais
       ansible.builtin.meta: flush_handlers
 
-    - name: Aguardar prontidão do protocolo
+    - name: Aguardar prontidão do protocolo (bind de ensaio)
       ansible.builtin.uri:
-        url: "http://{{ studio_node_bind }}:4317/version"
+        url: "http://{{ node_bind }}:{{ node_port }}/version"
         status_code: 200
       register: ready
       until: ready.status == 200
@@ -136,35 +186,31 @@
       changed_when: false
       failed_when: installed_hash.stdout.split()[0] != tese_approved_sha256
 
-    - name: Listener pertence ao PID da unidade [HOST]
+    - name: Listener pertence ao PID da unidade de ensaio [HOST]
       ansible.builtin.shell:
         cmd: |
           set -euo pipefail
           pid="$(systemctl show -p MainPID --value {{ service_name }})"
           test "$pid" != "0"
-          ss -ltnp | grep ":4317 " | grep -q "pid=$pid,"
+          ss -ltnp | grep ":{{ node_port }} " | grep -q "pid=$pid,"
       args:
         executable: /bin/bash
       become: true
       changed_when: false
 
-    - name: DB preservado pelo esquema real [HOST]
-      ansible.builtin.command:
-        argv:
-          - python3
-          - "{{ playbook_dir }}/validate_db.py"
-          - "{{ deploy_dir }}/studio-node-log.json"
-          - "{{ backup_path if backup_path | length > 0 else '/dev/null-inexistente' }}"
+    - name: DB preservado pelo esquema real (script TRANSFERIDO via módulo script) [HOST]
+      ansible.builtin.script:
+        cmd: "validate_db.py {{ db_file | quote }} {{ (backup_path | length > 0) | ternary(backup_path | quote, '/dev/null-inexistente') }} {{ (not db_stat.stat.exists) | ternary('--allow-absent', '') }}"
       register: dbcheck
       changed_when: false
-      when: backup_path | length > 0
+      when: db_stat.stat.exists
 
-    - name: DB inicial criado pelo daemon [HOST]
+    - name: DB inicial criado pelo daemon (primeira instalação) [HOST]
       ansible.builtin.stat:
-        path: "{{ deploy_dir }}/studio-node-log.json"
+        path: "{{ db_file }}"
       register: fresh_db
       failed_when: not fresh_db.stat.exists
-      when: backup_path | length == 0
+      when: not db_stat.stat.exists
 
   handlers:
     - name: Reload systemd
@@ -172,7 +218,7 @@
         daemon_reload: true
       become: true
 
-    - name: Restart studio-noded
+    - name: Restart unidade de ensaio
       ansible.builtin.systemd:
         name: "{{ service_name }}"
         state: restarted
