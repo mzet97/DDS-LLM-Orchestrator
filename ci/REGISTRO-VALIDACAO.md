@@ -113,6 +113,61 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## Manutenção HTTPS do pull do Harbor no K3s (2026-09-14) — CONCLUÍDA
+- Topologia: k3s v1.34.6+k3s1 single-node (.51), datastore **kine/SQLite**
+  (state.db+WAL; snapshot etcd NÃO aplicável). Backups: quente
+  (/root/k3s-maint-20260914/state.db*) e FRIO (copiado com k3s parado);
+  server token PRESERVADO em /var/lib/rancher/k3s/server/token (fora de
+  relatórios). registries.yaml.bak-http em 0600 — JAMAIS restaurar (é o
+  material exposto); rollback é o registries.rollback-https (idêntico ao
+  aplicado). README-recuperacao.txt com procedimento SSH sem API.
+- Consumidores suspensos durante a janela: runner tese (scale 0; CI tese
+  sem runs ativos; CI zetdev-site sem runs ativos — últimas completed).
+- Restart ÚNICO do serviço k3s (sem killall; pods permaneceram, todos
+  IfNotPresent com imagens locais — 0 pods quebrados). **Indisponibilidade
+  real medida da API: 7 segundos** (readyz; timeout de espera 300s,
+  critério de rollback registrado antes).
+- Config aplicada (/etc/rancher/k3s/registries.yaml): mirrors
+  harbor.harbor.svc.cluster.local e harbor.home.arpa → **endpoint único
+  https://harbor.home.arpa**; configs TLS ca_file=/etc/rancher/k3s/certs/
+  harbor-home-arpa.crt (root:root 0644, CA pública já validada). SEM
+  insecure_skip_verify, SEM fallback HTTP, SEM credencial global
+  (autenticação por imagePullSecrets por consumidor). containerd gerou
+  hosts.toml HTTPS nos dois nomes (verificado).
+- Credenciais (segregadas por finalidade; Harbor 2.15):
+  - tese-runner: Secret tese-registry-pull → **robot$tese+tese-pull2**
+    (Pull só tese); deploy migrado p/ harbor.home.arpa/tese/@sha256:
+    cee13047… (mesmo digest); novo registro Gitea **id 9**; órfão id 8
+    removido. Old tese-pull permanece desativado.
+  - zetdev-site: Secret harbor-registry-auth → **robot$library+
+    zetdev-pull** (Pull só library, server harbor.home.arpa); origem
+    GitOps atualizada (kustomization images: newName harbor.home.arpa +
+    digest sha256:d5c10fbb… — mesmo conteúdo da tag latest; primeiro
+    commit quebrou indentação e o sync manteve a referência antiga —
+    corrigido e re-sincronizado). Rollout OK, pull autenticado (177ms),
+    site 200.
+  - CI zetdev-site (publicador): Gitea secrets HARBOR_ROBOT_USERNAME/
+    PASSWORD → **robot$library+zetdev-push** (Push só library). O
+    workflow build.yaml continua usando o nome interno com --tls-verify
+    false — PENDÊNCIA registrada (alterar workflow exige commit no repo
+    do site; a conta nova jamais foi enviada por HTTP: CI não rodou
+    nesta janela).
+  - **robot$gitops-ci DESATIVADO** (disable=true; inventário completo:
+    registries.yaml global + Secret zetdev-site + CI build.yaml). Não
+    reativado.
+- Evidências de pull pelo RUNTIME (não cache, não Docker): Pod
+  descartável check-pull-https (imagePullPolicy **Always**, digest,
+  imagePullSecret tese-pull2, runAsUser 1001, sem privilégios): evento
+  kubelet "Pulling…" → "Successfully pulled in 222ms" (manifest
+  revalidado com secret; camadas locais reaproveitadas — NÃO se alega
+  retransferência). Rejeição da cred antiga no RECURSO: gitops-ci contra
+  manifest tese via HTTPS = **401** (token emitido não autoriza pull do
+  recurso; escopo testado registrado).
+- Proibições respeitadas: nenhum killall/desinstalação/limpeza de
+  imagens/restart de Docker/PostgreSQL/Harbor/Gitea; .61 e o daemon do
+  .62 não tocados; Application raiz do Argo CD intocada (apenas o app
+  zetdev-site re-sincronizado pela própria origem corrigida).
+
 ## Verificadores V1 + canário operacional + segurança do pull (2026-09-14)
 ### Verificadores (ambiente descartável; commits 2a67658)
 - Correlação: `ansible/correlation.py` — MESMA função no positivo e no
