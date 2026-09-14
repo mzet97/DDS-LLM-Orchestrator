@@ -113,6 +113,82 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## Verificadores V1 + canário operacional + segurança do pull (2026-09-14)
+### Verificadores (ambiente descartável; commits 2a67658)
+- Correlação: `ansible/correlation.py` — MESMA função no positivo e no
+  negativo (campos exatos task_id/request_id; EVIDENCE_ABSENT /
+  REQUEST_ID_MISMATCH / EMPTY_TASK_ID). Unit 6/6 (inclui t2-como-t1,
+  ausência, divergência). Runtime (.62, domínio 99, run v1-084348,
+  rc=0 25/0): positivos correlation:OK:OK (t1/t2 sobre a lista
+  COMPLETA); negativo t2-como-t1 FAIL:EVIDENCE_ABSENT (evidência da t2
+  apresentada como candidata — arquivo só-com-t2, sem filtrar a
+  esperada fora do critério); ausência FAIL (arquivo vazio);
+  request_id divergente coberto no unit com registro sintético.
+- Idempotência pelo CONTRATO (não HTTP 200): /apply → outcome
+  applied → already_applied com o MESMO record (resposta FLAT; campo de
+  auditoria que muda: NENHUM no record — o arquivo é regravado
+  inteiro). Efeito administrado REAL via POST /services/<owned>/start
+  (actuator systemctl --user; dummy USER exclusiva com XDG_RUNTIME_DIR;
+  pré-condição limpa): acted true→false com wanted/active estáveis.
+- Estado não vazio PELO ESQUEMA: `check_state.py` — operações presentes
+  em records/order (14 ops no ensaio), não tamanho textual.
+### Canário operacional (commits 26c6707, bde602b)
+- Preflight SEM escrita: unit sem drop-ins, enabled, User=agent,
+  WorkDir=/home/agent/dds-llm-rust, bind 192.168.1.62:4317,
+  DB=studio-node-log.json (INEXISTENTE — nasce na 1ª operação),
+  Restart=always, KillMode=control-group; cgroup da unidade contém
+  SOMENTE o MainPID; Requires/Wants/PartOf/TriggeredBy sem agentes →
+  parada isolada demonstrada.
+- Revisões DISTINTAS: operacional 9a5ab50b (build 12/09 13:27, sem
+  procedência CI) vs candidato 9a3a1f9f (14/09, CI run nº8) — recência
+  por EVIDÊNCIA de data. Compat em ambiente separado (env espelhado,
+  dummy services, loopback): /version 1.0, /services, /apply applied.
+  Registro de canário: ci/PROMOCAO-tese-rust-54a7c34-canary.md
+  (histórico de ensaio preservado).
+- EXECUÇÃO: material verificado antes da interrupção; stop → backup
+  binário+unit em releases/can-<run>/ → instalação → start (janela
+  dentro de 90s). R1 exe do PID == aprovado; R2 /version 1.0; R3
+  listener 4317 do MainPID; /services com dds-agent (GUI); R4 falhou
+  POR MÉTODO contaminado (pgrep self-match + participantes meus de
+  ensaios vivos no host — resíduo meu, encerrado) — corrigido para ps
+  sem self-match. Rodada final rc=0: **'já na versão candidata;
+  nenhuma troca ou reinício necessário'** + R1-R4 verdes. Serviço
+  ativo com binário aprovado; agentes/inferência intocados (R4
+  vazio==vazio); sem bootstrap operacional; sem corrupção proposital.
+### Segurança do pull (V5)
+- Consumidores EFETIVOS do mirror HTTP `http://10.43.105.175`:
+  robot$tese+tese-pull (Secret tese-registry-pull/kubelet do
+  tese-runner + crictl manuais) E robot$gitops-ci (auth global do
+  registries.yaml + Secret zetdev-site/harbor-registry-auth do pod
+  zetdev-site). Ambos com Basic Auth em claro nesse segmento.
+- Contenção do robot do PILOTO executada: PUT/secret não editável no
+  Harbor 2.15 (validado: antiga seguia aceitando token) → robot
+  id 5 robot$tese+tese-pull DESATIVADO + criado robot$tese+tese-pull2
+  (Pull somente tese, 365d) com segredo NOVO que só existe em arquivo
+  0600 da operadora — NÃO distribuído a nenhum consumidor HTTP.
+  Verificação: cred antiga → manifest pelo mirror HTTP = 401 (pull
+  impossível); cred nova → token e manifest HTTPS = 200, 0 redirects.
+  Efeito registrado e aceito: NOVOS pulls do runner permanecem
+  BLOQUEADOS até o transporte HTTPS (Secret do cluster segue com a
+  cred morta, propositalmente). robot$gitops-ci: exposição REGISTRADA,
+  substituição fora do escopo autorizado nesta rodada.
+- Diff HTTPS do runtime (PREPARADO; exige restart k3s — autorização
+  de infraestrutura pendente):
+    # /etc/rancher/k3s/registries.yaml (substituir mirrors+configs)
+    mirrors:
+      harbor.home.arpa:
+        endpoint: [https://harbor.home.arpa]
+    configs:
+      harbor.home.arpa:
+        tls: {ca_file: /var/lib/rancher/k3s/agent/etc/containerd/certs.d/harbor-home-arpa.crt}
+  Pré-requisito: copiar a CA pública para o caminho acima; atualizar
+  os dois Secrets (tese-registry-pull com tese-pull2; zetdev-site
+  conforme gestão própria). Procedimento: aplicar yaml → restart k3s
+  (~30-60s de API single-node; pods seguem) → verificação: `k3s
+  crictl pull` por digest com a cred nova (caminho do RUNTIME, não
+  Docker) + rollout do tese-runner. Recuperação: restaurar
+  registries.yaml.bak + restart.
+
 ## F2 concluído + F3 validado em ensaio remoto isolado no .62 (2026-09-14)
 - **F2 — publicação e promoção**: vínculos confirmados pela API (artefato
   ID 5 ↔ run nº 8 ↔ 54a7c349) ANTES do download; pacote verificado em
