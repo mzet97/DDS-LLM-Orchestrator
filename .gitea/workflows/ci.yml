@@ -109,7 +109,15 @@ jobs:
             test -x "$src" || { echo "BINARIO OBRIGATORIO AUSENTE: $bin"; exit 1; }
             cp "$src" "$out/"
           done
-          ( cd "$out" && sha256sum studio-noded agent orchestrator submit-one wf-run det-responder > SHA256SUMS )
+          # Binários do client (submit-one/wf-run/det-responder) linkam
+          # dinamicamente a libddsc do CycloneDDS bundled da build (fica em
+          # target/release/build/.../out/lib) — sem ela no PATH do loader, o
+          # aceite functional falha com rc=127 (tentativa 6). Empacotada em
+          # lib/ junto dos binários; o aceite aponta LD_LIBRARY_PATH para lá.
+          libddsc="$(find target/release/build -type f -name 'libddsc.so.*' | head -1)"
+          test -n "$libddsc" || { echo "libddsc ausente da build"; exit 1; }
+          mkdir -p "$out/lib" && cp -L "$libddsc" "$out/lib/"
+          ( cd "$out" && sha256sum studio-noded agent orchestrator submit-one wf-run det-responder lib/*.so* > SHA256SUMS )
           toolchain="$(rustc --version)"
           deps="$(cargo tree -p studio-node --prefix none 2>/dev/null | grep -E '^(cyclonedds|russh|tokio|axum|serde) ' | sort -u | tr '\n' ';')"
           printf '{"commit":"%s","arch":"%s","toolchain":"%s","deps":"%s"}\n' "$sha" "$arch" "$toolchain" "$deps" > "$out/manifest.json"
@@ -138,6 +146,7 @@ jobs:
           rm -rf accept && mkdir accept && cd accept
           tar -xzf ../pkg/tese-rust-*.tar.gz
           dir="$(ls -d */)"
+          export LD_LIBRARY_PATH="$PWD/$dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
           ( cd "$dir" && sha256sum -c SHA256SUMS )
           # Negativo 1: binário obrigatório removido deve falhar.
           mkdir neg1 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg1
