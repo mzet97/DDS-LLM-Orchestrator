@@ -113,6 +113,61 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## F1 — runner dedicado ativo e CI validada no Gitea (2026-09-14)
+- Revisão final da frente: 54a7c349 (branch studio/phase-800-node;
+  ajustes de pré-ativação: 32651ca docs, a40cf30 registro, 814d417
+  verificadores/workflow, a39f417 manifesto, 710acc0 netpol pós-DNAT,
+  fc1cbd4 forks de artefato, 1f285de negativos com rc explícito,
+  e86c640 set -x diagnóstico, c14fbbd+54a7c34 libddsc no pacote).
+- Revisão do WORKFLOW executado: 54a7c349 (workflow_dispatch com input
+  ref=SHA imutável; todos os jobs no mesmo SHA resolvido pelo job pin).
+- Espelho: repo gitea_admin/DDS-LLM-Orchestrator (id 3, privado, criado
+  para o piloto) — branch + tags; push via HTTPS com CA local.
+- Recursos aplicados (namespace ci-runners; todos exclusivos do piloto):
+  SA tese-runner (automount=false), NetPol tese-runner (DNS, gitea:3000,
+  harbor, pods traefik 8443/8000 — destino PÓS-DNAT do svclb, correção
+  da tentativa 1 —, internet pública), CM tese-runner-config (capacity
+  1) e tese-ca-publica, Secrets tese-registry-pull (robot
+  robot$tese+tese-pull: Pull SOMENTE leitura do projeto tese, 365d,
+  segredo apenas no cluster) e tese-runner-secret (token de registro
+  ESCO REPOSITÓRIO). Deployment 1 réplica, strategy Recreate, uid 1001,
+  runAsNonRoot, sem docker.sock/kubeconfig/privileged.
+- Imagem: harbor.harbor.svc.cluster.local/tese/tese-runner@
+  sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d
+  (mesmo índice OCI da tag 0.2.1; pull pelo runtime K3s via mirror
+  interno HTTP do registries.yaml + imagePullSecrets — verificado com
+  k3s crictl pull ANTES de aplicar; TLS do runtime não exigido).
+- GITEA_INSTANCE_URL: https://gitea.home.arpa (HTTPS validado; CA
+  montada e aplicada a act_runner via SSL_CERT_FILE, git via
+  GIT_SSL_CAINFO, curl via CURL_CA_BUNDLE e Actions Node via
+  NODE_EXTRA_CA_CERTS — cada um verificado nas tentativas).
+- Runner: tese-runner, **Gitea id 8**, label tese-rust, capacity 1,
+  escopo repositório, online. Recriações do pod geram novo registro:
+  id 7 (primeira subida) removido como órfão do piloto; procedimento
+  registrado (remover apenas órfãos deste piloto).
+- Execução no Gitea: workflow tese-rust-ci, **run nº 8** (tasks
+  108-111; internal run 46) — pin SUCCESS, check SUCCESS (fmt/clippy/
+  suíte --no-fail-fast uid 1001 sem instalar deps), build SUCCESS,
+  **accept SUCCESS** com "ACEITE OK". Jobs nos mesmos SHA 54a7c349.
+- Artefato: **ID 5** `tese-rust-54a7c349973b012d05a8ad277133fcb21cba9ac1`
+  (16.007.699 bytes): 6 binários obrigatórios + manifest.json +
+  SHA256SUMS + lib/libddsc.so{,.11,.11.0.0}. Upload/download REAIS pelo
+  serviço de artefatos do Gitea (backend v4; forks compatíveis
+  ChristopherHX fixados por SHA). Aceite em diretório independente:
+  integridade + 2 negativos (remoção/adulteração) + studio-noded real
+  em porta própria (/version, /services com dds-agent; kill confirmado)
+  + submit-one sem args → uso + rc=2.
+- Tentativas preservadas (causa → correção em commit): nº1 814d417
+  checkout recusado (netpol pós-DNAT; 710acc0); nº2-3 fc1cbd4 upload
+  GHESNotSupportedError (forks); nº3+ NODE TLS
+  (NODE_EXTRA_CA_CERTS); nº5 1f285de morte silenciosa pós-integridade
+  (set -x e86c640 isolou); nº6-7 libddsc.so.11 ausente (c14fbbd/54a7c34:
+  família completa da lib no pacote + LD_LIBRARY_PATH).
+- Limites respeitados: F3 (Ansible/VMs) NÃO executado; runner existente
+  (gitea-act-runner) intocado; sem restarts de daemons nesta frente; a
+  partir daqui, "runner dedicado ativo e CI validada no Gitea para a
+  revisão testada" — NÃO implica aplicação implantada nem campanha.
+
 ## Falha do claim — causa raiz e correção (2026-09-13, commit 9321e31)
 - Sintoma: `claim_prevents_duplicate_execution_with_two_gateways` timeout
   30.8s no contêiner (4 e 16 CPUs — não era contenção) e flaky fora dele.
