@@ -113,6 +113,72 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## Fechamento administrativo da manutenção (2026-09-14) — REVISÃO FINAL
+### Gatilhos do workflow do site (repos gitea_admin/zetdev-site)
+- Commit **9c984afb66** (build.yaml): `on: push` REMOVIDO; publicação
+  SOMENTE por `workflow_dispatch` com input `candidate-tag` OBRIGATÓRIO
+  e exclusivo (o job recusa vazio/`latest`/barra). Job antigo "deploy"
+  (clone GitOps + sed newTag) REMOVIDO do workflow. Confirmado
+  empiricamente: o commit NÃO disparou run (workflow do commit novo sem
+  push trigger; último run permanece o 46). Nenhuma publicação ou
+  implantação adicional nesta correção.
+### O que o job "deploy" do run nº46 REALMENTE executou (log job 128)
+- Passos executados: **somente** `git clone` do repo gitops (com
+  GITOPS_TOKEN mascarado). Os steps "Atualizar tag" (sed) e "Commit e
+  push" NÃO executaram (ausentes do log; count de steps = 1). NENHUM
+  kubectl, nenhuma chamada ao Argo CD, nenhum commit no GitOps —
+  confirmado pela árvore do repo gitops (último commit 13:07, meu;
+  nada às 16:58). Efeito observado: nenhum. O nome "deploy" era
+  ambíguo — o job foi REMOVIDO (não renomeado) no fechamento.
+### Evidência TLS no cliente correto (Buildah 1.41.6 do job)
+- Novo workflow `tls-check.yaml` (commits 59c8dfd6→558311216a),
+  dispatch-only, SEM credenciais de escrita e SEM publicação.
+  Run nº48 (job 130, SUCCESS), credenciais FICTÍCIAS:
+  - POSITIVO: `buildah login --tls-verify=true` com a CA versionada →
+    handshake COMPLETO; recusa `invalid username/password`
+    (autenticação; rc=1) — prova que o TLS passou e a recusa veio depois.
+  - NEGATIVO: CA incompatível (autoassinada gerada no job) →
+    `tls: failed to verify certificate: x509: certificate signed by
+    unknown authority` (rc=1) — recusa NO TLS antes da autenticação,
+    sem queda para HTTP. Confiança global do host intocada.
+- Correções de evidência anterior: o negativo com `openssl s_client`
+  SEM `-verify_return_error` apenas EXIBIA "Verify return code: 21" sem
+  provar abort — o workflow final usa `-verify_return_error` no
+  positivo e no negativo; a recusa real está demonstrada pelo teste
+  Buildah acima. "Recuperação por digest" = fetch do MANIFESTO por
+  digest (HEAD/200 + docker-content-digest), NÃO download das camadas
+  — o pull completo de camadas foi demonstrado apenas pelo pod do k3s
+  (manutenção) e pelo docker pull da operadora (F2).
+### Desvios consolidados (registro fiel)
+- **Incidente de credencial (run nº38)**: ocorreu ANTES da suspensão
+  efetiva do gatilho (commit da CA disparou o workflow antigo);
+  `robot$library+zetdev-push` DESATIVADA; substituta
+  `robot$library+zetdev-push2` (Pull+Push só library) distribuída
+  apenas aos secrets do Gitea; verificações: cred antiga → manifest 401
+  (novo escopo testado); SEM evidência de interceptação — apenas
+  tráfego HTTP no segmento interno; ressalva de tokens preexistentes
+  mantida. Causa operacional minha (sequência de commits), sem
+  atribuição a terceiros.
+- **Publicação adicional em latest**: a restauração do gatilho push
+  (commit 02af293753) NÃO estava autorizada nesta rodada — os runs
+  nº44–46 publicaram `latest` (digestos `e74cb32e` e final
+  `2b080bab29fc9ad14533930b94a480110f544bb1e335a98901d52a9c1036f3b8`).
+  O site permanece fixado no digest `d5c10fbb…` (nenhum rollout;
+  histórico acima registrado; latest NÃO foi revertida — política
+  futura decidida à parte).
+- **NetworkPolicy compartilhada (runner antigo)**: diff da regra
+  ADICIONADA a `gitea-act-runner` (ci-runners):
+  `+ to: [ns=kube-system + podSelector app.kubernetes.io/name=traefik],
+     ports: TCP 8443, TCP 8000` — idêntica à do tese-runner (destino
+  pós-DNAT do svclb); sem ampliação de escopo (nada além de traefik);
+  origem: aplicada via API (não versionada em repo — igual à do
+  tese-runner; pendência de declaratividade registrada). Estado
+  aplicado conferido.
+- **Medição da manutenção**: mantida a correção — 7 s do `systemctl
+  start` ao readyz; indisponibilidade TOTAL não medida. Script de
+  manutenção v2: validação SINTÁTICA apenas (não é ensaio de
+  recuperação executado no cluster).
+
 ## Publicador do zetdev-site por HTTPS validado (2026-09-14) — CONCLUÍDO
 - Repositório: gitea_admin/zetdev-site, branch main, workflow
   .gitea/workflows/build.yaml. CA pública versionada em
