@@ -113,6 +113,52 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## Publicador do zetdev-site por HTTPS validado (2026-09-14) — CONCLUÍDO
+- Repositório: gitea_admin/zetdev-site, branch main, workflow
+  .gitea/workflows/build.yaml. CA pública versionada em
+  .gitea/certs/harbor-ca.crt (byte-idêntica à fonte administrativa;
+  fp SHA-256 A2:CB:24:84:56:4B:72:DC:65:64:E5:AD:F9:C6:F9:D0:8A:47:D1:
+  DD:84:0A:70:28:55:5B:39:80:3F:E9:9A:5C; nunca a chave privada).
+- Workflow corrigido (commits a448cc23→695ccc11eb): destino
+  harbor.home.arpa/library/zetdev-site (repositório confirmado);
+  --tls-verify=false REMOVIDO de todos os comandos; CA instalada em
+  /etc/containers/certs.d/harbor.home.arpa/ca.crt + conferência de
+  handshake com impressões (CA fp + cert do servidor + Verify return
+  code 0) e NEGATIVO de confiança (CA incompatível → Verify return code
+  21, recusa sem queda para HTTP); login com senha por stdin e authfile
+  0600 removido ao fim; deploy job gateado a `push` (nunca em dispatch).
+- INCIDENTE contido (run nº38): o commit da CA (push) disparou o
+  workflow ANTIGO ainda ativo, que usou a cred NOVA pelo caminho HTTP.
+  Conforme autorizado: robot$library+zetdev-push DESATIVADA e criada
+  robot$library+zetdev-push2 (Pull+Push somente library — Harbor 2.15
+  exige Pull+Push; descrição anterior 'Push somente' corrigida),
+  distribuída SÓ aos secrets do Gitea (nada por HTTP). zetdev-pull
+  permanece somente-leitura e separada.
+- Correções de causa única por tentativa (todas preservadas): nº39
+  stdin do s_client; nº40/41 connection refused — netpol do runner
+  antigo sem regra pós-DNAT (pods traefik 8443/8000; mesma do
+  tese-runner; adicionada); nº42-45 busybox sem curl/wget-CA (instalado
+  curl no apk); nº46 **SUCCESS completo**.
+- Evidências do run nº46 (job build 127): Verify 0 com a CA versionada;
+  negativo Verify 21; Login Succeeded; PUSH_OK latest com digest
+  **sha256:2b080bab29fc9ad14533930b94a480110f544bb1e335a98901d52a9c1036f3b8**;
+  recuperação INTRA-JOB por digest (docker-content-digest idêntico) e
+  pull por digest da OPERADORA com robot$library+zetdev-pull (HTTP 200).
+  Validação dedicada com tag exclusiva (dispatch r4):
+  tls-validation-1789396973-r4 = digest
+  sha256:a4afb02048c9961b8d5943a9e33b122d39e95ab77701dd95803ebfe67d1085ef.
+- Preservação: site operacional INALTERADO em
+  harbor.home.arpa/library/zetdev-site@sha256:d5c10fbb… (pod sem
+  rollout, 3h57m; site 200) — nenhuma tag de release sobrescrita; a
+  tag de validação não é referenciada por mecanismo de atualização.
+- Estados verificáveis finais: pull do runtime HTTPS carregado com
+  consumidores recuperados (manutenção); publicador ativo corrigido com
+  credencial limitada e build/push/pull reais aprovados (nº46);
+  credenciais antigas desativadas (gitops-ci, tese-pull, zetdev-push)
+  com ressalva registrada: tokens ANTES emitidos têm validade própria —
+  a contenção foi comprovada por recusa de NOVAS autorizações no escopo
+  testado, não se alega invalidação instantânea de todos os tokens.
+
 ## Manutenção HTTPS do pull do Harbor no K3s (2026-09-14) — CONCLUÍDA
 - Topologia: k3s v1.34.6+k3s1 single-node (.51), datastore **kine/SQLite**
   (state.db+WAL; snapshot etcd NÃO aplicável). Backups: quente
@@ -124,9 +170,20 @@
 - Consumidores suspensos durante a janela: runner tese (scale 0; CI tese
   sem runs ativos; CI zetdev-site sem runs ativos — últimas completed).
 - Restart ÚNICO do serviço k3s (sem killall; pods permaneceram, todos
-  IfNotPresent com imagens locais — 0 pods quebrados). **Indisponibilidade
-  real medida da API: 7 segundos** (readyz; timeout de espera 300s,
-  critério de rollback registrado antes).
+  IfNotPresent com imagens locais — 0 pods quebrados). **Medição
+  corrigida: 7 s contam do `systemctl start` até o readyz** — a
+  indisponibilidade TOTAL da API (primeira perda de prontidão até a
+  recuperação) NÃO foi medida: o script inicial abortou entre o stop e o
+  conclusão do backup (dir frio inexistente) e foi retomado manualmente;
+  a partir daí o start→readyz levou 7 s. Timeout de espera: 300 s
+  (critério de rollback registrado antes). Script de manutenção v2
+  (dirs PRÉ-stop + trap que re-starta em falha entre stop/start +
+  T0 no stop) versionado na seção de manutenção; sintaxe validada em
+  ambiente descartável (sem nova intervenção no cluster).
+- Conjunto de recuperação COMPLETO agora inclui cópia restrita do server
+  token (/root/k3s-maint-20260914/token.server, 0600 — além do original
+  preservado no caminho do k3s), backup frio do kine/SQLite e
+  registries.rollback-https.
 - Config aplicada (/etc/rancher/k3s/registries.yaml): mirrors
   harbor.harbor.svc.cluster.local e harbor.home.arpa → **endpoint único
   https://harbor.home.arpa**; configs TLS ca_file=/etc/rancher/k3s/certs/
