@@ -1,0 +1,246 @@
+# Verificadores V1 (2026-09-14) — executam SOMENTE em ambiente descartável
+# de ensaio (unidade studio-noded-f3-test-*, bind loopback, recurso dummy).
+# NUNCA contra o serviço operacional.
+#
+# 1. Idempotência pelo CONTRATO: 1ª aplicação -> Applied{record}; repetição
+#    do MESMO operation_id -> AlreadyApplied{record} com o MESMO registro;
+#    efeito administrado (unidade dummy exclusiva) apenas na 1ª. HTTP 200
+#    isolado NÃO é critério.
+# 2. Estado não vazio: as operações esperadas EXISTEM no esquema real
+#    (records/order) — check_state.py.
+# 3. Correlação: correlation.py (mesma função no positivo e no negativo)
+#    sobre a lista COMPLETA: t1 OK, t2 OK; evidência da t2 apresentada
+#    como candidata à t1 FALHA (arquivo só-com-t2 é a EVIDÊNCIA da t2,
+#    genuína — a função decide); ausência FALHA. Divergência de
+#    request_id coberta em tests/test_correlation.py.
+
+- name: Verificadores em ambiente descartável (nunca operacional)
+  hosts: studio_nodes
+  vars:
+    node_bind: "127.0.0.1"
+    db_file: "{{ deploy_dir }}/studio-node-log.json"
+    dummy_unit: "{{ owned_service }}.service"
+    op_id: "v1-op-{{ f3_run_id }}-{{ ansible_date_time.epoch }}"
+    v1dir: "{{ deploy_dir }}/v1"
+  tasks:
+    - name: Proteção — só unidade de ensaio
+      ansible.builtin.assert:
+        that:
+          - service_name is match('^studio-noded-f3-test-')
+        fail_msg: "verificadores exigem unidade de ensaio descartável"
+
+    - name: Diretório e materiais da rodada
+      ansible.builtin.file:
+        path: "{{ v1dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copiar config de descoberta e prompt para a rodada
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ v1dir }}/{{ item.dst }}"
+        mode: '0644'
+      loop:
+        - {src: "{{ playbook_dir }}/../ci/tese-runner/cyclonedds.xml", dst: cyclonedds.xml}
+        - {src: "{{ prompt_file }}", dst: prompt.txt}
+
+    - name: Diretório de unidades user p/ a dummy
+      ansible.builtin.file:
+        path: "~/.config/systemd/user"
+        state: directory
+        mode: '0755'
+
+    - name: Criar unidade DUMMY USER inofensiva (o actuator usa systemctl --user)
+      ansible.builtin.copy:
+        dest: "~/.config/systemd/user/{{ dummy_unit }}"
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Recurso inofensivo do ensaio {{ f3_run_id }}
+          [Service]
+          Type=oneshot
+          ExecStart=/bin/true
+          RemainAfterExit=yes
+      notify: Reload systemd (user)
+
+    - name: Executar handlers (daemon-reload user da dummy)
+      ansible.builtin.meta: flush_handlers
+
+    - name: Garantir unidade de ensaio reiniciada com a config vigente
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: restarted
+        daemon_reload: true
+      become: true
+
+    - name: Aguardar prontidão pós-reinício
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/version"
+        status_code: 200
+      register: ready_v1
+      until: ready_v1.status == 200
+      retries: 20
+      delay: 2
+
+    - name: Bootstrap 1ª vez
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/apply"
+        method: POST
+        body_format: json
+        status_code: 200
+        body:
+          protocol: {major: 1, minor: 0}
+          operation_id: "{{ op_id }}-bootstrap"
+          op: {kind: bootstrap, node_name: "v1-{{ f3_run_id }}"}
+      register: apply_boot_1
+
+    - name: Bootstrap repetido (MESMO operation_id)
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/apply"
+        method: POST
+        body_format: json
+        status_code: 200
+        body:
+          protocol: {major: 1, minor: 0}
+          operation_id: "{{ op_id }}-bootstrap"
+          op: {kind: bootstrap, node_name: "v1-{{ f3_run_id }}"}
+      register: apply_boot_2
+
+    - name: Idempotência do bootstrap (Applied → AlreadyApplied, mesmo record)
+      ansible.builtin.assert:
+        that:
+          - apply_boot_1.json.outcome == 'applied'
+          - apply_boot_2.json.outcome == 'already_applied'
+          - apply_boot_1.json.record == apply_boot_2.json.record
+        fail_msg: "contrato de idempotência violado (bootstrap)"
+
+    - name: Pré-condição limpa — dummy user PARADA antes do efeito
+      ansible.builtin.command:
+        argv: ["systemctl", "--user", "stop", "{{ dummy_unit }}"]
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ 1000 if service_user | default('agent') == 'agent' else 1001 }}"
+      changed_when: false
+
+    - name: Efeito REAL 1ª vez — POST /services/<owned>/start (actuator systemctl --user)
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/services/{{ owned_service }}/start"
+        method: POST
+        body_format: json
+        status_code: 200
+        body:
+          protocol: {major: 1, minor: 0}
+          operation_id: "{{ op_id }}-start"
+      register: actuate_1
+
+    - name: Dummy USER ativa (efeito REAL ocorreu)
+      ansible.builtin.command:
+        argv: ["systemctl", "--user", "is-active", "{{ dummy_unit }}"]
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ 1000 if service_user | default('agent') == 'agent' else 1001 }}"
+      register: dummy_active_1
+      changed_when: false
+      failed_when: dummy_active_1.stdout != 'active'
+
+    - name: Efeito REAL repetido com o MESMO operation_id (idempotente)
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/services/{{ owned_service }}/start"
+        method: POST
+        body_format: json
+        status_code: 200
+        body:
+          protocol: {major: 1, minor: 0}
+          operation_id: "{{ op_id }}-start"
+      register: actuate_2
+
+    - name: Idempotência do efeito (acted true→false; wanted/active estáveis)
+      ansible.builtin.assert:
+        that:
+          - actuate_1.json.acted == true
+          - actuate_2.json.acted == false
+          - actuate_1.json.wanted == actuate_2.json.wanted == true
+          - actuate_1.json.active == actuate_2.json.active == true
+          - actuate_1.json.service == owned_service
+        fail_msg: "efeito administrado: contrato de idempotência violado (acted/wanted/active)"
+
+    - name: Estado não vazio — operações no ESQUEMA real (records/order)
+      ansible.builtin.script:
+        cmd: "check_state.py {{ db_file | quote }} {{ op_id }}-bootstrap {{ op_id }}-start"
+      register: statecheck
+      changed_when: false
+
+    - name: DDS — 2 tarefas reais com binários do pacote
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          export CYCLONEDDS_URI="file://{{ v1dir }}/cyclonedds.xml" LD_LIBRARY_PATH="{{ deploy_dir }}/lib"
+          nohup "{{ deploy_dir }}/det-responder" --domain "{{ dds_test_domain }}" --delay-ms 5 \
+            --capacity 4 --log "{{ v1dir }}/resp.jsonl" \
+            > "{{ v1dir }}/responder.log" 2>&1 &
+          echo $! > "{{ v1dir }}/responder.pid"
+          nohup "{{ deploy_dir }}/agent" --agent-id v1-dds-{{ f3_run_id }} \
+            --dds-domain "{{ dds_test_domain }}" --engine dds --model qwen3.5-0.8b \
+            > "{{ v1dir }}/agent.log" 2>&1 &
+          echo $! > "{{ v1dir }}/agent.pid"
+          for _ in $(seq 1 20); do
+            grep -q 'claim loop' "{{ v1dir }}/agent.log" && break; sleep 2
+          done
+          grep -q 'claim loop' "{{ v1dir }}/agent.log"
+          for f in responder agent; do kill -0 "$(cat {{ v1dir }}/$f.pid)"; done
+          MSG1="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ v1dir }}/prompt.txt').read()},{'role':'user','content':'v1 tarefa 1'}]))")"
+          MSG2="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ v1dir }}/prompt.txt').read()},{'role':'user','content':'v1 tarefa 2'}]))")"
+          "{{ deploy_dir }}/submit-one" "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG1" --timeout-ms 120000 > "{{ v1dir }}/s1.json"
+          "{{ deploy_dir }}/submit-one" "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG2" --timeout-ms 120000 > "{{ v1dir }}/s2.json"
+          python3 -c "import json; a=json.load(open('{{ v1dir }}/s1.json')); b=json.load(open('{{ v1dir }}/s2.json')); print('IDS', a['task_id'], b['task_id'])"
+      args:
+        executable: /bin/bash
+      register: ddsrun
+      changed_when: true
+
+    - name: Extrair ids das tarefas
+      ansible.builtin.set_fact:
+        task1: "{{ (ddsrun.stdout_lines | select('match', '^IDS ') | list | last).split(' ')[1] }}"
+        task2: "{{ (ddsrun.stdout_lines | select('match', '^IDS ') | list | last).split(' ')[2] }}"
+
+    - name: Arquivo com a EVIDÊNCIA APENAS da tarefa 2 (para o negativo)
+      ansible.builtin.shell:
+        cmd: "grep -F '{{ task2 }}' {{ v1dir }}/resp.jsonl > {{ v1dir }}/resp_only_t2.jsonl"
+      changed_when: false
+
+    - name: Correlação — positivo t1 (lista completa)
+      ansible.builtin.script:
+        cmd: "correlation.py {{ task1 }} {{ v1dir }}/resp.jsonl"
+      register: corr_t1
+      failed_when: "'correlation:OK:OK' not in corr_t1.stdout"
+
+    - name: Correlação — positivo t2 (lista completa)
+      ansible.builtin.script:
+        cmd: "correlation.py {{ task2 }} {{ v1dir }}/resp.jsonl"
+      register: corr_t2
+      failed_when: "'correlation:OK:OK' not in corr_t2.stdout"
+
+    - name: Correlação — NEGATIVO evidência da t2 como candidata à t1 (mesma função DEVE falhar)
+      ansible.builtin.script:
+        cmd: "correlation.py {{ task1 }} {{ v1dir }}/resp_only_t2.jsonl"
+      register: corr_neg_cross
+      failed_when: corr_neg_cross.rc == 0
+      changed_when: false
+
+    - name: Arquivo vazio (para o negativo de ausência)
+      ansible.builtin.file:
+        path: "{{ v1dir }}/resp_vazio.jsonl"
+        state: touch
+        mode: '0644'
+
+    - name: Correlação — NEGATIVO ausência de evidência (arquivo vazio)
+      ansible.builtin.script:
+        cmd: "correlation.py {{ task1 }} {{ v1dir }}/resp_vazio.jsonl"
+      register: corr_neg_absent
+      failed_when: corr_neg_absent.rc == 0
+      changed_when: false
+  handlers:
+    - name: Reload systemd (user)
+      ansible.builtin.command:
+        argv: ["systemctl", "--user", "daemon-reload"]
+      environment:
+        XDG_RUNTIME_DIR: "/run/user/{{ 1000 if service_user | default('agent') == 'agent' else 1001 }}"
+      changed_when: true

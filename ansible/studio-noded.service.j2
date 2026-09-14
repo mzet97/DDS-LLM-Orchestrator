@@ -13,6 +13,7 @@ Environment=LD_LIBRARY_PATH={{ deploy_dir }}/lib
 Environment=STUDIO_NODE_BIND={{ node_bind }}
 Environment=STUDIO_NODE_PORT={{ node_port }}
 Environment=STUDIO_NODE_DB={{ db_file }}
+Environment=XDG_RUNTIME_DIR=/run/user/{{ 1000 if service_user == 'agent' else 1001 }}
 {% if owned_service is defined %}
 Environment=STUDIO_NODE_SERVICES={{ owned_service }}
 {% endif %}
