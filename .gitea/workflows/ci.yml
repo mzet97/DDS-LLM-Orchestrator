@@ -114,10 +114,13 @@ jobs:
           # target/release/build/.../out/lib) — sem ela no PATH do loader, o
           # aceite functional falha com rc=127 (tentativa 6). Empacotada em
           # lib/ junto dos binários; o aceite aponta LD_LIBRARY_PATH para lá.
-          libddsc="$(find target/release/build -type f -name 'libddsc.so.*' | head -1)"
-          test -n "$libddsc" || { echo "libddsc ausente da build"; exit 1; }
-          mkdir -p "$out/lib" && cp -L "$libddsc" "$out/lib/"
-          ( cd "$out" && sha256sum studio-noded agent orchestrator submit-one wf-run det-responder lib/*.so* > SHA256SUMS )
+          # Copiar TODOS os nomes da família (real + symlinks .so/.so.N):
+          # cp -L do arquivo real deixa só libddsc.so.X.Y.Z — o loader
+          # procura libddsc.so.N e não acha (tentativa 7).
+          mkdir -p "$out/lib"
+          find target/release/build \( -type f -o -type l \) -name 'libddsc.so*' -exec cp -L {} "$out/lib/" \;
+          ls "$out/lib"/libddsc.so* >/dev/null || { echo "libddsc ausente da build"; exit 1; }
+          ( cd "$out" && sha256sum studio-noded agent orchestrator submit-one wf-run det-responder lib/* > SHA256SUMS )
           toolchain="$(rustc --version)"
           deps="$(cargo tree -p studio-node --prefix none 2>/dev/null | grep -E '^(cyclonedds|russh|tokio|axum|serde) ' | sort -u | tr '\n' ';')"
           printf '{"commit":"%s","arch":"%s","toolchain":"%s","deps":"%s"}\n' "$sha" "$arch" "$toolchain" "$deps" > "$out/manifest.json"
