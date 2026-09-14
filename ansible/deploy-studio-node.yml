@@ -144,6 +144,13 @@
         mode: '0755'
       notify: Restart unidade de ensaio
 
+    - name: Instalar binários do ensaio/participantes (do mesmo pacote) [HOST]
+      ansible.builtin.copy:
+        src: "{{ staging_base }}/x86_64/{{ item }}"
+        dest: "{{ deploy_dir }}/{{ item }}"
+        mode: '0755'
+      loop: "{{ install_binaries | default(['agent', 'det-responder', 'submit-one']) }}"
+
     - name: Instalar bibliotecas do pacote (lib/libddsc.so*) [HOST]
       ansible.builtin.copy:
         src: "{{ staging_base }}/x86_64/lib/"
@@ -205,12 +212,9 @@
       changed_when: false
       when: db_stat.stat.exists
 
-    - name: DB inicial criado pelo daemon (primeira instalação) [HOST]
-      ansible.builtin.stat:
-        path: "{{ db_file }}"
-      register: fresh_db
-      failed_when: not fresh_db.stat.exists
-      when: not db_stat.stat.exists
+    - name: Primeira instalacao - log nasce na primeira operacao (contrato)
+      ansible.builtin.debug:
+        msg: 'primeira instalacao: o log nasce na primeira operacao (/apply), verificada na validacao; nao no boot do daemon'
 
   handlers:
     - name: Reload systemd

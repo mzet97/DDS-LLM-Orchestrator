@@ -37,8 +37,8 @@
 - name: Validar daemon instalado + operação real + reinício com preservação
   hosts: studio_nodes
   vars:
-    node_port: "{{ node_port | default('24317') }}"
     node_bind: "127.0.0.1"
+    db_file: "{{ deploy_dir }}/studio-node-log.json"
   tasks:
     - name: Hash instalado confere com o artefato aprovado
       ansible.builtin.command:
@@ -69,7 +69,8 @@
         body:
           protocol: {major: 1, minor: 0}
           operation_id: "f3-op-{{ f3_run_id }}-bootstrap"
-          op: {Bootstrap: {node_name: "f3-ensaio-{{ f3_run_id }}"}}
+            # AdminOp é internamente tagged: {"kind": "Bootstrap", ...}
+          op: {kind: bootstrap, node_name: "f3-ensaio-{{ f3_run_id }}"}
         status_code: 200
       register: apply1
 
@@ -117,14 +118,17 @@
         body:
           protocol: {major: 1, minor: 0}
           operation_id: "f3-op-{{ f3_run_id }}-bootstrap"
-          op: {Bootstrap: {node_name: "f3-ensaio-{{ f3_run_id }}"}}
+          op: {kind: bootstrap, node_name: "f3-ensaio-{{ f3_run_id }}"}
         status_code: 200
 
 - name: DDS fase B — caminho completo com binários do pacote no host do ensaio
   hosts: studio_nodes
   vars:
     dds_env:
-      CYCLONEDDS_URI: '<CycloneDDS><Domain/></CycloneDDS>'
+      # Descoberta uniforme (o mesmo perfil validado na imagem do runner):
+      # a config vazia '<Domain/>' mostrou-se INSTÁVEL no host do ensaio
+      # (agent travava na criação de readers com o responder ativo).
+      CYCLONEDDS_URI: "file://{{ deploy_dir }}/dds-{{ dds_test_domain }}/cyclonedds.xml"
       LD_LIBRARY_PATH: "{{ deploy_dir }}/lib"
   tasks:
     - name: Diretório de trabalho próprio do teste
@@ -132,6 +136,12 @@
         path: "{{ deploy_dir }}/dds-{{ dds_test_domain }}"
         state: directory
         mode: '0755'
+
+    - name: Copiar config de descoberta validada para o host do ensaio
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../ci/tese-runner/cyclonedds.xml"
+        dest: "{{ deploy_dir }}/dds-{{ dds_test_domain }}/cyclonedds.xml"
+        mode: '0644'
 
     - name: Fase B com limpeza garantida (block/always)
       block:
@@ -144,7 +154,7 @@
         - name: Iniciar det-responder do pacote (PID registrado)
           ansible.builtin.shell:
             cmd: |
-              "{{ deploy_dir }}/det-responder" --domain "{{ dds_test_domain }}" \
+              nohup "{{ deploy_dir }}/det-responder" --domain "{{ dds_test_domain }}" \
                 --delay-ms 5 --capacity 4 --log "{{ deploy_dir }}/dds-{{ dds_test_domain }}/resp.jsonl" \
                 > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/responder.log" 2>&1 &
               echo $! > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/responder.pid"
@@ -154,12 +164,28 @@
         - name: Iniciar agent dds do pacote (PID registrado)
           ansible.builtin.shell:
             cmd: |
-              "{{ deploy_dir }}/agent" --agent-id f3-dds-{{ dds_test_domain }}-{{ f3_run_id }} \
+              nohup "{{ deploy_dir }}/agent" --agent-id f3-dds-{{ dds_test_domain }}-{{ f3_run_id }} \
                 --dds-domain "{{ dds_test_domain }}" --engine dds --model qwen3.5-0.8b \
                 > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/agent-dds.log" 2>&1 &
               echo $! > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/agent-dds.pid"
           environment: "{{ dds_env }}"
           changed_when: true
+
+        - name: Aguardar o agent pronto E participantes vivos (não SIGHUP-ados)
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              grep -q 'claim loop iniciado' '{{ deploy_dir }}/dds-{{ dds_test_domain }}/agent-dds.log'
+              for f in agent-dds responder; do
+                kill -0 "$(cat '{{ deploy_dir }}/dds-{{ dds_test_domain }}/'$f'.pid')" 
+              done
+          args:
+            executable: /bin/bash
+          register: agentready
+          until: agentready.rc == 0
+          retries: 15
+          delay: 2
+          changed_when: false
 
         - name: Submeter TAREFA 1 e correlacionar por campos EXATOS
           ansible.builtin.shell:
@@ -170,6 +196,8 @@
                 > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/submit1.json"
           environment: "{{ dds_env }}"
           changed_when: false
+          args:
+            executable: /bin/bash
 
         - name: Submeter TAREFA 2 (para o negativo de outra tarefa)
           ansible.builtin.shell:
@@ -180,6 +208,8 @@
                 > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/submit2.json"
           environment: "{{ dds_env }}"
           changed_when: false
+          args:
+            executable: /bin/bash
 
         - name: Correlação exata (task_id campo a campo) + negativo de outra tarefa
           ansible.builtin.command:
