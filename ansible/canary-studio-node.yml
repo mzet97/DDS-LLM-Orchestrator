@@ -1,0 +1,187 @@
+# Canário de atualização do studio-noded OPERACIONAL (2026-09-14).
+# Caminho SEPARADO do ensaio: aceita SOMENTE host 192.168.1.62 e unidade
+# studio-noded.service. Proteções do ensaio (f3-*) permanecem no deploy de
+# ensaio; aqui os bloqueios são os critérios objetivos de rollback.
+#
+# Critérios de rollback (pré-definidos; qualquer um => restaurar):
+#   R1 processo novo com /proc/<pid>/exe != hash aprovado
+#   R2 /version != {"major":1,"minor":0}
+#   R3 listener 192.168.1.62:4317 não pertence ao MainPID da unidade
+#   R4 qualquer agente/inferência/orquestrador prévio com PID alterado
+#   R5 unidade não ativa após start + 20s
+# Limite de indisponibilidade aceito: 90s.
+- name: Preflight do canário operacional (somente leitura)
+  hosts: studio_nodes
+  vars:
+    canary_host_ip: 192.168.1.62
+    op_unit: studio-noded
+    op_dir: /home/agent/dds-llm-rust
+    candidate_sha256: "{{ tese_approved_sha256 }}"
+    stage: "{{ playbook_dir }}/../staging/canary-{{ f3_run_id }}"
+  tasks:
+    - name: Bloqueios de identidade (host/unidade/finalidade)
+      ansible.builtin.assert:
+        that:
+          - ansible_host == canary_host_ip
+          - inventory_hostname == canary_host_ip or inventory_hostname == 'orc62'
+          - op_unit == 'studio-noded'
+          - purpose == 'canary-update-daemon'
+        fail_msg: "canário aceita SOMENTE 192.168.1.62 / studio-noded.service / purpose=canary-update-daemon"
+
+    - name: Snapshot previo sanitizado (antes de qualquer escrita)
+      ansible.builtin.command: "systemctl show {{ op_unit }} -p MainPID,UnitFileState,ExecStart -p User,WorkingDirectory,Environment"
+      register: pre_unit
+      changed_when: false
+
+    - name: Hash do executável em uso e do processo vivo
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          pid="$(systemctl show {{ op_unit }} -p MainPID --value)"
+          exe="$(readlink /proc/$pid/exe)"
+          echo "exe=$exe"
+          sha256sum "$exe" | awk '{print "hash="$1}'
+          systemctl show {{ op_unit }} -p Wants,Requires,PartOf,TriggeredBy -p KillMode
+          echo "cgroup_members=$(systemctl status {{ op_unit }} --no-pager | grep -c '└─')"
+      args:
+        executable: /bin/bash
+      become: true
+      register: pre_state
+      changed_when: false
+
+    - name: Registar PIDs de agentes/inferência/orquestradores (inalterabilidade)
+      ansible.builtin.shell:
+        cmd: "pgrep -f 'agent --agent-id|det-responder|orchestrator' | sort | tr '\\n' ',' "
+      changed_when: false
+      register: pre_side_pids
+
+    - name: Decisão por igualdade de versão
+      ansible.builtin.set_fact:
+        already_candidate: "{{ (pre_state.stdout | regex_search('hash=[0-9a-f]{64}', '\\1') | default('')) == candidate_sha256 }}"
+
+- name: Material do candidato verificado ANTES da interrupção (operadora)
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    stage: "{{ playbook_dir }}/../staging/canary-{{ f3_run_id }}"
+    ca_file: "{{ lookup('env','HOME') }}/.config/dds-orchestrator/pki/local-root-ca.crt"
+  tasks:
+    - name: Staging do canário
+      ansible.builtin.file: {path: "{{ stage }}", state: directory, mode: '0755'}
+
+    - name: Pull por digest
+      ansible.builtin.command:
+        argv: ["oras", "pull", "--ca-file", "{{ ca_file }}",
+               "harbor.home.arpa/tese/tese-rust@{{ harbor_ref }}", "-o", "{{ stage }}/pkg"]
+      changed_when: true
+
+    - name: Nome validado do pacote
+      ansible.builtin.set_fact:
+        pkg_name: "{{ lookup('fileglob', stage + '/pkg/tese-rust-*.tar.gz') | basename }}"
+      failed_when: pkg_name is not match('^tese-rust-x86_64-[0-9a-f]{40}\\.tar\\.gz$')
+
+    - name: Extrair e conferir integridade + hash aprovado
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          tar -xzf "{{ stage }}/pkg/{{ pkg_name }}" -C "{{ stage }}"
+          cd "{{ stage }}/x86_64" && sha256sum -c SHA256SUMS
+          [ "$(sha256sum studio-noded | awk '{print $1}')" = "{{ tese_approved_sha256 }}" ]
+      args: {executable: /bin/bash}
+      changed_when: false
+
+- name: Execução do canário (interrompe SOMENTE o daemon no .62)
+  hosts: studio_nodes
+  vars:
+    op_unit: studio-noded
+    op_dir: /home/agent/dds-llm-rust
+    release_dir: "{{ op_dir }}/releases/{{ f3_run_id }}"
+    stage: "{{ playbook_dir }}/../staging/canary-{{ f3_run_id }}"
+  tasks:
+    - name: Recusar se já na versão candidata
+      ansible.builtin.assert:
+        that: not already_candidate
+        fail_msg: "já na versão candidata; nenhuma troca ou reinício necessário"
+
+    - name: Diretório de release (instalação anterior recuperável)
+      ansible.builtin.file: {path: "{{ release_dir }}", state: directory, mode: '0755'}
+
+    - name: PARAR o daemon (início da janela de indisponibilidade)
+      ansible.builtin.systemd: {name: "{{ op_unit }}", state: stopped}
+      become: true
+
+    - name: Backup da instalação anterior (verificável)
+      ansible.builtin.command: "cp {{ op_dir }}/studio-noded {{ release_dir }}/studio-noded.anterior"
+      changed_when: true
+
+    - name: Hash do backup registrado
+      ansible.builtin.command: "sha256sum {{ release_dir }}/studio-noded.anterior"
+      register: backup_hash
+      changed_when: false
+
+    - name: Copia da unit vigente para o release (config preservada)
+      ansible.builtin.command: "cp /etc/systemd/system/{{ op_unit }}.service {{ release_dir }}/unit.anterior"
+      become: true
+      changed_when: true
+
+    - name: Backup do estado se existir (daemon parado, ponto consistente)
+      ansible.builtin.command: "cp {{ op_dir }}/studio-node-log.json {{ release_dir }}/db.anterior"
+      failed_when: false
+      changed_when: true
+
+    - name: Instalar binário aprovado
+      ansible.builtin.copy:
+        src: "{{ stage }}/x86_64/studio-noded"
+        dest: "{{ op_dir }}/studio-noded"
+        mode: '0755'
+
+    - name: INICIAR (fim da janela se pronto)
+      ansible.builtin.systemd: {name: "{{ op_unit }}", state: started}
+      become: true
+
+    - name: Prontidão (R2/R5)
+      ansible.builtin.uri:
+        url: "http://192.168.1.62:4317/version"
+        status_code: 200
+        return_content: true
+      register: canary_version
+      until: canary_version.status == 200 and canary_version.json.major == 1 and canary_version.json.minor == 0
+      retries: 10
+      delay: 2
+
+    - name: R1 — processo executa o binário aprovado
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          pid="$(systemctl show {{ op_unit }} -p MainPID --value)"
+          exe="$(readlink /proc/$pid/exe)"
+          [ "$exe" = "{{ op_dir }}/studio-noded" ]
+          [ "$(sha256sum "$exe" | awk '{print $1}')" = "{{ tese_approved_sha256 }}" ]
+      args: {executable: /bin/bash}
+      become: true
+      changed_when: false
+
+    - name: R3 — listener pertence ao MainPID
+      ansible.builtin.shell:
+        cmd: |
+          set -euo pipefail
+          pid="$(systemctl show {{ op_unit }} -p MainPID --value)"
+          ss -ltnp | grep ':4317 ' | grep -q "pid=$pid,"
+      args: {executable: /bin/bash}
+      become: true
+      changed_when: false
+
+    - name: Servicos administrados visiveis (continuidade para a GUI)
+      ansible.builtin.uri:
+        url: "http://192.168.1.62:4317/services"
+        return_content: true
+      register: canary_services
+      failed_when: "'dds-agent' not in canary_services.content"
+
+    - name: R4 — agentes/inferência/orquestradores intactos
+      ansible.builtin.shell:
+        cmd: "pgrep -f 'agent --agent-id|det-responder|orchestrator' | sort | tr '\\n' ',' "
+      changed_when: false
+      register: post_side_pids
+      failed_when: post_side_pids.stdout != pre_side_pids.stdout
