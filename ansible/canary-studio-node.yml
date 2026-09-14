@@ -49,15 +49,15 @@
       register: pre_state
       changed_when: false
 
-    - name: Registar PIDs de agentes/inferência/orquestradores (inalterabilidade)
+    - name: Registar PIDs de processos administrados (sem self-match)
       ansible.builtin.shell:
-        cmd: "pgrep -f 'agent --agent-id|det-responder|orchestrator' | sort | tr '\\n' ',' "
-      changed_when: false
+        cmd: "ps -eo pid,args | grep -E 'agent --agent-id|det-responder|/orchestrator' | grep -vE 'grep|bash -c|ansible' | awk '{print $1}' | sort | tr '\\n' ','"
+      args: {executable: /bin/bash}
       register: pre_side_pids
 
     - name: Decisão por igualdade de versão
       ansible.builtin.set_fact:
-        already_candidate: "{{ (pre_state.stdout | regex_search('hash=[0-9a-f]{64}', '\\1') | default('')) == candidate_sha256 }}"
+        already_candidate: "{{ (pre_state.stdout | regex_search('hash=[0-9a-f]{64}') | default('') | regex_replace('hash=', '')) == candidate_sha256 }}"
 
 - name: Material do candidato verificado ANTES da interrupção (operadora)
   hosts: localhost
@@ -99,44 +99,52 @@
     release_dir: "{{ op_dir }}/releases/{{ f3_run_id }}"
     stage: "{{ playbook_dir }}/../staging/canary-{{ f3_run_id }}"
   tasks:
-    - name: Recusar se já na versão candidata
-      ansible.builtin.assert:
-        that: not already_candidate
-        fail_msg: "já na versão candidata; nenhuma troca ou reinício necessário"
+    - name: Decisão registrada — igualdade de versão não gera troca artificial
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'já na versão candidata; nenhuma troca ou reinício necessário — somente verificações'
+             if already_candidate | bool else 'revisão distinta: troca autorizada pelos critérios do registro de canário' }}
 
     - name: Diretório de release (instalação anterior recuperável)
       ansible.builtin.file: {path: "{{ release_dir }}", state: directory, mode: '0755'}
 
     - name: PARAR o daemon (início da janela de indisponibilidade)
+      when: not already_candidate | bool
       ansible.builtin.systemd: {name: "{{ op_unit }}", state: stopped}
       become: true
 
     - name: Backup da instalação anterior (verificável)
+      when: not already_candidate | bool
       ansible.builtin.command: "cp {{ op_dir }}/studio-noded {{ release_dir }}/studio-noded.anterior"
       changed_when: true
 
     - name: Hash do backup registrado
+      when: not already_candidate | bool
       ansible.builtin.command: "sha256sum {{ release_dir }}/studio-noded.anterior"
       register: backup_hash
       changed_when: false
 
     - name: Copia da unit vigente para o release (config preservada)
+      when: not already_candidate | bool
       ansible.builtin.command: "cp /etc/systemd/system/{{ op_unit }}.service {{ release_dir }}/unit.anterior"
       become: true
       changed_when: true
 
     - name: Backup do estado se existir (daemon parado, ponto consistente)
+      when: not already_candidate | bool
       ansible.builtin.command: "cp {{ op_dir }}/studio-node-log.json {{ release_dir }}/db.anterior"
       failed_when: false
       changed_when: true
 
     - name: Instalar binário aprovado
+      when: not already_candidate | bool
       ansible.builtin.copy:
         src: "{{ stage }}/x86_64/studio-noded"
         dest: "{{ op_dir }}/studio-noded"
         mode: '0755'
 
     - name: INICIAR (fim da janela se pronto)
+      when: not already_candidate | bool
       ansible.builtin.systemd: {name: "{{ op_unit }}", state: started}
       become: true
 
@@ -179,9 +187,10 @@
       register: canary_services
       failed_when: "'dds-agent' not in canary_services.content"
 
-    - name: R4 — agentes/inferência/orquestradores intactos
+    - name: R4 — processos administrados intactos (método igual ao baseline)
       ansible.builtin.shell:
-        cmd: "pgrep -f 'agent --agent-id|det-responder|orchestrator' | sort | tr '\\n' ',' "
+        cmd: "ps -eo pid,args | grep -E 'agent --agent-id|det-responder|/orchestrator' | grep -vE 'grep|bash -c|ansible' | awk '{print $1}' | sort | tr '\\n' ','"
+      args: {executable: /bin/bash}
       changed_when: false
       register: post_side_pids
       failed_when: post_side_pids.stdout != pre_side_pids.stdout
