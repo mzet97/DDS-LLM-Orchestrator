@@ -113,6 +113,63 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## F2 concluído + F3 validado em ensaio remoto isolado no .62 (2026-09-14)
+- **F2 — publicação e promoção**: vínculos confirmados pela API (artefato
+  ID 5 ↔ run nº 8 ↔ 54a7c349) ANTES do download; pacote verificado em
+  diretório novo (manifest commit/arch/toolchain, 6 bins + 3 libs,
+  SHA256SUMS 9/9). Publicado o MESMO .tar.gz (sem recompilar) via oras
+  (HTTPS + CA local; robot de publicação; segredo só em arquivo 0600):
+  **harbor.home.arpa/tese/tese-rust@sha256:ca4836d7…82a76** (tag
+  54a7c34-x86_64, artifact-type application/vnd.tese.bundle). Pull por
+  digest em outro diretório: SHA-256 idêntico
+  (b4f892c7acbb37c4cb968d35771a65253e07d46bceee1ca66281c7a38cc4a7fa).
+  Registro de promoção: `ci/PROMOCAO-tese-rust-54a7c34.md` — aprovado
+  PARA ENSAIO F3 ISOLADO; NÃO aprovado para substituir serviços
+  operacionais. Digest do PACOTE (ca4836d7) ≠ digest da IMAGEM do runner
+  (cee13047) — nomes distintos registrados.
+- **F3 — ensaio no .62 (host 'agent', x86_64, sudo; studio-noded
+  OPERACIONAL ativo na 4317 — intocado durante todo o ensaio e
+  confirmado ao fim: mesmo MainPID 11523)**. Execução 20260914a:
+  - Playbooks reais corrigidos (commits 146ec3b e anteriores): nome do
+    pacote lido e validado (não derivado do digest); integridade e hash
+    aprovado ANTES de copiar; lib/libddsc.so* instalada com
+    LD_LIBRARY_PATH exclusivo da unidade; validate_db.py via módulo
+    script; parametrização total + proteções (recusa studio-noded/4317,
+    bind loopback, staging por run_id).
+  - Percurso: pull por digest na operadora → validação/extração →
+    implantação Ansible (deploy ok) → systemd start (unidade
+    studio-noded-f3-test-20260914a, porta 24317, 127.0.0.1, uid agent) →
+    operação REAL (/apply Bootstrap) com estado NÃO vazio → idempotência
+    (repetição sem efeito novo) → reinício da unidade → DB preservado
+    (validate_db: ops_preservadas; backup identificado) → **DDS com
+    binários do pacote**: det-responder + agent dds + submit-one,
+    domínio reservado 95/96, prompt canônico seq_B_reviewer_v1 (hash
+    conferido), 2 tarefas com correlação EXATA por task_id/request_id
+    + NEGATIVO (resposta de outra tarefa não satisfaz) → participantes
+    encerrados por PID registrado com confirmação de término.
+  - Negativo de corrupção: binário adulterado no staging → sha256sum -c
+    FALHA (studio-noded: FAILED) → playbook aborta rc=2 SEM instalar
+    nada (nenhum arquivo copiado, unidade inexistente).
+  - Falha controlada + rollback: ELF truncado (após stop — binário em
+    execução recusa overwrite com ETXTBSY) → unit failed, sem resposta
+    → reexecução do deploy (rc=0, restaurou o pacote válido e
+    re-verificou hash) → revalidação completa rc=0. Classificação:
+    RECUPERAÇÃO DO PROCEDIMENTO (mesmo release antes/depois; nenhuma
+    alegação de compatibilidade entre versões).
+  - Correções da execução (causas registradas nos commits): AdminOp é
+    internamente tagged snake_case ({"kind":"bootstrap"}); config
+    CycloneDDS vazia instável no host (agent travava na criação de
+    readers com o responder ativo — resolvido com o XML de descoberta
+    validado copiado ao host); participantes em background tomavam
+    SIGHUP ao fechar o canal da task (nohup + barreira de
+    prontidão/vida antes do submit); domínio 77 histórico da LAN tinha
+    resíduo (domínios reservados novos usados).
+  - Limpeza: f3-teardown rc=0 (unidade removida, daemon-reload, dirs de
+    deploy e staging removidos); 0 processos f3 restantes; portas de
+    teste liberadas; inventário local com senha JAMAIS versionado.
+- Fora do escopo mantido: substituir o studio-noded operacional,
+  atualizar .61, campanha científica, deploy automático por push.
+
 ## Consolidação F1 + pendência de segurança do pull (2026-09-14)
 - Estado efetivo vs versionado: os elementos Recreate/imagePullSecrets/
   SSL_CERT_FILE/GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS vieram do apply manual
