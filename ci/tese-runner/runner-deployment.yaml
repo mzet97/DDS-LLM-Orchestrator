@@ -1,4 +1,7 @@
-# Runner dedicado à tese (DRAFT — NÃO APLICAR sem aprovação + digest).
+# Runner dedicado à tese — APLICADO em 2026-09-13/14 (F1, piloto validado;
+# run nº8 tudo SUCCESS). Este arquivo reflete o estado EFETIVO do cluster
+# (strategy Recreate, imagePullSecrets, envs de CA p/ act_runner/git/curl/
+# Node). Mudanças futuras exigem aprovação própria (não é deploy automático).
 #
 # Diferenças para o runner existente: label exclusiva `tese-rust:host`,
 # capacidade 1, imagem própria com toolchain, CA pública montada somente
@@ -18,6 +21,9 @@ metadata:
   namespace: ci-runners
 spec:
   replicas: 1
+  # Recreate: capacity 1 — nunca dois runners com o mesmo registro.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: tese-runner
@@ -28,6 +34,10 @@ spec:
     spec:
       serviceAccountName: tese-runner
       automountServiceAccountToken: false
+      # Pull pelo runtime K3s via mirror interno (ver comentário da imagem);
+      # o Secret carrega o robot pull-only (Pull somente leitura, projeto tese).
+      imagePullSecrets:
+        - name: tese-registry-pull
       securityContext:
         runAsUser: 1001
         runAsNonRoot: true
@@ -78,6 +88,11 @@ spec:
             - name: GITEA_RUNNER_LABELS
               value: "tese-rust:host"
             - name: CURL_CA_BUNDLE
+              value: /etc/dds-orchestrator/pki/local-root-ca.crt
+            # Actions rodam em Node: SSL_CERT_FILE NÃO vale para Node —
+            # sem isto, upload/download de artefatos falham com
+            # 'unable to verify the first certificate' (tentativa 3 F1).
+            - name: NODE_EXTRA_CA_CERTS
               value: /etc/dds-orchestrator/pki/local-root-ca.crt
           volumeMounts:
             - name: data

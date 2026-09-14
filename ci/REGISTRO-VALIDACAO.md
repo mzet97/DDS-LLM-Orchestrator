@@ -113,6 +113,46 @@
 - 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
   incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
 
+## Consolidação F1 + pendência de segurança do pull (2026-09-14)
+- Estado efetivo vs versionado: os elementos Recreate/imagePullSecrets/
+  SSL_CERT_FILE/GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS vieram do apply manual
+  do piloto + `kubectl set env` (NODE_EXTRA_CA_CERTS) — nenhum overlay ou
+  patch de terceiros. O manifesto `ci/tese-runner/runner-deployment.yaml`
+  agora versiona a configuração declarativa COMPLETA igual ao efetivo
+  (referências aos Secrets, nunca valores). Headers DRAFT substituídos
+  por estado aplicado; `set -x` removido do caminho normal dos jobs
+  (diagnóstico de tentativas documentado nos commits).
+- **PENDÊNCIA DE SEGURANÇA (pull da imagem)**: o runtime K3s puxa
+  tese-runner pelo mirror interno `http://10.43.105.175` (svc `harbor`,
+  porta 80 — HTTP, sem TLS). Nesse segmento (node→ClusterIP) a senha do
+  robot pull-only trafega como Basic Auth EM CLARO: a confidencialidade
+  desse caminho NÃO está garantida. NÃO é equivalente ao HTTPS com CA
+  validada usado em todo o resto (Gitea, publicação, oras). Correção
+  futura proposta (EXIGE `systemctl restart k3s` — fora desta rodada,
+  diff apresentado, não aplicado):
+      # /etc/rancher/k3s/registries.yaml (proposta)
+      mirrors:
+        harbor.home.arpa:
+          endpoint:
+            - https://harbor.home.arpa
+      configs:
+        "harbor.home.arpa":
+          tls:
+            ca_file: /etc/rancher/k3s/certs/harbor-local-root-ca.crt
+  Impacto do restart: interrupção breve do plano de controle single-node
+  (API ~30-60s; pods seguem). Aguarda autorização própria.
+- Endpoints efetivos verificados (sem valores sensíveis): token do
+  registro via API do Gitea (HTTPS gitea.home.arpa, CA validada);
+  transferência de imagem: mirror HTTP interno acima (exceção
+  registrada); artefatos de CI: HTTPS gitea.home.arpa (Node com
+  NODE_EXTRA_CA_CERTS). Publicação/recuperação de PACOTES da aplicação
+  (F2): SEMPRE HTTPS harbor.home.arpa com CA — HTTP não estendido.
+- NetworkPolicy tese-runner: restaurada e CONFIRMADA igual à versionada
+  (5 regras: DNS 53, gitea 3000, harbor 80/443, pods traefik 8443/8000
+  — destino pós-DNAT —, internet pública). A remoção temporária do
+  diagnóstico foi encerrada com a regra pós-DNAT; não será mais
+  removida para testes.
+
 ## F1 — runner dedicado ativo e CI validada no Gitea (2026-09-14)
 - Revisão final da frente: 54a7c349 (branch studio/phase-800-node;
   ajustes de pré-ativação: 32651ca docs, a40cf30 registro, 814d417
