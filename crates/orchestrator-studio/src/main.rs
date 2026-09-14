@@ -261,7 +261,7 @@ impl eframe::App for StudioApp {
                         proof,
                     );
                 }
-                Section::Node => views::node::show(ui, &mut self.state, &mut self.registry),
+                Section::Node => views::node::show(ui, &mut self.state, &mut self.registry, &mut self.services, &mut self.agents),
                 Section::Inference => views::inference::show(ui, &mut self.inference),
                 Section::Launch => {
                     let known: Vec<String> = self

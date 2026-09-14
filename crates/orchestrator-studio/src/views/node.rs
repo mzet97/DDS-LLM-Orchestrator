@@ -4,7 +4,9 @@
 //! administrar N nós de uma GUI). Sem SSH aqui — G-02/G-04 pendentes.
 
 use eframe::egui;
+use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::nodes::NodeRegistry;
+use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::state::AppState;
 use studio_node::protocol::AdminOp;
 
@@ -19,7 +21,13 @@ fn op_summary(op: &AdminOp) -> String {
 }
 
 /// Registro, conexão e resumo/tabela do nó selecionado.
-pub fn show(ui: &mut egui::Ui, state: &mut AppState, registry: &mut NodeRegistry) {
+pub fn show(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    registry: &mut NodeRegistry,
+    services: &mut ServicesPanel,
+    agents: &mut AgentsState,
+) {
     ui.heading("Nós studio-node");
     ui.label("Só endereços que você digitou. Sem varredura, sem SSH (G-02/G-04 pendentes).");
     ui.horizontal(|ui| {
@@ -73,7 +81,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, registry: &mut NodeRegistry
     if let Some(current) = registry.selected() {
         ui.monospace(&current.url);
         if ui.button("Conectar ao nó").clicked() {
-            state.refresh_from_node(&current.url.clone());
+            let url = current.url.clone();
+            state.refresh_from_node(&url);
+            // Conectar num nó também alimenta o resumo: serviços e
+            // agentes são lidos do MESMO endpoint, sem visita manual a
+            // cada painel (o cartão "não lido" confundia o operador).
+            services.url = url.clone();
+            services.refresh();
+            agents.url = url;
+            agents.refresh();
         }
     }
     if let Some(node) = state.node() {
