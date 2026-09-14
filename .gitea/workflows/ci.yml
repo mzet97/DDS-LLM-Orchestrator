@@ -134,6 +134,7 @@ jobs:
       - name: Aceite em diretório independente (integridade + funcional)
         run: |
           set -euo pipefail
+          set -x  # trace de diagnóstico do piloto (remover após F1 estável)
           rm -rf accept && mkdir accept && cd accept
           tar -xzf ../pkg/tese-rust-*.tar.gz
           dir="$(ls -d */)"
