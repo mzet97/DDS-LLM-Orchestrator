@@ -22,6 +22,7 @@ pub mod cache;
 pub mod dispatch;
 pub mod in_memory;
 pub mod qos;
+pub mod shutdown;
 
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -59,6 +60,11 @@ pub struct DataSpace {
     // Pool de writers de `Tasks` (ver `task_writer_for` para o porquê de mais
     // de um).
     tasks_writers: Vec<DataWriter<Task>>,
+    /// Writer de `Tasks` com strength do CLIENTE (10) — path de publicação
+    /// SEM assumir ownership (T-820-03): é por aqui que o reaper/reatribuição
+    /// publica, para que um agente (strength 100–163) volte a vencer a
+    /// arbitragem no claim seguinte. Ver `write_task_without_ownership`.
+    tasks_writer_client: DataWriter<Task>,
     agents_writer: DataWriter<AgentState>,
     outputs_writer: DataWriter<TaskOutput>,
     // `tasks_reader` é usado por `read_task_mesh`/confirmação de ownership
@@ -201,22 +207,42 @@ fn build_tasks_writer_pool(
     Ok(writers)
 }
 
+/// Hash FNV-1a 64-bit explícito (T-820-20).
+///
+/// Substitui o `DefaultHasher` do roteamento do pool de writers: o std NÃO
+/// garante o algoritmo (nem as sementes) do `DefaultHasher` entre versões —
+/// dois binários compilados com toolchains diferentes podiam rotear o MESMO
+/// `task_id` para índices DIFERENTES, quebrando o invariante "mesmo task_id →
+/// mesmo slot em todos os processos" em que a arbitragem de Exclusive
+/// Ownership se apoia (ver `select_task_writer_slot`). FNV-1a é minúsculo,
+/// sem dependências e especificado de forma fixa (offset `0xcbf29ce484222325`,
+/// primo `0x100000001b3`).
+#[must_use]
+pub fn fnv1a64(bytes: &[u8]) -> u64 {
+    const OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const PRIME: u64 = 0x0000_0100_0000_01b3;
+    let mut hash = OFFSET_BASIS;
+    for &byte in bytes {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(PRIME);
+    }
+    hash
+}
+
 /// Escolhe, para um `task_id`, qual índice do pool de writers de `Tasks`
 /// usar — compartilhado por `DataSpace::task_writer_for` e por
 /// `writer_pool::make_write_fn` (o caminho `WriteRequest::Task`), para que os
 /// DOIS pontos de escrita roteiem a MESMA task para o MESMO slot. Ver o
 /// comentário em `task_writer_for` para por que o hash usa chave FIXA
-/// (precisa ser igual em todos os processos).
+/// (precisa ser igual em todos os processos). T-820-20: o hash é FNV-1a 64
+/// explícito ([`fnv1a64`]) e não `DefaultHasher` — o algoritmo do std pode
+/// mudar entre toolchains e o invariante cross-processo exige estabilidade.
 #[cfg(feature = "dds")]
 pub(crate) fn select_task_writer_slot(task_id: &str, pool_len: usize) -> usize {
-    use std::collections::hash_map::DefaultHasher;
-    use std::hash::{Hash, Hasher};
     if pool_len <= 1 {
         return 0;
     }
-    let mut hasher = DefaultHasher::new();
-    task_id.hash(&mut hasher);
-    (hasher.finish() as usize) % pool_len
+    (fnv1a64(task_id.as_bytes()) as usize) % pool_len
 }
 
 /// Strength por papel (Fase 2.2 já validada no Python): cliente<agente<orq.
@@ -431,6 +457,18 @@ impl DataSpace {
 
         // ── Writers ──────────────────────────────────────────────────────
         let tasks_writers = build_tasks_writer_pool(&publisher, &tasks_topic, ownership_strength)?;
+        // T-820-03: um ÚNICO writer de strength CLIENTE criado no boot (não
+        // um por escrita) — o reaper/reatribuição publica por ele para não
+        // se tornar dono da instância. Mesmo perfil usado pelo
+        // `api_tasks_writer` do orquestrador (`qos::profiles::tasks` +
+        // STRENGTH_CLIENT), para que mock/real e os dois caminhos de
+        // publicação falem a mesma QoS.
+        let tasks_writer_client = DataWriter::with_qos(
+            &publisher,
+            &tasks_topic,
+            Some(&qos::profiles::tasks(Some(DataSpace::STRENGTH_CLIENT)).map_err(err)?),
+        )
+        .map_err(err)?;
         let agents_writer =
             DataWriter::with_qos(&publisher, &agents_topic, Some(&q_agents)).map_err(err)?;
         let outputs_writer =
@@ -502,6 +540,7 @@ impl DataSpace {
         );
         Ok(Self {
             tasks_writers,
+            tasks_writer_client,
             agents_writer,
             outputs_writer,
             tasks_reader,
@@ -562,8 +601,8 @@ impl DataSpace {
     /// arbitragem de `Ownership::Exclusive` fica bem definida: cada agente
     /// usa SEU writer daquele índice, cujas forças foram sorteadas
     /// independentemente por processo, então o vencedor varia de task para
-    /// task em vez de ser sempre o mesmo agente. Por isso o hash usa
-    /// `DefaultHasher::new()` (chaves fixas, reprodutível entre processos) e
+    /// task em vez de ser sempre o mesmo agente. Por isso o hash é
+    /// determinístico e estável entre toolchains — [`fnv1a64`], T-820-20 — e
     /// NÃO `RandomState`/`HashMap` (aleatorizado por processo, daria índices
     /// diferentes em cada agente e quebraria a garantia de exclusividade —
     /// dois agentes escrevendo em writers de força igual para o MESMO
@@ -634,6 +673,9 @@ impl DataSpace {
     }
 
     /// Encerra o DataSpace (drop ordenado: filhos → tópicos → pub/sub → participant).
+    /// O `Drop` do `SharedWaitSet` marca a flag de shutdown e acorda os
+    /// registros: as `stream_*` penduradas terminam graciosamente
+    /// (`Registration::is_shutdown` — T-820-05/P1-7).
     pub async fn shutdown(self) -> Result<(), api::DataSpaceError> {
         tracing::info!("DataSpace encerrando");
         drop(self);
@@ -659,6 +701,77 @@ fn err(e: cyclonedds::DdsError) -> api::DataSpaceError {
 // ── Streams por evento (T-304, REQ-302/303) ────────────────────────────────
 
 #[cfg(feature = "dds")]
+mod streams {
+    //! Helpers compartilhados pelas `stream_*` (T-820-05): setup eager com o
+    //! perfil QoS do tópico + backoff do retry de `take_async`.
+
+    /// Backoff do retry de `take_async` nas streams (T-820-05/P3): começa em
+    /// 100 ms e dobra até 5 s — antes era warn+100 ms fixos para sempre, que
+    /// enche o log e queima CPU em falha persistente (ex.: reader órfão de
+    /// um waitset derrubado).
+    pub(super) const STREAM_TAKE_BACKOFF_INITIAL: std::time::Duration =
+        std::time::Duration::from_millis(100);
+    pub(super) const STREAM_TAKE_BACKOFF_MAX: std::time::Duration =
+        std::time::Duration::from_secs(5);
+}
+
+#[cfg(feature = "dds")]
+use streams::{STREAM_TAKE_BACKOFF_INITIAL, STREAM_TAKE_BACKOFF_MAX};
+
+/// Setup SÍNCRONO de uma stream (T-820-05, P1-3): cria o reader com o perfil
+/// QoS do TÓPICO — o mesmo usado pelos writers, não os defaults DDS
+/// (BEST_EFFORT + KeepLast(1)), que perdiam amostras silenciosamente contra
+/// writers Reliable/TransientLocal — e o registra no WaitSet compartilhado
+/// ANTES de devolver o stream. O padrão era o de `stream_tasks`; agora TODAS
+/// as `stream_*` passam por aqui: o setup preguiçoso (reader criado dentro do
+/// gerador, no primeiro poll) perdia a janela entre criar a stream e o
+/// primeiro poll nos tópicos Volatile (Context.Update, QoS.Discovery).
+/// Falível por etapa: `None` = stream encerrada (o gerador nem inicia).
+#[cfg(feature = "dds")]
+fn setup_stream_reader<T: cyclonedds::DdsType>(
+    label: &'static str,
+    subscriber: &Subscriber,
+    topic: &Topic<T>,
+    waitset: &dispatch::SharedWaitSet,
+    qos_profile: cyclonedds::DdsResult<cyclonedds::Qos>,
+) -> Option<(DataReader<T>, dispatch::Registration)> {
+    let qos = match qos_profile {
+        Ok(q) => Some(q),
+        Err(e) => {
+            tracing::error!(
+                topic = label,
+                error = %e,
+                "perfil QoS do reader falhou; stream encerrado"
+            );
+            return None;
+        }
+    };
+    let reader = match DataReader::with_qos(subscriber, topic, qos.as_ref()) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                topic = label,
+                error = %e,
+                "DataReader::with_qos falhou; stream encerrado"
+            );
+            return None;
+        }
+    };
+    let registration = match waitset.register(&reader) {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::error!(
+                topic = label,
+                error = %e,
+                "waitset.register falhou; stream encerrado"
+            );
+            return None;
+        }
+    };
+    Some((reader, registration))
+}
+
+#[cfg(feature = "dds")]
 use cache::TopicCaches;
 #[cfg(feature = "dds")]
 use futures_core::Stream;
@@ -680,53 +793,59 @@ impl DataSpace {
     /// Stream de `Task` acordada por amostra (WaitSet compartilhado — Fase 5/T-617,
     /// ver `dispatch.rs` — sem polling). Cada chamada cria um reader dedicado
     /// ('static, sem corrida de take entre assinantes), anexado ao WaitSet
-    /// único do `DataSpace`. O reader é criado e anexado antes de devolver o
-    /// stream, para que um pump persistente já exista antes do primeiro write
-    /// em um tópico Volatile. Cada amostra alimenta o cache (upsert monotônico).
+    /// único do `DataSpace`. Setup EAGER via [`setup_stream_reader`]: o reader
+    /// (com o perfil QoS do tópico) já existe antes do stream ser devolvido,
+    /// para que um pump persistente esteja ativo antes do primeiro write em
+    /// um tópico Volatile. Cada amostra alimenta o cache (upsert monotônico)
+    /// e só as ACEITAS são entregues (RUST-CACHE-006).
     pub fn stream_tasks(&self) -> impl Stream<Item = cache::ArcTask> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.tasks_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
-        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
-            Ok(reader) => match waitset.register(&reader) {
-                Ok(registration) => Some((reader, registration)),
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(Tasks) falhou; stream encerrado");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::error!(error = %e, "DataReader::with_qos(Tasks) falhou; stream encerrado");
-                None
-            }
-        };
+        let setup = setup_stream_reader(
+            "Tasks",
+            &self.subscriber,
+            &self.tasks_topic,
+            &self.shared_waitset,
+            qos::profiles::tasks(None),
+        );
         async_stream::stream! {
             let Some((reader, registration)) = setup else {
                 return;
             };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return; // T-820-05/P1-7: DataSpace derrubado → fim gracioso
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(tasks) if !tasks.is_empty() => {
-                        for t in tasks {
-                            // RUST-CACHE-006: só entrega ao consumidor o que
-                            // está de fato no cache (legível via read_task).
-                            if let cache::TaskUpsert::Accepted(t) = caches.upsert_task(t) {
-                                yield t;
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for t in tasks {
+                                // RUST-CACHE-006: só entrega ao consumidor o que
+                                // está de fato no cache (legível via read_task).
+                                if let cache::TaskUpsert::Accepted(t) = caches.upsert_task(t) {
+                                    yield t;
+                                }
                             }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(Tasks) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(Tasks) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -734,44 +853,54 @@ impl DataSpace {
     }
 
     /// Stream de `AgentState` acordada por amostra (heartbeat dos agentes).
-    pub fn stream_agent_states(&self) -> impl Stream<Item = cache::ArcAgentState> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_agent_states(&self) -> impl Stream<Item = cache::ArcAgentState> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.agents_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "AgentRegistry",
+            &self.subscriber,
+            &self.agents_topic,
+            &self.shared_waitset,
+            qos::profiles::agent_registry(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(AgentRegistry) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(AgentRegistry) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(states) if !states.is_empty() => {
-                        for s in states {
-                            yield caches.upsert_agent(s);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for s in states {
+                                let (state, accepted) = caches.upsert_agent(s);
+                                if accepted {
+                                    yield state;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(AgentRegistry) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(AgentRegistry) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -779,48 +908,57 @@ impl DataSpace {
     }
 
     /// Stream de `TaskOutput` acordada por amostra (chunks de inferência).
-    /// O reader é criado e anexado antes de devolver o stream, para não perder
-    /// amostras Volatile quando o pump do cliente ainda não foi polled.
+    /// Setup EAGER via [`setup_stream_reader`] (QoS do tópico, reader anexado
+    /// antes de devolver o stream) para não perder amostras Volatile quando o
+    /// pump do cliente ainda não foi polled. Só amostras aceitas pelo cache
+    /// são entregues (T-820-06).
     pub fn stream_task_outputs(&self) -> impl Stream<Item = cache::ArcTaskOutput> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.outputs_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
-        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
-            Ok(reader) => match waitset.register(&reader) {
-                Ok(registration) => Some((reader, registration)),
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(TaskOutput) falhou; stream encerrado");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::error!(error = %e, "DataReader::with_qos(TaskOutput) falhou; stream encerrado");
-                None
-            }
-        };
+        let setup = setup_stream_reader(
+            "TaskOutput",
+            &self.subscriber,
+            &self.outputs_topic,
+            &self.shared_waitset,
+            qos::profiles::task_output(None),
+        );
         async_stream::stream! {
             let Some((reader, registration)) = setup else {
                 return;
             };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(outs) if !outs.is_empty() => {
-                        for o in outs {
-                            yield caches.push_output(o);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for o in outs {
+                                let (output, accepted) = caches.push_output(o);
+                                if accepted {
+                                    yield output;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(TaskOutput) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(TaskOutput) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -828,44 +966,54 @@ impl DataSpace {
     }
 
     /// Stream de `LLMInferenceRequest` acordada por amostra.
-    pub fn stream_llm_requests(&self) -> impl Stream<Item = cache::ArcLLMRequest> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_llm_requests(&self) -> impl Stream<Item = cache::ArcLLMRequest> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.llm_request_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "LLMRequest",
+            &self.subscriber,
+            &self.llm_request_topic,
+            &self.shared_waitset,
+            qos::profiles::llm(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(LLMRequest) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(LLMRequest) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(reqs) if !reqs.is_empty() => {
-                        for r in reqs {
-                            yield caches.upsert_llm_request(r);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for r in reqs {
+                                let (req, accepted) = caches.upsert_llm_request(r);
+                                if accepted {
+                                    yield req;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(LLMRequest) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(LLMRequest) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -873,26 +1021,21 @@ impl DataSpace {
     }
 
     /// Stream de `LLMInferenceResult` acordada por amostra.
-    pub fn stream_llm_results(&self) -> impl Stream<Item = cache::ArcLLMResult> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_llm_results(&self) -> impl Stream<Item = cache::ArcLLMResult> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.llm_result_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "LLMResult",
+            &self.subscriber,
+            &self.llm_result_topic,
+            &self.shared_waitset,
+            qos::profiles::llm_result(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(LLMResult) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(LLMResult) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             // Padrão enable-antes-de-drenar (sem wakeup perdido): uma
             // notificação level-triggered cobre TUDO o que está no RHC —
             // drena até esvaziar. Notificações que chegarem durante o dreno
@@ -900,23 +1043,38 @@ impl DataSpace {
             // ciclo de dreno. Antes (1 take por notificação), bursts
             // perdiam amostras no meio do stream (medido: 27–30/128).
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(results) if !results.is_empty() => {
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
                             for r in results {
-                                yield caches.push_llm_result(r);
+                                let (result, accepted) = caches.push_llm_result(r);
+                                if accepted {
+                                    yield result;
+                                }
                             }
                         }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(LLMResult) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(LLMResult) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -924,44 +1082,54 @@ impl DataSpace {
     }
 
     /// Stream de `LLMInferenceError` acordada por amostra.
-    pub fn stream_llm_errors(&self) -> impl Stream<Item = cache::ArcLLMError> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_llm_errors(&self) -> impl Stream<Item = cache::ArcLLMError> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.llm_error_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "LLMError",
+            &self.subscriber,
+            &self.llm_error_topic,
+            &self.shared_waitset,
+            qos::profiles::llm(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(LLMError) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(LLMError) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(errors) if !errors.is_empty() => {
-                        for e in errors {
-                            yield caches.upsert_llm_error(e);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for e in errors {
+                                let (error, accepted) = caches.upsert_llm_error(e);
+                                if accepted {
+                                    yield error;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(LLMError) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(LLMError) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -969,137 +1137,168 @@ impl DataSpace {
     }
 
     /// Stream de `ContextSnapshot` acordada por amostra.
-    pub fn stream_context_snapshots(&self) -> impl Stream<Item = cache::ArcContextSnapshot> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_context_snapshots(
+        &self,
+    ) -> impl Stream<Item = cache::ArcContextSnapshot> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.context_snapshot_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "ContextSnapshot",
+            &self.subscriber,
+            &self.context_snapshot_topic,
+            &self.shared_waitset,
+            qos::profiles::context_snapshot(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(ContextSnapshot) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(ContextSnapshot) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(snaps) if !snaps.is_empty() => {
-                        for s in snaps {
-                            yield caches.upsert_context_snapshot(s);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for s in snaps {
+                                let (snap, accepted) = caches.upsert_context_snapshot(s);
+                                if accepted {
+                                    yield snap;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(ContextSnapshot) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(ContextSnapshot) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
         }
     }
 
-    /// Stream de `ContextUpdate` acordada por amostra.
-    pub fn stream_context_updates(&self) -> impl Stream<Item = cache::ArcContextUpdate> {
+    /// Stream de `ContextUpdate` acordada por amostra. Setup EAGER
+    /// (T-820-05/P1-3: tópico Volatile — o setup preguiçoso perdia a janela
+    /// entre criar a stream e o primeiro poll) + filtro de admissão
+    /// (T-820-06).
+    pub fn stream_context_updates(&self) -> impl Stream<Item = cache::ArcContextUpdate> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.context_update_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "ContextUpdate",
+            &self.subscriber,
+            &self.context_update_topic,
+            &self.shared_waitset,
+            qos::profiles::context_update(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(ContextUpdate) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(ContextUpdate) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(updates) if !updates.is_empty() => {
-                        for u in updates {
-                            yield caches.push_context_update(u);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for u in updates {
+                                let (update, accepted) = caches.push_context_update(u);
+                                if accepted {
+                                    yield update;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(ContextUpdate) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(ContextUpdate) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
         }
     }
 
-    pub fn stream_server_statuses(&self) -> impl Stream<Item = cache::ArcServerStatus> {
+    /// Stream de `ServerStatus` acordada por amostra (forma plural).
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_server_statuses(&self) -> impl Stream<Item = cache::ArcServerStatus> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.server_status_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
-        // Eager como `stream_tasks`: o reader precisa existir antes do
-        // primeiro write num tópico Volatile (ex.: subscribe → write → poll).
-        let setup = match DataReader::with_qos(&subscriber, &topic, None) {
-            Ok(reader) => match waitset.register(&reader) {
-                Ok(registration) => Some((reader, registration)),
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(ServerStatus) falhou; stream encerrado");
-                    None
-                }
-            },
-            Err(e) => {
-                tracing::error!(error = %e, "DataReader::with_qos(ServerStatus) falhou; stream encerrado");
-                None
-            }
-        };
+        let setup = setup_stream_reader(
+            "ServerStatus",
+            &self.subscriber,
+            &self.server_status_topic,
+            &self.shared_waitset,
+            qos::profiles::server_status(),
+        );
         async_stream::stream! {
             let Some((reader, registration)) = setup else {
                 return;
             };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(statuses) if !statuses.is_empty() => {
-                        for s in statuses {
-                            yield caches.upsert_server_status(s);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for s in statuses {
+                                let (status, accepted) = caches.upsert_server_status(s);
+                                if accepted {
+                                    yield status;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(ServerStatus) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(ServerStatus) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1107,44 +1306,54 @@ impl DataSpace {
     }
 
     /// Stream de `ToolCallRequest` acordada por amostra.
-    pub fn stream_tool_calls(&self) -> impl Stream<Item = cache::ArcToolCallRequest> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_tool_calls(&self) -> impl Stream<Item = cache::ArcToolCallRequest> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.tool_call_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "ToolCall",
+            &self.subscriber,
+            &self.tool_call_topic,
+            &self.shared_waitset,
+            qos::profiles::tool_call(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(ToolCall) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(ToolCall) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(calls) if !calls.is_empty() => {
-                        for c in calls {
-                            yield caches.upsert_tool_call(c);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for c in calls {
+                                let (call, accepted) = caches.upsert_tool_call(c);
+                                if accepted {
+                                    yield call;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(ToolCall) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(ToolCall) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1152,44 +1361,56 @@ impl DataSpace {
     }
 
     /// Stream de `ExecutionTraceEvent` acordada por amostra.
-    pub fn stream_execution_traces(&self) -> impl Stream<Item = cache::ArcExecutionTraceEvent> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_execution_traces(
+        &self,
+    ) -> impl Stream<Item = cache::ArcExecutionTraceEvent> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.execution_trace_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "ExecutionTrace",
+            &self.subscriber,
+            &self.execution_trace_topic,
+            &self.shared_waitset,
+            qos::profiles::execution_trace(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(ExecutionTrace) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(ExecutionTrace) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(events) if !events.is_empty() => {
-                        for e in events {
-                            yield caches.push_execution_trace(e);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for e in events {
+                                let (event, accepted) = caches.push_execution_trace(e);
+                                if accepted {
+                                    yield event;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(ExecutionTrace) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(ExecutionTrace) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1197,47 +1418,57 @@ impl DataSpace {
     }
 
     /// Stream de `SecurityPolicySnapshot` acordada por amostra.
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06);
+    /// entrega o Arc do CACHE (não um segundo clone da amostra crua).
     pub fn stream_security_snapshots(
         &self,
-    ) -> impl Stream<Item = cache::ArcSecurityPolicySnapshot> {
+    ) -> impl Stream<Item = cache::ArcSecurityPolicySnapshot> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.security_snapshot_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "SecuritySnapshot",
+            &self.subscriber,
+            &self.security_snapshot_topic,
+            &self.shared_waitset,
+            qos::profiles::security_snapshot(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(SecuritySnapshot) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(SecuritySnapshot) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(snaps) if !snaps.is_empty() => {
-                        for s in snaps {
-                            caches.upsert_security_snapshot(s.clone());
-                            yield Arc::new(s);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for s in snaps {
+                                let (snap, accepted) = caches.upsert_security_snapshot(s);
+                                if accepted {
+                                    yield snap;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(SecuritySnapshot) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(SecuritySnapshot) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1245,44 +1476,56 @@ impl DataSpace {
     }
 
     /// Stream de `SecurityPolicyUpdate` acordada por amostra.
-    pub fn stream_security_updates(&self) -> impl Stream<Item = cache::ArcSecurityPolicyUpdate> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_security_updates(
+        &self,
+    ) -> impl Stream<Item = cache::ArcSecurityPolicyUpdate> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.security_update_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "SecurityUpdate",
+            &self.subscriber,
+            &self.security_update_topic,
+            &self.shared_waitset,
+            qos::profiles::security_update(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(SecurityUpdate) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(SecurityUpdate) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(updates) if !updates.is_empty() => {
-                        for u in updates {
-                            yield caches.push_security_update(u);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for u in updates {
+                                let (update, accepted) = caches.push_security_update(u);
+                                if accepted {
+                                    yield update;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(SecurityUpdate) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(SecurityUpdate) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1290,44 +1533,54 @@ impl DataSpace {
     }
 
     /// Stream de `QoSRoutingProfile` acordada por amostra.
-    pub fn stream_qos_routing(&self) -> impl Stream<Item = cache::ArcQoSRoutingProfile> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_qos_routing(&self) -> impl Stream<Item = cache::ArcQoSRoutingProfile> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.qos_routing_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "QoSRouting",
+            &self.subscriber,
+            &self.qos_routing_topic,
+            &self.shared_waitset,
+            qos::profiles::qos_routing(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(QoSRouting) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(QoSRouting) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(profiles) if !profiles.is_empty() => {
-                        for p in profiles {
-                            yield caches.upsert_qos_routing(p);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for p in profiles {
+                                let (profile, accepted) = caches.upsert_qos_routing(p);
+                                if accepted {
+                                    yield profile;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(QoSRouting) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(QoSRouting) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1335,44 +1588,54 @@ impl DataSpace {
     }
 
     /// Stream de `QoSMetric` acordada por amostra.
-    pub fn stream_qos_metrics(&self) -> impl Stream<Item = cache::ArcQoSMetric> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_qos_metrics(&self) -> impl Stream<Item = cache::ArcQoSMetric> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.qos_metric_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "QoSMetric",
+            &self.subscriber,
+            &self.qos_metric_topic,
+            &self.shared_waitset,
+            qos::profiles::qos_metric(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(QoSMetric) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(QoSMetric) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(metrics) if !metrics.is_empty() => {
-                        for m in metrics {
-                            yield caches.upsert_qos_metric(m);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for m in metrics {
+                                let (metric, accepted) = caches.upsert_qos_metric(m);
+                                if accepted {
+                                    yield metric;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(QoSMetric) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(QoSMetric) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1380,89 +1643,113 @@ impl DataSpace {
     }
 
     /// Stream de `QoSViolation` acordada por amostra.
-    pub fn stream_qos_violations(&self) -> impl Stream<Item = cache::ArcQoSViolation> {
+    /// Setup EAGER + QoS do tópico + filtro de admissão (T-820-05/T-820-06).
+    pub fn stream_qos_violations(&self) -> impl Stream<Item = cache::ArcQoSViolation> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.qos_violation_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "QoSViolation",
+            &self.subscriber,
+            &self.qos_violation_topic,
+            &self.shared_waitset,
+            qos::profiles::qos_violation(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(QoSViolation) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(QoSViolation) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(violations) if !violations.is_empty() => {
-                        for v in violations {
-                            yield caches.upsert_qos_violation(v);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for v in violations {
+                                let (violation, accepted) = caches.upsert_qos_violation(v);
+                                if accepted {
+                                    yield violation;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(QoSViolation) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(QoSViolation) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
         }
     }
 
-    /// Stream de `DiscoveryEvent` acordada por amostra.
-    pub fn stream_discovery_events(&self) -> impl Stream<Item = cache::ArcDiscoveryEvent> {
+    /// Stream de `DiscoveryEvent` acordada por amostra. Setup EAGER
+    /// (T-820-05/P1-3: tópico Volatile — o setup preguiçoso perdia a janela
+    /// entre criar a stream e o primeiro poll) + filtro de admissão
+    /// (T-820-06).
+    pub fn stream_discovery_events(
+        &self,
+    ) -> impl Stream<Item = cache::ArcDiscoveryEvent> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.discovery_event_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
+        let setup = setup_stream_reader(
+            "DiscoveryEvent",
+            &self.subscriber,
+            &self.discovery_event_topic,
+            &self.shared_waitset,
+            qos::profiles::qos_discovery(),
+        );
         async_stream::stream! {
-            let reader = match DataReader::with_qos(&subscriber, &topic, None) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "DataReader::with_qos(DiscoveryEvent) falhou; stream encerrado");
-                    return;
-                }
+            let Some((reader, registration)) = setup else {
+                return;
             };
-            let registration = match waitset.register(&reader) {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(error = %e, "waitset.register(DiscoveryEvent) falhou; stream encerrado");
-                    return;
-                }
-            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
+                if registration.is_shutdown() {
+                    return;
+                }
                 let n = registration.notified();
                 tokio::pin!(n);
                 n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(events) if !events.is_empty() => {
-                        for e in events {
-                            yield caches.upsert_discovery_event(e);
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for e in events {
+                                let (event, accepted) = caches.upsert_discovery_event(e);
+                                if accepted {
+                                    yield event;
+                                }
+                            }
                         }
-                    }
                         Ok(_) => break,
                         Err(e) => {
-                            tracing::warn!(error = %e, "take_async(DiscoveryEvent) falhou; retry");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(DiscoveryEvent) falhou; retry com backoff crescente"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
+                }
+                if registration.is_shutdown() {
+                    return;
                 }
                 n.await;
             }
@@ -1470,111 +1757,113 @@ impl DataSpace {
     }
 
     /// Streams `SystemMetrics` using the shared event-driven WaitSet (REQ-708).
-    /// Setup eager como `stream_tasks`: o reader precisa existir antes do
-    /// primeiro write num tópico Volatile (ex.: subscribe → write → poll).
-    pub fn stream_system_metrics(&self) -> impl Stream<Item = cache::ArcSystemMetric> {
+    /// Setup EAGER via [`setup_stream_reader`] (QoS do tópico — T-820-05) +
+    /// filtro de admissão (T-820-06).
+    pub fn stream_system_metrics(&self) -> impl Stream<Item = cache::ArcSystemMetric> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.system_metrics_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
-        let setup = match qos::profiles::system_metrics() {
-            Ok(profile) => match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
-                Ok(reader) => match waitset.register(&reader) {
-                    Ok(registration) => Some((reader, registration)),
-                    Err(error) => {
-                        tracing::error!(%error, "waitset.register(SystemMetrics) failed");
-                        None
-                    }
-                },
-                Err(error) => {
-                    tracing::error!(%error, "DataReader::with_qos(SystemMetrics) failed");
-                    None
-                }
-            },
-            Err(error) => {
-                tracing::error!(%error, "SystemMetrics reader QoS failed");
-                None
-            }
-        };
+        let setup = setup_stream_reader(
+            "SystemMetrics",
+            &self.subscriber,
+            &self.system_metrics_topic,
+            &self.shared_waitset,
+            qos::profiles::system_metrics(),
+        );
         async_stream::stream! {
             let Some((reader, registration)) = setup else {
                 return;
             };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
-                let notified = registration.notified();
-                tokio::pin!(notified);
-                notified.as_mut().enable();
+                if registration.is_shutdown() {
+                    return;
+                }
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(metrics) if !metrics.is_empty() => {
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
                             for metric in metrics {
-                                yield caches.upsert_system_metric(metric);
+                                let (m, accepted) = caches.upsert_system_metric(metric);
+                                if accepted {
+                                    yield m;
+                                }
                             }
                         }
                         Ok(_) => break,
                         Err(error) => {
-                            tracing::warn!(%error, "take_async(SystemMetrics) failed; retrying");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                %error,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(SystemMetrics) failed; retrying with growing backoff"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
                 }
-                notified.await;
+                if registration.is_shutdown() {
+                    return;
+                }
+                n.await;
             }
         }
     }
 
     /// Streams `ServerStatus` using the shared event-driven WaitSet (REQ-708).
-    /// Setup eager como `stream_tasks`: o reader precisa existir antes do
-    /// primeiro write num tópico Volatile (ex.: subscribe → write → poll).
-    pub fn stream_server_status(&self) -> impl Stream<Item = cache::ArcServerStatus> {
+    /// Setup EAGER via [`setup_stream_reader`] (QoS do tópico — T-820-05) +
+    /// filtro de admissão (T-820-06).
+    pub fn stream_server_status(&self) -> impl Stream<Item = cache::ArcServerStatus> + 'static {
         let caches = self.caches();
-        let subscriber = Arc::clone(&self.subscriber);
-        let topic = Arc::clone(&self.server_status_topic);
-        let waitset = Arc::clone(&self.shared_waitset);
-        let setup = match qos::profiles::server_status() {
-            Ok(profile) => match DataReader::with_qos(&subscriber, &topic, Some(&profile)) {
-                Ok(reader) => match waitset.register(&reader) {
-                    Ok(registration) => Some((reader, registration)),
-                    Err(error) => {
-                        tracing::error!(%error, "waitset.register(ServerStatus) failed");
-                        None
-                    }
-                },
-                Err(error) => {
-                    tracing::error!(%error, "DataReader::with_qos(ServerStatus) failed");
-                    None
-                }
-            },
-            Err(error) => {
-                tracing::error!(%error, "ServerStatus reader QoS failed");
-                None
-            }
-        };
+        let setup = setup_stream_reader(
+            "ServerStatus",
+            &self.subscriber,
+            &self.server_status_topic,
+            &self.shared_waitset,
+            qos::profiles::server_status(),
+        );
         async_stream::stream! {
             let Some((reader, registration)) = setup else {
                 return;
             };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
             loop {
-                let notified = registration.notified();
-                tokio::pin!(notified);
-                notified.as_mut().enable();
+                if registration.is_shutdown() {
+                    return;
+                }
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
                 loop {
                     match reader.take_async().await {
                         Ok(statuses) if !statuses.is_empty() => {
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
                             for status in statuses {
-                                yield caches.upsert_server_status(status);
+                                let (s, accepted) = caches.upsert_server_status(status);
+                                if accepted {
+                                    yield s;
+                                }
                             }
                         }
                         Ok(_) => break,
                         Err(error) => {
-                            tracing::warn!(%error, "take_async(ServerStatus) failed; retrying");
-                            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                            tracing::warn!(
+                                %error,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(ServerStatus) failed; retrying with growing backoff"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
                             break;
                         }
                     }
                 }
-                notified.await;
+                if registration.is_shutdown() {
+                    return;
+                }
+                n.await;
             }
         }
     }
@@ -1673,7 +1962,7 @@ impl DataSpace {
         let ow = DataWriter::with_qos(&self.publisher, &self.outputs_topic, Some(&q_outputs))
             .map_err(err)?;
 
-        writer_pool::WriterPool::new(n_workers, capacity, writer_pool::make_write_fn(tw, aw, ow))
+        writer_pool::WriterPool::new(n_workers, capacity, writer_pool::make_write_fn(tw, aw, ow)?)
     }
 }
 
@@ -1697,6 +1986,33 @@ impl api::DataSpaceApi for DataSpace {
         self.task_writer_for(&task.task_id)
             .write(&task)
             .map_err(err)
+    }
+
+    /// Publica a Task via writer de strength do CLIENTE (10), sem assumir o
+    /// ownership da instância — usado pelo reaper/reatribuição para não
+    /// congelar a task (T-820-03; Exclusive Ownership: writers de strength
+    /// maior tornam-se donos e impedem claims futuros).
+    ///
+    /// Contraste com `write_task`: aquela roteia pelo pool do papel (para o
+    /// ORQUESTRADOR, strength 200 — a escrita de reatribuição por ali tornaria
+    /// o orquestrador dono e os agentes, strength 100–163, nunca mais venceriam
+    /// a arbitragem: a task morria em PENDING — P0-1 da revisão). Aqui o write
+    /// sai pelo `tasks_writer_client` (strength 10), criado uma única vez no
+    /// boot: agentes vivos sempre superam 10 no claim seguinte.
+    ///
+    /// CUIDADO (T-820-03, validado no E2E `t820_failover_*`): um write em
+    /// strength 10 contra um dono VIVO de strength maior é DESCARTADO pelo RHC
+    /// — inclusive o ASSIGNED de um agente morto cujo writer ainda respira
+    /// (participant vazado/fechando, ou lease do DDSI não expirado). O
+    /// ownership só é liberado pela destruição do writer do dono
+    /// (`relinquish_ownership` no RHC); quem reatribui deve re-publicar até o
+    /// mesh refletir o PENDING (republisher do orquestrador). Proteção contra
+    /// write atrasado do agente morto vem da geração (`retry_count` no guard
+    /// monotônico do cache — `cache::supersedes`).
+    async fn write_task_without_ownership(&self, task: Task) -> Result<(), api::DataSpaceError> {
+        // Sem write-through (mesma razão de write_task): o cache é alimentado
+        // APENAS pelas streams (visão do mesh).
+        self.tasks_writer_client.write(&task).map_err(err)
     }
 
     async fn read_task(&self, task_id: &str) -> Result<Option<Arc<Task>>, api::DataSpaceError> {
@@ -1763,27 +2079,12 @@ impl api::DataSpaceApi for DataSpace {
     }
 
     async fn shutdown(&self) -> Result<(), api::DataSpaceError> {
-        // Teardown real é via drop (RAII); aqui limpamos os caches (paridade com o mock).
-        self.caches.tasks.clear();
-        self.caches.agents.clear();
-        self.caches.outputs.clear();
-        self.caches.system_metrics.clear();
-        self.caches.server_status.clear();
-        self.caches.llm_requests.clear();
-        self.caches.llm_results.clear();
-        self.caches.llm_errors.clear();
-        self.caches.context_snapshots.clear();
-        self.caches.context_updates.clear();
-        self.caches.tool_calls.clear();
-        self.caches.execution_traces.clear();
-        self.caches.security_snapshots.clear();
-        self.caches.security_updates.clear();
-        self.caches.system_metrics.clear();
-        self.caches.server_status.clear();
-        self.caches.qos_routing.clear();
-        self.caches.qos_metrics.clear();
-        self.caches.qos_violations.clear();
-        self.caches.discovery_events.clear();
+        // T-820-05/P1-7: limpa os caches; o teardown real
+        // (participant/waitset/streams) acontece no Drop — o Drop do
+        // `SharedWaitSet` marca a flag de shutdown e acorda os registros, e
+        // cada `stream_*` termina graciosamente ao observá-la
+        // (`Registration::is_shutdown`).
+        self.caches.clear_all();
         Ok(())
     }
 
@@ -2036,5 +2337,37 @@ impl DataSpace {
 
     pub async fn shutdown(self) -> Result<(), crate::api::DataSpaceError> {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::fnv1a64;
+
+    /// T-820-20: vetores de referência do FNV-1a 64-bit (RFC-ish/test vectors
+    /// públicos) — travam o algoritmo contra regressão de implementação.
+    #[test]
+    fn fnv1a64_vetores_de_referencia() {
+        assert_eq!(fnv1a64(b""), 0xcbf2_9ce4_8422_2325);
+        assert_eq!(fnv1a64(b"a"), 0xaf63_dc4c_8601_ec8c);
+        assert_eq!(fnv1a64(b"foobar"), 0x8594_4171_f739_67e8);
+        assert_eq!(fnv1a64(b"hello"), 0xa430_d846_80aa_bd0b);
+    }
+
+    /// T-820-20: o invariante do roteamento — o MESMO task_id mapeia para o
+    /// MESMO slot (função pura, sem estado/seed) e os slots são válidos.
+    #[cfg(feature = "dds")]
+    #[test]
+    fn select_task_writer_slot_e_deterministico_por_task_id() {
+        use super::select_task_writer_slot;
+        for task_id in ["t-1", "pool-3-42", "c0ffee", "task-uuid-aleatório"] {
+            let first = select_task_writer_slot(task_id, 64);
+            for _ in 0..5 {
+                assert_eq!(select_task_writer_slot(task_id, 64), first);
+            }
+            assert!(first < 64);
+        }
+        assert_eq!(select_task_writer_slot("qualquer", 1), 0);
+        assert_eq!(select_task_writer_slot("qualquer", 0), 0);
     }
 }

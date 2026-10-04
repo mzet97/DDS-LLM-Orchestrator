@@ -172,8 +172,9 @@ async fn writer_pool_throughput_5k() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn writer_pool_backpressure_fail_fast() {
     // write_fn lento (mock — sem DDS): 50 ms por item
-    let slow = Arc::new(|_req: WriteRequest| {
+    let slow = Arc::new(|_req: WriteRequest| -> Result<(), DataSpaceError> {
         std::thread::sleep(Duration::from_millis(50));
+        Ok(())
     });
     let pool = WriterPool::new(1, 4, slow).expect("spawn do pool");
 
@@ -212,10 +213,11 @@ fn make_final_output(task_id: &str) -> TaskOutput {
 /// sucesso confirmado chega como Ok ao produtor.
 #[tokio::test]
 async fn ack_write_final_confirma_sucesso() {
-    let write_fn = Arc::new(|req: WriteRequest| {
+    let write_fn = Arc::new(|req: WriteRequest| -> Result<(), DataSpaceError> {
         if let WriteRequest::OutputAck(_o, ack) = req {
             let _ = ack.send(Ok(()));
         }
+        Ok(())
     });
     let pool = WriterPool::new(1, 8, write_fn).expect("spawn do pool");
 
@@ -235,10 +237,13 @@ async fn ack_write_final_confirma_sucesso() {
 /// é o que permite o agente publicar FAILED em vez de DONE sem saída final.
 #[tokio::test]
 async fn ack_write_final_propaga_falha_pos_enqueue() {
-    let write_fn = Arc::new(|req: WriteRequest| {
+    let write_fn = Arc::new(|req: WriteRequest| -> Result<(), DataSpaceError> {
         if let WriteRequest::OutputAck(_o, ack) = req {
             let _ = ack.send(Err(DataSpaceError::WriteFailed("falha injetada".into())));
         }
+        // T-820-06: o write falho também é reportado ao pool para contagem
+        // de `failed` (o ack E a métrica carregam o mesmo resultado real).
+        Err(DataSpaceError::WriteFailed("falha injetada".into()))
     });
     let pool = WriterPool::new(1, 8, write_fn).expect("spawn do pool");
 
@@ -260,11 +265,12 @@ async fn ack_write_final_propaga_falha_pos_enqueue() {
 /// produtor fica esperando confirmação que nunca chega.
 #[tokio::test]
 async fn drain_responde_acks_pendentes() {
-    let write_fn = Arc::new(|req: WriteRequest| {
+    let write_fn = Arc::new(|req: WriteRequest| -> Result<(), DataSpaceError> {
         if let WriteRequest::OutputAck(_o, ack) = req {
             std::thread::sleep(Duration::from_millis(20));
             let _ = ack.send(Ok(()));
         }
+        Ok(())
     });
     let pool = WriterPool::new(1, 8, write_fn).expect("spawn do pool");
 
@@ -279,4 +285,50 @@ async fn drain_responde_acks_pendentes() {
             .expect("canal aberto");
         assert!(result.is_ok());
     }
+}
+
+/// T-820-06: `completed` conta SOMENTE writes bem-sucedidos; falha do
+/// `dds_write` (simulada pelo write_fn) conta em `failed` — antes o
+/// `completed` incrementava mesmo com erro (métrica enganosa).
+#[test]
+fn metricas_separam_sucesso_e_falha_de_write() {
+    let fail_fn: dds_dataspace::writer_pool::WriteFn =
+        Arc::new(|_req: WriteRequest| -> Result<(), DataSpaceError> {
+            Err(DataSpaceError::WriteFailed("falha injetada".into()))
+        });
+    let pool = WriterPool::new(2, 8, fail_fn).expect("spawn do pool");
+    for i in 0..4 {
+        pool.submit(WriteRequest::Task(make_task(&format!("metrica-{i}"))))
+            .expect("enqueue ok");
+    }
+    // Contadores só são estáveis após o drain: workers processam de forma
+    // assíncrona, então ler antes do shutdown é corrida (T-820-06) — o drain
+    // devolve as estatísticas finais.
+    let (submitted, completed, failed) = pool.drain_and_shutdown();
+    assert_eq!(submitted, 4);
+    assert_eq!(completed, 0, "write falho NÃO é completed");
+    assert_eq!(failed, 4, "falha de write deve contar em failed");
+}
+
+/// T-820-06: `make_write_fn` não panica com pool de writers vazio — devolve
+/// `Err` na construção (antes era panic por indexação no primeiro
+/// `WriteRequest::Task`).
+// `DataSpace::new` cria o driver do SharedWaitSet via tokio::spawn — o teste
+// precisa de um runtime (T-820-06).
+#[tokio::test]
+async fn make_write_fn_pool_vazio_falha_sem_panic() {
+    let ds = DataSpace::new(DOMAIN + 2, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
+    let agents_writer = ds
+        .agents_writer_with(&dds_dataspace::qos::profiles::agent_registry().unwrap())
+        .unwrap();
+    let outputs_writer = ds
+        .outputs_writer_with(&dds_dataspace::qos::profiles::task_output(None).unwrap())
+        .unwrap();
+    let result =
+        dds_dataspace::writer_pool::make_write_fn(Vec::new(), agents_writer, outputs_writer);
+    let err = match result {
+        Ok(_) => panic!("pool vazio deve ser rejeitado na construção"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("vazio"));
 }

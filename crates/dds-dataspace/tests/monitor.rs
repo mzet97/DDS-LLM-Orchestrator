@@ -116,6 +116,9 @@ async fn liveliness_changed_fires_on_join_and_drop() {
         }
     }
     assert!(saw_join, "liveliness changed (join) não disparou");
+    // T-820-05/P1-4: o saldo acumula SOMENTE alive_count_change.
+    let alive_net_pos_join = mon.alive_writers_net();
+    assert!(alive_net_pos_join > 0, "saldo de vivos deve subir no join");
 
     // Writer "morre" à la SIGKILL: vaza o DataSpace SEM teardown (sem dispose/asserts)
     // → lease de 2s expira no reader → not_alive +1
@@ -143,6 +146,20 @@ async fn liveliness_changed_fires_on_join_and_drop() {
     assert!(
         saw_leave,
         "liveliness changed (leave/lease expirou) não disparou"
+    );
+
+    // T-820-05/P1-4: na morte do agente, o saldo de vivos CAI (antes da
+    // correção, somar alive+not_alive deltas mantia o saldo em 0 exatamente
+    // na transição que a métrica deveria capturar) e o total de não vivos
+    // sobe — o par é o sinal de "agente morreu" para o reaper.
+    assert!(
+        mon.alive_writers_net() < alive_net_pos_join,
+        "saldo de vivos deve cair na morte (net={})",
+        mon.alive_writers_net()
+    );
+    assert!(
+        mon.not_alive_writers_net() > 0,
+        "total de not_alive deve subir na morte"
     );
 
     drop(_reader);

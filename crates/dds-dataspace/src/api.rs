@@ -36,6 +36,23 @@ pub trait DataSpaceApi: Send + Sync {
     /// Publica ou atualiza uma task.
     async fn write_task(&self, task: Task) -> Result<(), DataSpaceError>;
 
+    /// Publica a Task via writer de strength do CLIENTE (10), sem assumir o
+    /// ownership da instância — usado pelo reaper/reatribuição para não
+    /// congelar a task (T-820-03; Exclusive Ownership: writers de strength
+    /// maior tornam-se donos e impedem claims futuros).
+    ///
+    /// ATENÇÃO: sob Exclusive Ownership, um write de strength MENOR que a do
+    /// dono atual é descartado pelo RHC (invisível aos leitores) enquanto o
+    /// writer do dono seguir registrado — o ownership só é liberado pela
+    /// DESTRUIÇÃO desse writer (`relinquish_ownership` no RHC do CycloneDDS;
+    /// morte real do processo → lease do DDSI; delete gracioso → imediato).
+    /// Um dispose também passa pelo filtro e AINDA transfere o ownership para
+    /// o writer que o fez (`update_inst_have_wr_iid` no dispose aceito), então
+    /// NÃO é caminho para devolver a instância a strength menor. Consumidores
+    /// que reatribuem (reaper) devem re-publicar periodicamente até o mesh
+    /// refletir o PENDING — ver o republisher do orquestrador (T-820-03).
+    async fn write_task_without_ownership(&self, task: Task) -> Result<(), DataSpaceError>;
+
     /// Lê uma task por ID. Retorna `Arc<Task>` — o cache já guarda `Arc`
     /// internamente (Fase 3 do `OPTIMIZATION_PLAN.md`); antes este método
     /// desreferenciava e clonava a `Task` inteira em cada leitura.
@@ -223,6 +240,9 @@ pub trait DataSpaceApi: Send + Sync {
 
     // === Lifecycle ===
 
-    /// Encerra o DataSpace, liberando recursos.
+    /// Limpa os caches; o teardown real (participant/waitset/streams)
+    /// acontece no `Drop` — o `Drop` do `SharedWaitSet` marca a flag de
+    /// shutdown e acorda os registros, e cada `stream_*` termina
+    /// graciosamente (T-820-05/P1-7).
     async fn shutdown(&self) -> Result<(), DataSpaceError>;
 }

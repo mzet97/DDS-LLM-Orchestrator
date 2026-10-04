@@ -26,7 +26,16 @@ pub enum QosEvent {
 pub struct QosMonitor {
     tx: broadcast::Sender<QosEvent>,
     missed_total: Arc<AtomicU64>,
+    /// Saldo líquido de writers VIVOS — acumula SOMENTE `alive_count_change`
+    /// (T-820-05/P1-4: somar também `not_alive_count_change` fazia o saldo
+    /// zerar exatamente na transição que importa — a morte de um agente, que
+    /// emite +1 alive/-1 not_alive no mesmo callback — tornando a métrica
+    /// morta para o evento que ela deveria medir).
     alive_net: Arc<AtomicI64>,
+    /// Total acumulado de writers detectados como NÃO vivos (lease de
+    /// liveliness expirado) — o sinal de "agente morreu" que o saldo acima
+    /// não esconde.
+    not_alive_net: Arc<AtomicI64>,
 }
 
 impl Default for QosMonitor {
@@ -42,6 +51,7 @@ impl QosMonitor {
             tx,
             missed_total: Arc::new(AtomicU64::new(0)),
             alive_net: Arc::new(AtomicI64::new(0)),
+            not_alive_net: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -55,9 +65,17 @@ impl QosMonitor {
         self.missed_total.load(Ordering::Relaxed)
     }
 
-    /// Saldo de writers vivos (chegadas - saídas).
+    /// Saldo de writers VIVOS (chegadas - saídas, só `alive_count_change`).
+    /// Análogo ao `last_seen` do reaper: cai quando um agente morre.
     pub fn alive_writers_net(&self) -> i64 {
         self.alive_net.load(Ordering::Relaxed)
+    }
+
+    /// Total de writers detectados como não vivos (lease expirado) desde a
+    /// criação do monitor — incrementa a cada morte de agente observada
+    /// (T-820-05/P1-4).
+    pub fn not_alive_writers_net(&self) -> i64 {
+        self.not_alive_net.load(Ordering::Relaxed)
     }
 
     /// Listener para o reader de `AgentRegistry` (liveliness dos agentes).
@@ -65,12 +83,11 @@ impl QosMonitor {
     pub fn agents_listener(&self) -> DdsResult<Listener> {
         let tx = self.tx.clone();
         let alive_net = Arc::clone(&self.alive_net);
+        let not_alive_net = Arc::clone(&self.not_alive_net);
         Listener::builder()
             .on_liveliness_changed(move |_e, s| {
-                alive_net.fetch_add(
-                    s.alive_count_change as i64 + s.not_alive_count_change as i64,
-                    Ordering::Relaxed,
-                );
+                alive_net.fetch_add(s.alive_count_change as i64, Ordering::Relaxed);
+                not_alive_net.fetch_add(s.not_alive_count_change as i64, Ordering::Relaxed);
                 let _ = tx.send(QosEvent::LivelinessChanged {
                     alive: s.alive_count,
                     not_alive: s.not_alive_count,

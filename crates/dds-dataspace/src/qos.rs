@@ -43,6 +43,15 @@ pub mod profiles {
 
     /// `Tasks` com QoS configurável por perfil (para campanha experimental).
     /// Aplica políticas estruturais do perfil + strength do papel.
+    ///
+    /// **Knobs online DESCARTADOS deliberadamente (T-820-20/P3 — documentado):**
+    /// o `OnlineKnobs` devolvido por `qos_profile()` é ignorado e o
+    /// TransportPriority (8) e o LatencyBudget (50 ms) são FORÇADOS aqui — os
+    /// mesmos valores do perfil de produção `tasks()`. O perfil só muda as
+    /// políticas estruturais (Reliability/Durability/History/Ownership/
+    /// Liveliness/Deadline), que é o que afeta matching e retenção; os knobs
+    /// quentes do decisor continuam tendo efeito apenas via
+    /// `tasks_with_knobs`/`apply_tasks_knobs`.
     pub fn tasks_with_profile(profile_name: &str, strength: Option<i32>) -> DdsResult<Qos> {
         use dds_contract::qos::qos_profile;
 

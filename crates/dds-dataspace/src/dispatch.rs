@@ -20,6 +20,7 @@
 //! blocking-pool por ciclo de `wait_async`) drena os cookies disparados e
 //! notifica só os registros correspondentes.
 
+use crate::shutdown::ShutdownFlag;
 use cyclonedds::{DdsEntity, DdsResult, DomainParticipant, WaitSet};
 use dashmap::DashMap;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
@@ -44,6 +45,10 @@ pub struct SharedWaitSet {
     /// momentaneamente sem entidades anexadas, sob corrida de attach/detach
     /// concorrente) — observabilidade/testes. Ver [`SharedWaitSet::driver_restarts`].
     driver_restarts: Arc<AtomicU64>,
+    /// Marcada no `Drop` para que streams penduradas num `Notified` que nunca
+    /// mais dispararia terminem graciosamente (T-820-05/P1-7). Cada
+    /// [`Registration`] carrega um clone e expõe [`Registration::is_shutdown`].
+    shutdown: ShutdownFlag,
 }
 
 impl SharedWaitSet {
@@ -109,6 +114,7 @@ impl SharedWaitSet {
             notifiers,
             driver: Mutex::new(Some(driver)),
             driver_restarts,
+            shutdown: ShutdownFlag::new(),
         }))
     }
 
@@ -122,10 +128,6 @@ impl SharedWaitSet {
         self.driver_restarts.load(Ordering::Relaxed)
     }
 
-    /// Anexa `reader` ao WaitSet compartilhado. O [`Registration`] devolvido
-    /// permite esperar (`notified().await`) por dados nesse reader
-    /// especificamente; ao ser dropado, desanexa do WaitSet e libera o cookie
-    /// (RAII — nenhuma limpeza manual necessária no chamador).
     /// Nº de registros (readers anexados) ativos agora — só para
     /// observabilidade/testes: prova que N streams compartilham 1 WaitSet em
     /// vez de N WaitSets independentes (ver `tests/shared_waitset.rs`).
@@ -133,6 +135,13 @@ impl SharedWaitSet {
         self.notifiers.len()
     }
 
+    /// Anexa `reader` ao WaitSet compartilhado. O [`Registration`] devolvido
+    /// permite esperar (`notified().await`) por dados nesse reader
+    /// especificamente; ao ser dropado, desanexa do WaitSet e libera o cookie
+    /// (RAII — nenhuma limpeza manual necessária no chamador). O registro
+    /// também carrega a flag de shutdown do [`SharedWaitSet`]
+    /// ([`Registration::is_shutdown`]) para loops de consumo terminarem
+    /// graciosamente no teardown.
     pub fn register(&self, reader: &impl DdsEntity) -> DdsResult<Registration> {
         let entity = reader.entity();
         let cookie = self.next_cookie.fetch_add(1, Ordering::Relaxed);
@@ -148,12 +157,25 @@ impl SharedWaitSet {
             cookie,
             entity,
             notify,
+            shutdown: self.shutdown.clone(),
         })
     }
 }
 
 impl Drop for SharedWaitSet {
     fn drop(&mut self) {
+        // T-820-05/P1-7: marca o shutdown ANTES de acordar os registros —
+        // um consumidor despertado pela notificação abaixo enxerga
+        // `is_shutdown() == true` e encerra o stream em vez de re-armar o
+        // `Notified` para um waitset que não existe mais.
+        self.shutdown.set();
+        // Acorda todos os registros pendentes (`notify_waiters` desperta os
+        // futuros já `enable()`-ados pelos loops de consumo — ver o padrão
+        // documentado em `Registration::notified`). Sem isto, o consumidor
+        // ficava pendurado para sempre num `Notified` que nunca mais dispara.
+        for entry in self.notifiers.iter() {
+            entry.value().notify_waiters();
+        }
         // FFI-LIFE-011: acorda o wait nativo ANTES do abort. O driver pode
         // estar bloqueado em `dds_waitset_wait` dentro de um spawn_blocking
         // segurando um Arc<WaitSet> — sem o trigger, o wait só retorna no
@@ -186,24 +208,36 @@ pub struct Registration {
     cookie: i64,
     entity: i32,
     notify: Arc<Notify>,
+    shutdown: ShutdownFlag,
 }
 
 impl Registration {
     /// Future de notificação deste reader. Para loops de consumo, o padrão
     /// correto (sem janela de wakeup perdido) é registrar interesse ANTES de
-    /// drenar e drenar até esvaziar:
+    /// drenar e drenar até esvaziar, checando [`Self::is_shutdown`] antes de
+    /// re-armar a espera (T-820-05/P1-7):
     ///
     /// ```ignore
     /// loop {
+    ///     if registration.is_shutdown() { return; }  // teardown → fim gracioso
     ///     let n = registration.notified();
     ///     tokio::pin!(n);
     ///     n.as_mut().enable();           // registra antes de drenar
     ///     while take()?.not_empty { yield } // drena tudo (level-triggered)
+    ///     if registration.is_shutdown() { return; }
     ///     n.await;                       // notificações durante o dreno são capturadas
     /// }
     /// ```
     pub fn notified(&self) -> tokio::sync::futures::Notified<'_> {
         self.notify.notified()
+    }
+
+    /// `true` quando o [`SharedWaitSet`] dono foi derrubado (`Drop`): não há
+    /// mais waitset/native driver — loops de consumo devem encerrar o stream
+    /// (`None`) em vez de re-armar uma espera que nunca mais dispara.
+    #[must_use]
+    pub fn is_shutdown(&self) -> bool {
+        self.shutdown.is_set()
     }
 }
 
