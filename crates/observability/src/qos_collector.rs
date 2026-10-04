@@ -15,61 +15,93 @@ pub struct CollectorStats {
 }
 
 /// Agregador de QoS metrics, violations e discovery events.
+///
+/// Cada ingestão é **dual-write**: atualiza o store em memória (consulta via
+/// `stats()`) e emite um [`ObservabilityEvent`] no sink (persistência JSONL
+/// sem janela de perda — REQ/T-820-04). Falha de sink é logada, nunca
+/// propagada: o coletor não deve morrer por erro transitório de FS.
 pub struct QosCollector {
     store: Arc<QosStore>,
     sink: Arc<dyn crate::sink::EventSink>,
-    stats: std::sync::atomic::AtomicU64,
 }
 
 impl QosCollector {
     pub fn new(store: Arc<QosStore>, sink: Arc<dyn crate::sink::EventSink>) -> Self {
-        Self {
-            store,
-            sink,
-            stats: std::sync::atomic::AtomicU64::new(0),
+        Self { store, sink }
+    }
+
+    /// Emite um evento de observabilidade com o payload serializado no
+    /// `metadata` (campos do metric/violation/discovery no topo, para query
+    /// direta no JSONL). Erros de sink são logados, não propagados.
+    fn emit_to_sink(
+        &self,
+        event_type: crate::events::EventType,
+        message: &str,
+        payload: serde_json::Value,
+    ) {
+        let mut event = crate::events::ObservabilityEvent::new(event_type);
+        event.message = message.to_string();
+        if let serde_json::Value::Object(map) = payload {
+            event.metadata = map;
+        }
+        if let Err(e) = self.sink.emit(&event) {
+            tracing::warn!(error = %e, event_type = %event_type, "falha ao emitir evento QoS no sink");
         }
     }
 
     /// Ingestão de QoS metrics.
     pub fn ingest_metric(&self, metric: &QoSMetric) {
-        self.store.upsert_metric(
-            metric.metric_id.clone(),
-            serde_json::json!({
-                "metric_id": metric.metric_id,
-                "metric_name": metric.metric_name,
-                "component": metric.component,
-                "value": metric.value,
-                "timestamp_ns": metric.timestamp_ns,
-            }),
+        let payload = serde_json::json!({
+            "metric_id": metric.metric_id,
+            "metric_name": metric.metric_name,
+            "component": metric.component,
+            "value": metric.value,
+            "timestamp_ns": metric.timestamp_ns,
+        });
+        self.store
+            .upsert_metric(metric.metric_id.clone(), payload.clone());
+        self.emit_to_sink(
+            crate::events::EventType::QosMetric,
+            &format!("QoS.Metric {} = {}", metric.metric_name, metric.value),
+            payload,
         );
-        self.stats
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     /// Ingestão de QoS violations.
     pub fn ingest_violation(&self, violation: &QoSViolation) {
-        self.store.upsert_violation(
-            violation.violation_id.clone(),
-            serde_json::json!({
-                "violation_id": violation.violation_id,
-                "violation_type": violation.violation_type,
-                "topic_name": violation.topic_name,
-                "severity": violation.severity,
-                "timestamp_ns": violation.timestamp_ns,
-            }),
+        let payload = serde_json::json!({
+            "violation_id": violation.violation_id,
+            "violation_type": violation.violation_type,
+            "topic_name": violation.topic_name,
+            "severity": violation.severity,
+            "timestamp_ns": violation.timestamp_ns,
+        });
+        self.store
+            .upsert_violation(violation.violation_id.clone(), payload.clone());
+        self.emit_to_sink(
+            crate::events::EventType::QosViolation,
+            &format!(
+                "QoS.Violation {} em {}",
+                violation.violation_type, violation.topic_name
+            ),
+            payload,
         );
     }
 
     /// Ingestão de discovery events.
     pub fn ingest_discovery(&self, event: &DiscoveryEvent) {
-        self.store.upsert_discovery(
-            event.event_id.clone(),
-            serde_json::json!({
-                "event_id": event.event_id,
-                "event_type": event.event_type,
-                "topic_name": event.topic_name,
-                "timestamp_ns": event.timestamp_ns,
-            }),
+        let payload = serde_json::json!({
+            "event_id": event.event_id,
+            "event_type": event.event_type,
+            "topic_name": event.topic_name,
+            "timestamp_ns": event.timestamp_ns,
+        });
+        self.store
+            .upsert_discovery(event.event_id.clone(), payload.clone());
+        self.emit_to_sink(
+            crate::events::EventType::QosDiscovery,
+            &format!("QoS.Discovery {} em {}", event.event_type, event.topic_name),
+            payload,
         );
     }
 
@@ -158,6 +190,91 @@ mod tests {
         fn flush(&self) -> Result<(), crate::sink::SinkError> {
             Ok(())
         }
+    }
+
+    /// Sink que captura eventos emitidos (verificação do dual-write).
+    struct CaptureSink(std::sync::Mutex<Vec<crate::events::ObservabilityEvent>>);
+
+    impl CaptureSink {
+        fn new() -> Self {
+            Self(std::sync::Mutex::new(Vec::new()))
+        }
+
+        fn events(&self) -> Vec<crate::events::ObservabilityEvent> {
+            self.0.lock().unwrap().clone()
+        }
+    }
+
+    impl crate::sink::EventSink for CaptureSink {
+        fn emit(
+            &self,
+            event: &crate::events::ObservabilityEvent,
+        ) -> Result<(), crate::sink::SinkError> {
+            self.0.lock().unwrap().push(event.clone());
+            Ok(())
+        }
+
+        fn query(
+            &self,
+            _task_id: &str,
+            _event_type: Option<crate::events::EventType>,
+            _limit: usize,
+        ) -> Result<Vec<crate::events::ObservabilityEvent>, crate::sink::SinkError> {
+            Ok(self.events())
+        }
+
+        fn flush(&self) -> Result<(), crate::sink::SinkError> {
+            Ok(())
+        }
+    }
+
+    /// REQ/T-820-04: cada ingestão emite um evento no sink com o payload
+    /// serializado no metadata (sem janela de perda no shutdown).
+    #[test]
+    fn ingest_emits_sink_event_per_ingest() {
+        let sink = Arc::new(CaptureSink::new());
+        let collector = QosCollector::new(Arc::new(QosStore::new()), Arc::clone(&sink) as _);
+
+        collector.ingest_metric(&QoSMetric {
+            metric_id: "m1".into(),
+            metric_name: "cpu".into(),
+            component: "agent-1".into(),
+            value: 50,
+            timestamp_ns: 10,
+            ..Default::default()
+        });
+        collector.ingest_violation(&QoSViolation {
+            violation_id: "v1".into(),
+            violation_type: "deadline".into(),
+            topic_name: "Tasks".into(),
+            severity: "high".into(),
+            timestamp_ns: 11,
+            ..Default::default()
+        });
+        collector.ingest_discovery(&DiscoveryEvent {
+            event_id: "d1".into(),
+            event_type: "participant_joined".into(),
+            topic_name: "Tasks".into(),
+            local_entity: "a".into(),
+            remote_entity: "b".into(),
+            count_change: 1,
+            timestamp_ns: 12,
+        });
+
+        let events = sink.events();
+        assert_eq!(events.len(), 3);
+        assert_eq!(events[0].event_type, crate::events::EventType::QosMetric);
+        assert_eq!(events[0].metadata["metric_id"], "m1");
+        assert_eq!(events[0].metadata["value"], 50);
+        assert_eq!(events[1].event_type, crate::events::EventType::QosViolation);
+        assert_eq!(events[1].metadata["violation_type"], "deadline");
+        assert_eq!(events[2].event_type, crate::events::EventType::QosDiscovery);
+        assert_eq!(events[2].metadata["topic_name"], "Tasks");
+
+        // O store também foi atualizado (dual-write).
+        assert_eq!(collector.stats().total_metrics, 1);
+        assert_eq!(collector.stats().total_violations, 1);
+        assert_eq!(collector.stats().total_discoveries, 1);
     }
 
     #[tokio::test]

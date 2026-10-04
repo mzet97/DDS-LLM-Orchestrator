@@ -29,6 +29,13 @@ pub enum EventType {
     PolicyDenied = 30,
     PolicyApplied = 31,
     QosViolation = 40,
+    /// Extensão Rust-side (sem paridade no `IntEnum` Python): trilha de
+    /// `QoS.Metric` emitida pelo coletor no sink (REQ/T-820-04). Código 41
+    /// livre no esquema Python (40 = QoS_VIOLATION, 50 = ERROR).
+    QosMetric = 41,
+    /// Extensão Rust-side (sem paridade no `IntEnum` Python): trilha de
+    /// `QoS.Discovery` emitida pelo coletor no sink (REQ/T-820-04).
+    QosDiscovery = 42,
     Error = 50,
 }
 
@@ -50,6 +57,8 @@ impl EventType {
             Self::PolicyDenied => "POLICY_DENIED",
             Self::PolicyApplied => "POLICY_APPLIED",
             Self::QosViolation => "QoS_VIOLATION",
+            Self::QosMetric => "QOS_METRIC",
+            Self::QosDiscovery => "QOS_DISCOVERY",
             Self::Error => "ERROR",
         }
     }
@@ -71,6 +80,8 @@ impl EventType {
             "POLICY_DENIED" => Self::PolicyDenied,
             "POLICY_APPLIED" => Self::PolicyApplied,
             "QoS_VIOLATION" => Self::QosViolation,
+            "QOS_METRIC" => Self::QosMetric,
+            "QOS_DISCOVERY" => Self::QosDiscovery,
             "ERROR" => Self::Error,
             _ => return None,
         })
@@ -186,6 +197,8 @@ mod tests {
             (EventType::PolicyDenied, "POLICY_DENIED", 30),
             (EventType::PolicyApplied, "POLICY_APPLIED", 31),
             (EventType::QosViolation, "QoS_VIOLATION", 40),
+            (EventType::QosMetric, "QOS_METRIC", 41),
+            (EventType::QosDiscovery, "QOS_DISCOVERY", 42),
             (EventType::Error, "ERROR", 50),
         ];
         for (ty, name, code) in cases {
