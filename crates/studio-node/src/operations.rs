@@ -42,6 +42,16 @@ pub enum NodeError {
     Storage(String),
 }
 
+/// Retenção máxima do log (REQ/T-820-18): o log de operações vive no
+/// processo inteiro — sem cap, `records`/`order` crescem sem limite. Guarda
+/// as últimas `MAX_RECORDS` operações (FIFO por inserção); as mais antigas
+/// são descartadas. Nota honesta: como a persistência é snapshot
+/// (`save`/`load`), o que sai da memória também sai do snapshot —
+/// reconciliação (`reconcile`) de ids mais antigos que a janela passa a
+/// devolver `unknown_operation`, aceitável para um nó de ops de longa
+/// duração.
+const MAX_RECORDS: usize = 1000;
+
 /// Log em memória das operações do nó, restrito aos serviços próprios.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct OperationLog {
@@ -82,6 +92,12 @@ impl OperationLog {
         let record = OpRecord { id: id.clone(), op };
         self.records.insert(id.clone(), record.clone());
         self.order.push(id);
+        // Retenção limitada (REQ/T-820-18): descarta as mais antigas em
+        // ordem de inserção (FIFO) — `records` e `order` em consistência.
+        while self.order.len() > MAX_RECORDS {
+            let oldest = self.order.remove(0);
+            self.records.remove(&oldest);
+        }
         Ok(OpOutcome::Applied(record))
     }
 
@@ -214,6 +230,33 @@ mod tests {
         let log = log_with("dds-agent");
 
         assert!(log.reconcile(&op_id("inexistente")).is_none());
+    }
+
+    /// REQ/T-820-18: retenção limitada — acima de `MAX_RECORDS`, as
+    /// operações mais antigas são descartadas (FIFO) e as recentes ficam.
+    #[test]
+    fn log_retains_only_last_max_records() {
+        let mut log = log_with("dds-agent");
+        let total = 1050;
+        for i in 0..total {
+            log.apply(
+                op_id(&format!("op-{i}")),
+                AdminOp::SetService {
+                    service: String::from("dds-agent"),
+                    running: i % 2 == 0,
+                },
+            )
+            .expect("aplica");
+        }
+
+        assert_eq!(log.records().count(), 1000);
+        // Mais antiga descartada; mais recente presente.
+        assert!(log.reconcile(&op_id("op-0")).is_none());
+        assert!(log.reconcile(&op_id("op-49")).is_none());
+        assert!(log.reconcile(&op_id("op-50")).is_some());
+        assert!(log.reconcile(&op_id("op-1049")).is_some());
+        // `wanted` continua lendo o último SetService remanescente.
+        assert_eq!(log.wanted("dds-agent"), Some(false));
     }
 
     fn temp_db(name: &str) -> std::path::PathBuf {
