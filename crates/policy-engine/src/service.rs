@@ -128,8 +128,19 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
         };
 
         // Detecta mudança: mesma versão E mesmo conteúdo → nada a publicar.
+        // Regressão (REQ/T-820-16): arquivo com versão MENOR que o estado
+        // atual (deltas dinâmicos avançaram a versão) NUNCA sobrescreve —
+        // publicar o snapshot defasado reverteria a política vigente.
         let new_version = doc.version();
         if let Some(cur) = self.states.get(&self.policy_id) {
+            if new_version < cur.version {
+                tracing::warn!(
+                    file_version = new_version,
+                    current_version = cur.version,
+                    "policies.json defasado; re-publicação ignorada (evita reverter deltas)"
+                );
+                return Ok(false);
+            }
             if cur.version == new_version && cur.document.as_value() == doc.as_value() {
                 return Ok(false);
             }
@@ -156,7 +167,11 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
     ///
     /// Se não há estado local para o `policy_id`, o delta é aplicado sobre um
     /// documento vazio. Divergência de `previous_version` só gera warning
-    /// (last-writer-wins — o snapshot resultante carrega a verdade).
+    /// (gap de updates perdidos — last-writer-wins); já REGRESSÃO
+    /// (`new_version <= current_version`) é REJEITADA com
+    /// [`PolicyError::StaleVersion`] e nada é aplicado — um update atrasado
+    /// não pode reverter versão+documento (REQ/T-820-16, paridade com o
+    /// `StaleVersion` do `mcp-gateway`).
     pub async fn handle_update(&self, update: &SecurityPolicyUpdate) -> Result<bool, PolicyError> {
         let delta: Value = serde_json::from_str(&update.rule_delta_json)?;
         let (version, doc_value);
@@ -168,12 +183,21 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
                     version: 0,
                     document: PolicyDocument::empty(),
                 });
+            if update.new_version <= entry.version {
+                tracing::warn!(
+                    policy_id = %update.policy_id,
+                    new_version = update.new_version,
+                    current = entry.version,
+                    "update rejeitado: new_version não avança a versão atual"
+                );
+                return Err(PolicyError::StaleVersion);
+            }
             if update.previous_version != entry.version {
                 tracing::warn!(
                     policy_id = %update.policy_id,
                     expected = update.previous_version,
                     current = entry.version,
-                    "previous_version diverge do estado local; aplicando mesmo assim"
+                    "previous_version diverge do estado local (gap de updates); aplicando mesmo assim"
                 );
             }
             entry.document.apply_delta(&update.operation, &delta)?;
@@ -228,7 +252,15 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
                     }
                 }
                 _ = ticker.tick() => {
-                    self.load_and_publish().await?;
+                    // Re-publicação periódica: erro transitório de DDS NÃO
+                    // derruba o serviço (REQ/T-820-16) — loga e tenta de novo
+                    // no próximo tick (o próprio ticker é o backoff).
+                    if let Err(e) = self.load_and_publish().await {
+                        tracing::warn!(
+                            error = %e,
+                            "re-publicação periódica falhou; nova tentativa no próximo intervalo"
+                        );
+                    }
                 }
             }
         }
