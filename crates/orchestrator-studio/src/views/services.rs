@@ -5,13 +5,17 @@ use orchestrator_studio::services::ServicesPanel;
 
 /// URL, botão de leitura, erro e tabela com a divergência em destaque.
 pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
+    // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
+    panel.poll();
     ui.collapsing("Serviços do nó (plano: pretendido × efetivo)", |ui| {
         ui.horizontal(|ui| {
             ui.label("nó:");
             ui.text_edit_singleline(&mut panel.url);
-            if ui.button("Ler plano").clicked() {
-                panel.refresh();
-            }
+            ui.add_enabled_ui(!panel.busy, |ui| {
+                if ui.button("Ler plano").clicked() {
+                    panel.refresh();
+                }
+            });
         });
         if !panel.error.is_empty() {
             ui.label(&panel.error);
@@ -43,12 +47,14 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
                     ui.label(active);
                     ui.label(diff);
                     ui.horizontal(|ui| {
-                        if ui.button("▶").clicked() {
-                            pending = Some((row.service.clone(), true));
-                        }
-                        if ui.button("■").clicked() {
-                            pending = Some((row.service.clone(), false));
-                        }
+                        ui.add_enabled_ui(!panel.busy, |ui| {
+                            if ui.button("▶").clicked() {
+                                pending = Some((row.service.clone(), true));
+                            }
+                            if ui.button("■").clicked() {
+                                pending = Some((row.service.clone(), false));
+                            }
+                        });
                     });
                     ui.end_row();
                 }

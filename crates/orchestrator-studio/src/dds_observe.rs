@@ -4,8 +4,13 @@
 //! Atrás da feature `dds`: sem ela, o Studio continua HTTP-only. Cada coleta
 //! abre um `DataSpace` efêmero, drena o stream pela janela e fecha — sem
 //! thread permanente e sem roubar amostras (`read`, nunca `take`).
+//!
+//! A coleta (`observe`, `block_on` de 1–30 s) roda em THREAD de trabalho
+//! (padrão `models.rs`: thread + mpsc + `poll` por frame) — a thread de UI
+//! nunca bloqueia (REQ/T-820-19).
 
 use std::collections::HashMap;
+use std::sync::mpsc;
 use std::time::Duration;
 
 use dds_contract::generated::dds_llm_orchestrator::{
@@ -192,13 +197,19 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
     })
 }
 
+/// Mensagem do worker de observação.
+struct ObserveMsg(Result<DdsSnapshot, String>);
+
 /// Estado do painel de topologia DDS.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DdsState {
     pub domain: u32,
     pub window_secs: u64,
     pub snapshot: DdsSnapshot,
     pub error: String,
+    /// `true` enquanto a coleta roda em background (`poll` drena).
+    pub busy: bool,
+    receiver: Option<mpsc::Receiver<ObserveMsg>>,
 }
 
 impl DdsState {
@@ -210,19 +221,51 @@ impl DdsState {
             window_secs: 3,
             snapshot: DdsSnapshot::default(),
             error: String::new(),
+            busy: false,
+            receiver: None,
         }
     }
 
-    /// Observa o domínio; erro preserva a foto anterior e registra o motivo.
+    /// Observa o domínio em THREAD de trabalho (`observe` faz `block_on` de
+    /// 1–30 s — nunca na thread de UI, REQ/T-820-19). Erro preserva a foto
+    /// anterior e registra o motivo. Clique durante `busy` é ignorado.
     pub fn refresh(&mut self) {
-        match observe(self.domain, Duration::from_secs(self.window_secs.max(1))) {
-            Ok(snapshot) => {
-                self.snapshot = snapshot;
-                self.error.clear();
+        if self.busy {
+            return;
+        }
+        let domain = self.domain;
+        let window = Duration::from_secs(self.window_secs.max(1));
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(ObserveMsg(
+                observe(domain, window).map_err(|err| err.to_string()),
+            ));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.error = "observando domínio…".into();
+    }
+
+    /// Drena o worker; chamar a cada frame enquanto `busy`.
+    pub fn poll(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = &self.receiver {
+            while let Ok(ObserveMsg(result)) = rx.try_recv() {
+                match result {
+                    Ok(snapshot) => {
+                        self.snapshot = snapshot;
+                        self.error.clear();
+                    }
+                    Err(err) => {
+                        self.error = err;
+                    }
+                }
+                finished = true;
             }
-            Err(err) => {
-                self.error = err.to_string();
-            }
+        }
+        if finished {
+            self.receiver = None;
+            self.busy = false;
         }
     }
 }

@@ -5,15 +5,19 @@ use orchestrator_studio::dds_observe::DdsState;
 
 /// Domínio, janela, botão de observação e grades de agentes/tools/métricas.
 pub fn show(ui: &mut egui::Ui, dds: &mut DdsState) {
+    // Drena o worker de observação (thread + mpsc — REQ/T-820-19).
+    dds.poll();
     ui.collapsing("Topologia DDS (domínio ao vivo)", |ui| {
         ui.horizontal(|ui| {
             ui.label("domínio:");
             ui.add(egui::DragValue::new(&mut dds.domain));
             ui.label("janela (s):");
             ui.add(egui::DragValue::new(&mut dds.window_secs).range(1..=30));
-            if ui.button("Observar").clicked() {
-                dds.refresh();
-            }
+            ui.add_enabled_ui(!dds.busy, |ui| {
+                if ui.button("Observar").clicked() {
+                    dds.refresh();
+                }
+            });
         });
         if !dds.error.is_empty() {
             ui.label(&dds.error);

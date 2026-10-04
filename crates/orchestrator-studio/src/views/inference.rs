@@ -5,13 +5,17 @@ use orchestrator_studio::inference::{InferenceState, Role};
 
 /// Servidor, modelos, parâmetros, prompt e transcript da sessão.
 pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState) {
+    // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
+    infer.poll();
     ui.collapsing("Inferência (servidor llama ao vivo)", |ui| {
         ui.horizontal(|ui| {
             ui.label("servidor:");
-            ui.text_edit_singleline(&mut infer.server_url);
-            if ui.button("Modelos").clicked() {
-                infer.refresh_models();
-            }
+            ui.add_enabled_ui(!infer.busy, |ui| {
+                ui.text_edit_singleline(&mut infer.server_url);
+                if ui.button("Modelos").clicked() {
+                    infer.refresh_models();
+                }
+            });
         });
         if infer.models.is_empty() {
             ui.text_edit_singleline(&mut infer.model);
@@ -29,9 +33,11 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState) {
         ui.label("prompt:");
         ui.text_edit_multiline(&mut infer.prompt);
         ui.horizontal(|ui| {
-            if ui.button("Enviar").clicked() {
-                infer.send();
-            }
+            ui.add_enabled_ui(!infer.busy, |ui| {
+                if ui.button("Enviar").clicked() {
+                    infer.send();
+                }
+            });
             if ui.button("Nova sessão").clicked() {
                 infer.clear_session();
             }

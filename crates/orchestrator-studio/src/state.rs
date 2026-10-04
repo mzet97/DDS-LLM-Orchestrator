@@ -1,7 +1,11 @@
 //! Estado de apresentação do Studio: somente leitura sobre o catálogo real.
 //!
 //! `AppState` nunca inventa linhas — reflete o [`Snapshot`] do [`Catalog`];
-//! vazio até receber um snapshot de verdade.
+//! vazio até receber um snapshot de verdade. A leitura do nó (HTTP
+//! bloqueante) roda em THREAD de trabalho (padrão `models.rs`: thread +
+//! mpsc + `poll` por frame) — a thread de UI nunca bloqueia (REQ/T-820-19).
+
+use std::sync::mpsc;
 
 use studio_core::catalog::Snapshot;
 
@@ -15,12 +19,20 @@ pub struct ItemRow {
     pub revision: u64,
 }
 
+/// Mensagem do worker de leitura do nó (url ecoada para o status).
+struct NodeMsg {
+    url: String,
+    result: Result<NodeSummary, OriginError>,
+}
+
 /// Estado da janela principal: linhas da tabela mais mensagem de status.
 #[derive(Debug, Default)]
 pub struct AppState {
     rows: Vec<ItemRow>,
     status: String,
     node: Option<NodeSummary>,
+    busy: bool,
+    receiver: Option<mpsc::Receiver<NodeMsg>>,
 }
 
 impl AppState {
@@ -31,6 +43,8 @@ impl AppState {
             rows: Vec::new(),
             status: String::from("nenhum catálogo carregado"),
             node: None,
+            busy: false,
+            receiver: None,
         }
     }
 
@@ -68,28 +82,62 @@ impl AppState {
         self.node.as_ref()
     }
 
-    /// Busca o resumo no nó e atualiza o status; falha preserva o estado
-    /// anterior e registra o motivo (nunca inventa linhas).
+    /// `true` enquanto a leitura do nó roda em background (`poll` drena).
+    #[must_use]
+    pub fn busy(&self) -> bool {
+        self.busy
+    }
+
+    /// Busca o resumo no nó em THREAD de trabalho (REQ/T-820-19) e atualiza
+    /// o status via `poll`; falha preserva o estado anterior e registra o
+    /// motivo (nunca inventa linhas). Clique durante `busy` é ignorado.
     pub fn refresh_from_node(&mut self, base_url: &str) {
-        match fetch_node_summary(base_url) {
-            Ok(summary) => {
-                let url = base_url.trim_end_matches('/');
-                self.status = format!(
-                    "nó {url} · protocolo {}.{} · {} operação(ões)",
-                    summary.version.major,
-                    summary.version.minor,
-                    summary.operations.len()
-                );
-                self.node = Some(summary);
+        if self.busy {
+            return;
+        }
+        let url = base_url.trim_end_matches('/').to_string();
+        let status_url = url.clone();
+        let (tx, rx) = mpsc::channel();
+        let worker_url = url.clone();
+        std::thread::spawn(move || {
+            let result = fetch_node_summary(&worker_url);
+            let _ = tx.send(NodeMsg { url, result });
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.status = format!("conectando ao nó {status_url}…");
+    }
+
+    /// Drena o worker da leitura do nó; chamar a cada frame enquanto `busy`.
+    pub fn poll(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = &self.receiver {
+            while let Ok(NodeMsg { url, result }) = rx.try_recv() {
+                match result {
+                    Ok(summary) => {
+                        self.status = format!(
+                            "nó {url} · protocolo {}.{} · {} operação(ões)",
+                            summary.version.major,
+                            summary.version.minor,
+                            summary.operations.len()
+                        );
+                        self.node = Some(summary);
+                    }
+                    Err(err @ OriginError::Incompatible { .. }) => {
+                        self.status = format!("origem bloqueada: {err}");
+                        self.node = None;
+                    }
+                    Err(err @ OriginError::Unreachable { .. }) => {
+                        self.status = format!("nó inalcançável: {err}");
+                        self.node = None;
+                    }
+                }
+                finished = true;
             }
-            Err(err @ OriginError::Incompatible { .. }) => {
-                self.status = format!("origem bloqueada: {err}");
-                self.node = None;
-            }
-            Err(err @ OriginError::Unreachable { .. }) => {
-                self.status = format!("nó inalcançável: {err}");
-                self.node = None;
-            }
+        }
+        if finished {
+            self.receiver = None;
+            self.busy = false;
         }
     }
 }

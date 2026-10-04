@@ -3,8 +3,12 @@
 //!
 //! Resposta crua do backend, sem enfeite: concluída (com agente e latência)
 //! ou falha (com motivo). Timeout longo porque agente real infere de verdade.
+//! O despacho roda em THREAD de trabalho (padrão `models.rs`: thread com
+//! canal mpsc e `poll` por frame) — pode levar até 300 s e a thread de UI
+//! nunca bloqueia (REQ/T-820-19).
 
 use serde::Deserialize;
+use std::sync::mpsc;
 use thiserror::Error;
 
 /// Resultado do despacho síncrono.
@@ -99,13 +103,21 @@ pub fn dispatch_sync(
     }
 }
 
+/// Mensagem do worker de despacho.
+enum DispatchMsg {
+    Done(Result<DispatchOutcome, String>),
+}
+
 /// Estado do painel de despacho.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DispatchState {
     pub url: String,
     pub model: String,
     pub prompt: String,
     pub result: String,
+    /// `true` enquanto o despacho roda em background (`poll` drena).
+    pub busy: bool,
+    receiver: Option<mpsc::Receiver<DispatchMsg>>,
 }
 
 impl DispatchState {
@@ -117,29 +129,60 @@ impl DispatchState {
             model: String::from("qwen3.5-0.8b"),
             prompt: String::new(),
             result: String::new(),
+            busy: false,
+            receiver: None,
         }
     }
 
-    /// Despacha e registra o desfecho em texto (pode bloquear minutos:
-    /// agente real infere; async quando justificar).
+    /// Despacha em THREAD de trabalho e registra o desfecho em texto (pode
+    /// levar minutos: agente real infere — REQ/T-820-19). Clique durante
+    /// `busy` é ignorado; `poll` aplica o desfecho no painel.
     pub fn send(&mut self) {
-        match dispatch_sync(&self.url.clone(), &self.model.clone(), &self.prompt.clone()) {
-            Ok(DispatchOutcome::Completed {
-                task_id,
-                assigned_agent,
-                latency_ms,
-            }) => {
-                self.result = format!(
-                    "concluída {task_id} agente={} latência={latency_ms}ms",
-                    assigned_agent.as_deref().unwrap_or("?")
-                );
+        if self.busy {
+            return;
+        }
+        let url = self.url.clone();
+        let model = self.model.clone();
+        let prompt = self.prompt.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let outcome = dispatch_sync(&url, &model, &prompt).map_err(|err| err.to_string());
+            let _ = tx.send(DispatchMsg::Done(outcome));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.result = "despachando… (agente real infere)".into();
+    }
+
+    /// Drena o worker; chamar a cada frame enquanto `busy`.
+    pub fn poll(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = &self.receiver {
+            while let Ok(DispatchMsg::Done(outcome)) = rx.try_recv() {
+                match outcome {
+                    Ok(DispatchOutcome::Completed {
+                        task_id,
+                        assigned_agent,
+                        latency_ms,
+                    }) => {
+                        self.result = format!(
+                            "concluída {task_id} agente={} latência={latency_ms}ms",
+                            assigned_agent.as_deref().unwrap_or("?")
+                        );
+                    }
+                    Ok(DispatchOutcome::Failed { task_id, error }) => {
+                        self.result = format!("falha {task_id}: {error}");
+                    }
+                    Err(err) => {
+                        self.result = format!("erro de despacho: {err}");
+                    }
+                }
+                finished = true;
             }
-            Ok(DispatchOutcome::Failed { task_id, error }) => {
-                self.result = format!("falha {task_id}: {error}");
-            }
-            Err(err) => {
-                self.result = format!("erro de despacho: {err}");
-            }
+        }
+        if finished {
+            self.receiver = None;
+            self.busy = false;
         }
     }
 }

@@ -112,14 +112,19 @@ async fn session_accumulates_history_on_the_wire() {
     session.model = String::from("m");
     session.prompt = String::from("primeira");
 
-    tokio::task::spawn_blocking(move || {
-        session.send();
-        session.prompt = String::from("segunda");
-        session.send();
-        session
-    })
-    .await
-    .expect("sem panic");
+    // Padrão worker+poll (REQ/T-820-19): `send` dispara em background e o
+    // `poll` aplica a resposta; a sessão continua acumulando no fio.
+    session.send();
+    while session.busy {
+        session.poll();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    session.prompt = String::from("segunda");
+    session.send();
+    while session.busy {
+        session.poll();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
 
     let bodies = captured.lock().expect("captura acessivel");
     assert_eq!(bodies.len(), 2);

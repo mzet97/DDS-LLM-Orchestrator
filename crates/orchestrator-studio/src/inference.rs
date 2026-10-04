@@ -2,9 +2,12 @@
 //!
 //! Temperatura e limite de saída atravessam o contrato (vão no corpo do
 //! `POST /v1/chat/completions`), nunca ficam só no formulário (§SDD:545+).
-//! Cliente bloqueante como `origin` (thread de UI sem runtime).
+//! Cliente bloqueante rodando em THREAD de trabalho (padrão `models.rs`/
+//! `launch.rs`: thread + mpsc + `poll` por frame) — a thread de UI nunca
+//! bloqueia: `send` pode levar até 120 s (REQ/T-820-19).
 
 use serde::{Deserialize, Serialize};
+use std::sync::mpsc;
 use thiserror::Error;
 
 /// Papel de uma mensagem no contrato de chat.
@@ -76,9 +79,17 @@ fn send(
         })
 }
 
+/// Mensagem do worker de HTTP (modelo de `LaunchMsg`).
+enum InferMsg {
+    /// Resposta de `Modelos` (`GET /v1/models`).
+    Models(Result<Vec<ModelInfo>, String>),
+    /// Resposta de `Enviar` (`POST /v1/chat/completions`).
+    Reply(Result<String, String>),
+}
+
 /// Estado do painel de inferência: parâmetros que atravessam o contrato,
 /// prompt editável e última resposta (ou erro formatado, nunca vazio mudo).
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct InferenceState {
     pub server_url: String,
     pub model: String,
@@ -88,6 +99,9 @@ pub struct InferenceState {
     pub reply: String,
     pub models: Vec<String>,
     pub history: Vec<Message>,
+    /// `true` enquanto há HTTP em background (`poll` drena e libera).
+    pub busy: bool,
+    receiver: Option<mpsc::Receiver<InferMsg>>,
 }
 
 impl InferenceState {
@@ -103,30 +117,37 @@ impl InferenceState {
             reply: String::new(),
             models: Vec::new(),
             history: Vec::new(),
+            busy: false,
+            receiver: None,
         }
     }
 
-    /// Atualiza a lista de modelos; erro vira texto no painel, não panic.
+    /// Atualiza a lista de modelos em background; erro vira texto no painel,
+    /// não panic. Clique durante `busy` é ignorado.
     pub fn refresh_models(&mut self) {
-        match list_models(&self.server_url.clone()) {
-            Ok(models) => {
-                if let Some(first) = models.first() {
-                    if self.model.is_empty() {
-                        self.model = first.id.clone();
-                    }
-                }
-                self.models = models.into_iter().map(|info| info.id).collect();
-            }
-            Err(err) => {
-                self.reply = format!("erro ao listar modelos: {err}");
-            }
+        if self.busy {
+            return;
         }
+        let url = self.server_url.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(InferMsg::Models(
+                list_models(&url).map_err(|err| err.to_string()),
+            ));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.reply = "listando modelos…".into();
     }
 
-    /// Geração real contra o servidor com o histórico da sessão no fio;
-    /// resposta ou erro ficam no painel. Bloqueia a thread de UI
-    /// (localhost; async quando justificar).
+    /// Geração real contra o servidor com o histórico da sessão no fio —
+    /// em THREAD de trabalho (até 120 s; REQ/T-820-19). A thread de UI segue
+    /// livre: `poll` aplica a resposta ou o erro no painel. Clique durante
+    /// `busy` é ignorado.
     pub fn send(&mut self) {
+        if self.busy {
+            return;
+        }
         self.history.push(Message {
             role: Role::User,
             content: self.prompt.clone(),
@@ -137,19 +158,59 @@ impl InferenceState {
             temperature: self.temperature,
             max_tokens: self.max_tokens,
         };
-        match chat_completion(&self.server_url.clone(), &chat) {
-            Ok(content) => {
-                self.history.push(Message {
-                    role: Role::Assistant,
-                    content: content.clone(),
-                });
-                self.reply = content;
-                self.prompt.clear();
+        let url = self.server_url.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(InferMsg::Reply(
+                chat_completion(&url, &chat).map_err(|err| err.to_string()),
+            ));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.reply = "gerando…".into();
+    }
+
+    /// Drena o worker; chamar a cada frame enquanto `busy`.
+    pub fn poll(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = &self.receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    InferMsg::Models(result) => match result {
+                        Ok(models) => {
+                            if let Some(first) = models.first() {
+                                if self.model.is_empty() {
+                                    self.model = first.id.clone();
+                                }
+                            }
+                            self.models = models.into_iter().map(|info| info.id).collect();
+                            self.reply.clear();
+                        }
+                        Err(err) => {
+                            self.reply = format!("erro ao listar modelos: {err}");
+                        }
+                    },
+                    InferMsg::Reply(result) => match result {
+                        Ok(content) => {
+                            self.history.push(Message {
+                                role: Role::Assistant,
+                                content: content.clone(),
+                            });
+                            self.reply = content;
+                            self.prompt.clear();
+                        }
+                        Err(err) => {
+                            self.history.pop();
+                            self.reply = format!("erro de inferência: {err}");
+                        }
+                    },
+                }
+                finished = true;
             }
-            Err(err) => {
-                self.history.pop();
-                self.reply = format!("erro de inferência: {err}");
-            }
+        }
+        if finished {
+            self.receiver = None;
+            self.busy = false;
         }
     }
 

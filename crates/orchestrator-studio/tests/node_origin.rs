@@ -38,22 +38,30 @@ async fn fetch_reads_live_version_and_empty_operations() {
     assert!(summary.operations.is_empty());
 }
 
-/// `refresh_from_node` bloqueia (thread de UI do eframe não tem runtime);
-/// nos testes, isola em `spawn_blocking` como a produção exige.
-async fn refresh_blocking(mut state: AppState, url: String) -> AppState {
-    tokio::task::spawn_blocking(move || {
-        state.refresh_from_node(&url);
-        state
-    })
-    .await
-    .expect("refresh nao pode sofrer panic")
+/// `refresh_from_node` é NÃO-bloqueante (thread de trabalho + mpsc —
+/// REQ/T-820-19): dispara a leitura e retorna; o resultado só aparece após
+/// `poll` drenar o worker. Nos testes, um loop com sleep faz o papel do
+/// frame da UI (teto de 5 s para falhar rápido se o worker travar).
+async fn refresh_via_poll(mut state: AppState, url: String) -> AppState {
+    state.refresh_from_node(&url);
+    assert!(state.busy(), "refresh deve sinalizar leitura em background");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while state.busy() {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "worker de leitura não respondeu a tempo"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        state.poll();
+    }
+    state
 }
 
 #[tokio::test]
 async fn app_state_shows_node_summary_and_survives_unreachable() {
     let url = live_base_url().await;
 
-    let state = refresh_blocking(AppState::new(), url).await;
+    let state = refresh_via_poll(AppState::new(), url).await;
 
     let node = state.node().expect("conectado deve expor resumo");
     assert!(state.status().contains("protocolo 1.0"));
@@ -68,7 +76,7 @@ async fn app_state_shows_node_summary_and_survives_unreachable() {
         drop(probe);
         format!("http://127.0.0.1:{port}")
     };
-    let state = refresh_blocking(state, closed).await;
+    let state = refresh_via_poll(state, closed).await;
 
     assert!(state.node().is_none());
     assert!(state.status().contains("inalcançável"));

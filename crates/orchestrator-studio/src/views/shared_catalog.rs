@@ -5,13 +5,17 @@ use orchestrator_studio::catalog_remote::SharedCatalog;
 
 /// URL, formulário (id/valor/base), publicar/excluir e tabela do snapshot.
 pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
+    // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
+    shared.poll();
     ui.collapsing("Catálogo compartilhado (autoridade no nó)", |ui| {
         ui.horizontal(|ui| {
             ui.label("nó:");
             ui.text_edit_singleline(&mut shared.url);
-            if ui.button("Ler snapshot").clicked() {
-                shared.refresh();
-            }
+            ui.add_enabled_ui(!shared.busy, |ui| {
+                if ui.button("Ler snapshot").clicked() {
+                    shared.refresh();
+                }
+            });
         });
         ui.horizontal(|ui| {
             ui.label("id:");
@@ -22,12 +26,14 @@ pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
             ui.text_edit_singleline(&mut shared.form_base);
         });
         ui.horizontal(|ui| {
-            if ui.button("Publicar").clicked() {
-                shared.publish_form();
-            }
-            if ui.button("Excluir").clicked() {
-                shared.delete_form();
-            }
+            ui.add_enabled_ui(!shared.busy, |ui| {
+                if ui.button("Publicar").clicked() {
+                    shared.publish_form();
+                }
+                if ui.button("Excluir").clicked() {
+                    shared.delete_form();
+                }
+            });
         });
         if !shared.notice.is_empty() {
             ui.label(&shared.notice);

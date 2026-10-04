@@ -3,7 +3,12 @@
 //! Publicação/exclusão condicionais com base explícita; snapshot e eventos
 //! para acompanhamento. Conflito nunca é silencioso: vira texto com a
 //! revisão vigente e dispara releitura do snapshot.
+//!
+//! Chamadas HTTP bloqueantes rodam em THREAD de trabalho (padrão
+//! `models.rs`: thread + mpsc + `poll` por frame) — a thread de UI nunca
+//! bloqueia (REQ/T-820-19).
 
+use std::sync::mpsc;
 use studio_core::catalog::{Event, Snapshot};
 use thiserror::Error;
 
@@ -139,8 +144,20 @@ pub fn events_since(base_url: &str, since: u64) -> Result<Vec<Event>, SharedCata
     }
 }
 
+/// Mensagem do worker do catálogo.
+enum CatalogMsg {
+    /// Resposta de leitura do snapshot.
+    Snapshot(Result<Snapshot, String>),
+    /// Resposta de mutação + releitura do snapshot (mesma sequência do
+    /// antigo `publish_form`/`delete_form`: muta, depois relê).
+    Mutated {
+        notice: String,
+        then_snapshot: Option<Result<Snapshot, String>>,
+    },
+}
+
 /// Estado do painel de catálogo compartilhado.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Default)]
 pub struct SharedCatalog {
     pub url: String,
     pub snapshot: Option<Snapshot>,
@@ -148,6 +165,9 @@ pub struct SharedCatalog {
     pub form_value: String,
     pub form_base: String,
     pub notice: String,
+    /// `true` enquanto há HTTP em background (`poll` drena e libera).
+    pub busy: bool,
+    receiver: Option<mpsc::Receiver<CatalogMsg>>,
 }
 
 impl SharedCatalog {
@@ -160,52 +180,116 @@ impl SharedCatalog {
         }
     }
 
-    /// Relê o snapshot; erro vira aviso, nunca linhas inventadas.
+    /// Relê o snapshot em background; erro vira aviso, nunca linhas
+    /// inventadas. Clique durante `busy` é ignorado.
     pub fn refresh(&mut self) {
-        match fetch_snapshot(&self.url.clone()) {
-            Ok(snapshot) => {
-                self.snapshot = Some(snapshot);
-                self.notice.clear();
-            }
-            Err(err) => {
-                self.notice = err.to_string();
-            }
+        if self.busy {
+            return;
         }
+        let url = self.url.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(CatalogMsg::Snapshot(
+                fetch_snapshot(&url).map_err(|err| err.to_string()),
+            ));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.notice = String::from("lendo snapshot…");
     }
 
-    /// Publica o formulário (base vazia = criação) e relê em seguida.
+    /// Publica o formulário (base vazia = criação) e relê em seguida — em
+    /// background (REQ/T-820-19). Clique durante `busy` é ignorado.
     pub fn publish_form(&mut self) {
-        let base = self.form_base.trim().parse::<u64>().ok();
-        let outcome = publish(
-            &self.url.clone(),
-            self.form_id.trim(),
-            base,
-            &self.form_value.clone(),
-        );
-        match outcome {
-            Ok(revision) => {
-                self.notice = format!("publicado em r{revision}");
-                self.refresh();
-            }
-            Err(err) => {
-                self.notice = err.to_string();
-                self.refresh();
-            }
+        if self.busy {
+            return;
         }
+        let base = self.form_base.trim().parse::<u64>().ok();
+        let url = self.url.clone();
+        let id = self.form_id.trim().to_string();
+        let value = self.form_value.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let notice = match publish(&url, &id, base, &value) {
+                Ok(revision) => format!("publicado em r{revision}"),
+                Err(err) => err.to_string(),
+            };
+            let then_snapshot = Some(fetch_snapshot(&url).map_err(|err| err.to_string()));
+            let _ = tx.send(CatalogMsg::Mutated {
+                notice,
+                then_snapshot,
+            });
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.notice = String::from("publicando…");
     }
 
-    /// Exclui o id do formulário com a base dada e relê em seguida.
+    /// Exclui o id do formulário com a base dada e relê em seguida — em
+    /// background (REQ/T-820-19). Clique durante `busy` é ignorado.
     pub fn delete_form(&mut self) {
+        if self.busy {
+            return;
+        }
         let base = self.form_base.trim().parse::<u64>().unwrap_or(u64::MAX);
-        match delete(&self.url.clone(), self.form_id.trim(), base) {
-            Ok(revision) => {
-                self.notice = format!("removido em r{revision}");
-                self.refresh();
+        let url = self.url.clone();
+        let id = self.form_id.trim().to_string();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let notice = match delete(&url, &id, base) {
+                Ok(revision) => format!("removido em r{revision}"),
+                Err(err) => err.to_string(),
+            };
+            let then_snapshot = Some(fetch_snapshot(&url).map_err(|err| err.to_string()));
+            let _ = tx.send(CatalogMsg::Mutated {
+                notice,
+                then_snapshot,
+            });
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.notice = String::from("removendo…");
+    }
+
+    /// Drena o worker; chamar a cada frame enquanto `busy`.
+    pub fn poll(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = &self.receiver {
+            while let Ok(msg) = rx.try_recv() {
+                match msg {
+                    CatalogMsg::Snapshot(result) => match result {
+                        Ok(snapshot) => {
+                            self.snapshot = Some(snapshot);
+                            self.notice.clear();
+                        }
+                        Err(err) => {
+                            self.notice = err;
+                        }
+                    },
+                    CatalogMsg::Mutated {
+                        notice,
+                        then_snapshot,
+                    } => {
+                        self.notice = notice;
+                        if let Some(result) = then_snapshot {
+                            match result {
+                                Ok(snapshot) => {
+                                    self.snapshot = Some(snapshot);
+                                    self.notice.clear();
+                                }
+                                Err(err) => {
+                                    self.notice = err;
+                                }
+                            }
+                        }
+                    }
+                }
+                finished = true;
             }
-            Err(err) => {
-                self.notice = err.to_string();
-                self.refresh();
-            }
+        }
+        if finished {
+            self.receiver = None;
+            self.busy = false;
         }
     }
 }

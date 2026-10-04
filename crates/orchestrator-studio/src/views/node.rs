@@ -16,12 +16,16 @@ fn op_summary(op: &AdminOp) -> String {
 
 /// Campo de URL, botão de conexão e resumo/tabela do nó.
 pub fn show(ui: &mut egui::Ui, state: &mut AppState, node_url: &mut String) {
+    // Drena o worker de leitura do nó (thread + mpsc — REQ/T-820-19).
+    state.poll();
     ui.horizontal(|ui| {
         ui.label("nó:");
         ui.text_edit_singleline(node_url);
-        if ui.button("Conectar ao nó").clicked() {
-            state.refresh_from_node(&node_url.clone());
-        }
+        ui.add_enabled_ui(!state.busy(), |ui| {
+            if ui.button("Conectar ao nó").clicked() {
+                state.refresh_from_node(&node_url.clone());
+            }
+        });
     });
     if let Some(node) = state.node() {
         ui.separator();
