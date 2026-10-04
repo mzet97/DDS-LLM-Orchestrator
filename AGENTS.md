@@ -4,6 +4,11 @@ Você é a **IA executora** desta migração. O líder/arquiteto definiu specs d
 `specs/`. Sua função é **executar** seguindo Spec-Driven Development (SDD), com disciplina
 e honestidade. Este arquivo é o seu manual.
 
+## Rastreabilidade (2026-10-04)
+- Estado vivo do projeto: **`notes.md` na raiz do workspace** (`../../notes.md`, Parte I). Auditoria crate-a-crate deste workspace: `THESIS_RUST_WORKSPACE_REPORT.md` na raiz.
+- Correção datada ao §4 abaixo: "dependência Git fixada por `rev`" está **stale** — desde T-814/T-815/patch `9c399bf` o binding vem do **crates.io pinado** `cyclonedds = "=3.0.1"` / `cyclonedds-rust-sys = "=1.2.1"` (sem `[patch]`; congelado pelo teste `t809_reproducibility.rs`).
+- Estado dos branches: `studio/phase-800-node` está **17 commits à frente de `main`** (todo o Studio existe só no branch); fase 700 com **T-814 aberta** (gate final/prerelease/REPORT); `README.md` ainda diz "14 members" (são 18).
+
 ## 0. Antes de qualquer coisa (toda sessão)
 1. Leia `specs/CONSTITUTION.md` (regras não-negociáveis).
 2. Leia `specs/CONTEXT.md` (o sistema inteiro) — se ainda não leu nesta sessão.
