@@ -26,7 +26,6 @@ use futures_util::StreamExt;
 use heartbeat::{AgentStatus, SlotGuard};
 use std::collections::HashSet;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Configuração do agente.
 #[derive(Debug, Clone)]
@@ -43,7 +42,11 @@ pub struct AgentConfig {
 pub struct Agent {
     pub config: AgentConfig,
     status: Arc<AgentStatus>,
-    claimed: Arc<RwLock<HashSet<String>>>,
+    /// T-820-09: `std::sync::RwLock` (não tokio) — as seções críticas são
+    /// `insert`/`remove`/`contains` puros, sem `.await` sob lock, e o caminho
+    /// quente de ingestão precisa de um point-check (`is_claimed`) sem clonar
+    /// o conjunto por amostra DDS.
+    claimed: Arc<std::sync::RwLock<HashSet<String>>>,
 }
 
 impl Agent {
@@ -59,7 +62,7 @@ impl Agent {
         Self {
             config,
             status,
-            claimed: Arc::new(RwLock::new(HashSet::new())),
+            claimed: Arc::new(std::sync::RwLock::new(HashSet::new())),
         }
     }
 
@@ -77,9 +80,19 @@ impl Agent {
         self.status.clone()
     }
 
-    /// Snapshot do conjunto de tasks já claimed (para o filtro de elegibilidade).
-    pub async fn claimed_set(&self) -> HashSet<String> {
-        self.claimed.read().await.clone()
+    /// Snapshot do conjunto de tasks já claimed (diagnóstico/compat).
+    ///
+    /// T-820-09: o caminho quente de elegibilidade NÃO deve usar este snapshot
+    /// (clona o conjunto inteiro por amostra DDS) — use [`Agent::is_claimed`]
+    /// via [`claim::is_eligible_with`](crate::claim::is_eligible_with).
+    pub fn claimed_set(&self) -> HashSet<String> {
+        self.claimed_read().clone()
+    }
+
+    /// Point-check O(1) "esta task já está reservada por este agente?"
+    /// (T-820-09 — usado no filtro de elegibilidade do claim loop).
+    pub fn is_claimed(&self, task_id: &str) -> bool {
+        self.claimed_read().contains(task_id)
     }
 
     /// Marca uma task como claimed por este agente.
@@ -90,16 +103,34 @@ impl Agent {
     /// tentativa concorrente enquanto a primeira ainda está na janela de
     /// confirmação (`CONFIRM_DELAY`). Se a tentativa falhar ou perder a
     /// arbitragem, o chamador deve desfazer com [`Agent::unmark_claimed`].
-    pub async fn mark_claimed(&self, task_id: String) {
-        self.claimed.write().await.insert(task_id);
+    pub fn mark_claimed(&self, task_id: String) {
+        self.claimed_write().insert(task_id);
     }
 
     /// Desfaz uma reserva de [`Agent::mark_claimed`] quando a tentativa de
     /// claim falha (erro de escrita) ou perde a arbitragem (outro agente
     /// venceu) — sem isso a task ficaria presa como "claimed" para sempre
     /// neste agente e nunca mais seria elegível de novo.
-    pub async fn unmark_claimed(&self, task_id: &str) {
-        self.claimed.write().await.remove(task_id);
+    pub fn unmark_claimed(&self, task_id: &str) {
+        self.claimed_write().remove(task_id);
+    }
+
+    /// Lock de leitura com recuperação de poisoning (mesma política do
+    /// `RateLimiter` do llm-gateway): um panic alheio enquanto o lock estava
+    /// tomado não pode derrubar o claim loop do agente.
+    fn claimed_read(&self) -> std::sync::RwLockReadGuard<'_, HashSet<String>> {
+        match self.claimed.read() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
+    }
+
+    /// Lock de escrita com recuperação de poisoning (ver [`Agent::claimed_read`]).
+    fn claimed_write(&self) -> std::sync::RwLockWriteGuard<'_, HashSet<String>> {
+        match self.claimed.write() {
+            Ok(guard) => guard,
+            Err(poisoned) => poisoned.into_inner(),
+        }
     }
 
     /// Processa uma task claimed.

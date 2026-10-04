@@ -155,23 +155,31 @@ async fn main() -> Result<()> {
     let runtime = Arc::new(AgentDds::new(config)?);
     let _heartbeat = runtime.spawn_heartbeat();
 
-    if args.engine == "mock" {
-        let engine = Arc::new(MockEngine::new("chunk", 5, 50));
-        runtime.run(engine).await?;
-    } else if args.engine == "http" {
-        use agent::engine_http::HttpEngine;
-        if args.provider_constraint == ProviderConstraint::CloudOnly {
-            anyhow::bail!("engine http é local-only; use o LLM gateway para cloud");
+    // T-820-09: valor desconhecido de `--engine` era engolido pelo `else` e
+    // caía no branch DDS silenciosamente (ex.: typo `--engine ddd` subia um
+    // agente DDS achando que era outro engine). Agora é erro explícito no boot.
+    match args.engine.as_str() {
+        "mock" => {
+            let engine = Arc::new(MockEngine::new("chunk", 5, 50));
+            runtime.run(engine).await?;
         }
-        let engine = Arc::new(HttpEngine::new(&args.llama_url)?);
-        runtime.run(engine).await?;
-    } else {
-        let engine = Arc::new(DdsEngine::new_with_constraint(
-            args.dds_domain,
-            args.agent_id,
-            args.provider_constraint,
-        )?);
-        runtime.run(engine).await?;
+        "http" => {
+            use agent::engine_http::HttpEngine;
+            if args.provider_constraint == ProviderConstraint::CloudOnly {
+                anyhow::bail!("engine http é local-only; use o LLM gateway para cloud");
+            }
+            let engine = Arc::new(HttpEngine::new(&args.llama_url)?);
+            runtime.run(engine).await?;
+        }
+        "dds" => {
+            let engine = Arc::new(DdsEngine::new_with_constraint(
+                args.dds_domain,
+                args.agent_id,
+                args.provider_constraint,
+            )?);
+            runtime.run(engine).await?;
+        }
+        other => anyhow::bail!("--engine inválido: '{other}' (valores válidos: dds | http | mock)"),
     }
 
     Ok(())
