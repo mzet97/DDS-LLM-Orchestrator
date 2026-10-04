@@ -39,6 +39,14 @@ pub mod status {
 /// Mensagem de negação — byte-idêntica ao `main.py` Python.
 pub const DENIED_MESSAGE: &str = "Negado pela politica de seguranca local";
 
+/// Mensagem de sobrecarga (REQ/T-820-17): publicada em FAILED na mesma
+/// instância quando a fila de jobs está cheia — o cliente nunca fica sem
+/// resposta. Sem claim: a call não é desta gateway.
+pub const OVERLOAD_MESSAGE: &str = "gateway sobrecarregado";
+
+/// Limite de jobs concorrentes no loop do serviço (fila do `JoinSet`).
+pub const MAX_INFLIGHT_JOBS: usize = 64;
+
 /// Erro do serviço de tool calls.
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
@@ -222,6 +230,12 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
     /// filtra `status == PENDING` e processa cada request em task tokio
     /// própria (o `asyncio.run_coroutine_threadsafe` do Python).
     ///
+    /// A stream de tool calls é SEMPRE drenada (REQ/T-820-17): com a fila de
+    /// jobs cheia, a request recebida não fica retida na mesh — recebe FAILED
+    /// ("gateway sobrecarregado") na mesma instância. Desabilitar a branch de
+    /// leitura com a fila cheia parava de drenar o reader (KeepLast(5)) e
+    /// descartava requests silenciosamente, sem resposta nenhuma.
+    ///
     /// Retorna quando a stream fecha (shutdown do DataSpace).
     pub async fn run(self: Arc<Self>) -> Result<(), ServiceError> {
         let mut tool_calls = self.data_space.subscribe_tool_calls();
@@ -232,11 +246,15 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
 
         loop {
             tokio::select! {
-                maybe_request = next_tool_call(&mut tool_calls), if jobs.len() < 64 => {
+                maybe_request = next_tool_call(&mut tool_calls) => {
                     let Some(request) = maybe_request else { break };
                     if request.status == status::PENDING {
-                        let svc = Arc::clone(&self);
-                        jobs.spawn(async move { svc.process_one(&request).await });
+                        if jobs.len() < MAX_INFLIGHT_JOBS {
+                            let svc = Arc::clone(&self);
+                            jobs.spawn(async move { svc.process_one(&request).await });
+                        } else {
+                            self.reject_overloaded(&request).await;
+                        }
                     }
                 }
                 maybe_snapshot = next_security_snapshot(&mut snapshots) => {
@@ -264,6 +282,56 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
             }
         }
         Ok(())
+    }
+
+    /// Sobrecarga (REQ/T-820-17): publica FAILED na MESMA instância
+    /// (`call_id`) com [`OVERLOAD_MESSAGE`], SEM claimar — a recusa nunca
+    /// cria ownership (o contrato exactly-once fica intacto: outra gateway
+    /// que já claimou continua o ciclo dela e o terminal dela vence).
+    ///
+    /// Best-effort com guarda: só escreve FAILED se a instância ainda está
+    /// PENDING na mesh — se outro gateway já avançou o ciclo (EXECUTING/
+    /// terminal), a recusa é abortada para não regredir o estado visível.
+    pub async fn reject_overloaded(&self, request: &ToolCallRequest) {
+        match self.data_space.read_tool_call(&request.call_id).await {
+            Ok(Some(current)) if current.status != status::PENDING => {
+                tracing::debug!(
+                    call_id = %request.call_id,
+                    status = current.status,
+                    "gateway sobrecarregado; call já avançou em outra gateway — sem FAILED"
+                );
+                return;
+            }
+            Ok(_) => {}
+            Err(error) => {
+                tracing::error!(
+                    call_id = %request.call_id,
+                    error = %error,
+                    "gateway sobrecarregado; read da instância falhou — sem FAILED (best-effort)"
+                );
+                return;
+            }
+        }
+        let mut call = request.clone();
+        call.status = status::FAILED;
+        call.error_message = OVERLOAD_MESSAGE.to_string();
+        call.completed_at_ns = now_ns();
+        match self.data_space.write_tool_call(call).await {
+            Ok(()) => {
+                tracing::warn!(
+                    call_id = %request.call_id,
+                    tool = %request.tool_name,
+                    "gateway sobrecarregado: call marcada FAILED sem claim"
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    call_id = %request.call_id,
+                    error = %error,
+                    "gateway sobrecarregado; falha ao publicar FAILED"
+                );
+            }
+        }
     }
 
     fn accept_snapshot(&self, snapshot: &SecurityPolicySnapshot) {

@@ -1,4 +1,15 @@
 //! Durable, atomic ownership claims for exactly-once tool-call dispatch.
+//!
+//! ## Known limit: claims have no lease/heartbeat (documented decision)
+//!
+//! A claim is PERMANENT for the call_id (`Won` never expires, ownership
+//! never transfers). Consequence: if the winning gateway crashes between
+//! `try_claim` and the terminal write, the call stays EXECUTING on the mesh
+//! forever — no other gateway retries it (retrying would break exactly-once,
+//! since the crashed gateway may still have executed the side effect).
+//! Recovery is operational (operator reissues the call with a new call_id).
+//! A lease+heartbeat scheme is future work and would trade exactly-once for
+//! at-least-once; do not add one silently (REQ/T-820-17).
 
 use dashmap::DashMap;
 use rustix::fd::OwnedFd;
