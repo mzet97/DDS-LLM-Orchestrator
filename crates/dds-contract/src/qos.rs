@@ -32,7 +32,8 @@ pub struct StructuralQos {
 #[derive(Debug, Clone, PartialEq)]
 pub struct OnlineKnobs {
     pub transport_priority: i32,
-    /// Latency budget em milissegundos (0 = zero budget).
+    /// Latency budget em milissegundos (0 = NÃO configurado — `apply_to`
+    /// omite a política em vez de aplicar budget 0 ns; T-820-20/P3).
     pub latency_budget_ms: f64,
     /// Strength default sugerida para o writer neste perfil (pode ser sobrescrita
     /// pelo papel em `roles::*`).
@@ -192,7 +193,10 @@ impl StructuralQos {
     /// Deadline é aplicado na criação quando finito. Ownership strength e
     /// transport priority ficam nos knobs online.
     pub fn apply_to(&self, mut builder: cyclonedds::QosBuilder) -> cyclonedds::QosBuilder {
-        use cyclonedds::{Durability, History, Liveliness, Ownership, Reliability};
+        // Só Liveliness e Ownership são usados como TIPOS aqui: os demais
+        // policies entram via métodos do builder (`best_effort()`,
+        // `volatile()`, `keep_last()`), sem precisar das variantes.
+        use cyclonedds::{Liveliness, Ownership};
 
         builder = match self.reliability {
             ReliabilityKind::BestEffort => builder.best_effort(),
@@ -224,11 +228,6 @@ impl StructuralQos {
             let deadline_ns = (self.deadline_s * 1_000_000_000.0) as i64;
             builder = builder.deadline(deadline_ns);
         }
-        let _ = (
-            Durability::Volatile,
-            History::KeepAll,
-            Reliability::BestEffort,
-        );
         builder
     }
 }
@@ -236,12 +235,19 @@ impl StructuralQos {
 #[cfg(feature = "dds")]
 impl OnlineKnobs {
     /// Aplica knobs mutáveis em runtime a um `QosBuilder`.
+    ///
+    /// `latency_budget_ms == 0.0` significa "NÃO configurado" (todos os
+    /// perfis canônicos usam 0.0) e é OMITIDO — antes, 0 era convertido para
+    /// `latency_budget(0 ns)`, um budget literalmente zero no wire, que
+    /// restringe o transporte em vez de apenas não tocar a política
+    /// (T-820-20/P3).
     pub fn apply_to(&self, builder: cyclonedds::QosBuilder) -> cyclonedds::QosBuilder {
-        let budget_ns = (self.latency_budget_ms * 1_000_000.0) as i64;
-        builder
-            .transport_priority(self.transport_priority)
-            .latency_budget(budget_ns)
-            .ownership_strength(self.ownership_strength)
+        let mut builder = builder.transport_priority(self.transport_priority);
+        if self.latency_budget_ms > 0.0 {
+            let budget_ns = (self.latency_budget_ms * 1_000_000.0) as i64;
+            builder = builder.latency_budget(budget_ns);
+        }
+        builder.ownership_strength(self.ownership_strength)
     }
 }
 
@@ -325,5 +331,20 @@ mod tests {
             .build()
             .unwrap();
         assert_eq!(qos.deadline().unwrap(), None);
+    }
+
+    #[cfg(feature = "dds")]
+    #[test]
+    fn zero_latency_budget_is_left_unset() {
+        // T-820-20/P3: `latency_budget_ms = 0.0` = "não configurado" — a
+        // política NÃO é aplicada (antes virava budget 0 ns no wire).
+        for name in profiles::ALL {
+            let (_, knobs) = qos_profile(name).unwrap();
+            let qos = knobs
+                .apply_to(cyclonedds::QosBuilder::new())
+                .build()
+                .unwrap();
+            assert_eq!(qos.latency_budget().unwrap(), None, "{name}");
+        }
     }
 }
