@@ -15,11 +15,27 @@ use client::dds_impl::DdsClientDds;
 use client::{ClientConfig, DdsClient};
 use std::sync::Arc;
 
+/// T-820-11: parse estrito dos argumentos CLI — antes `s.parse().unwrap()`
+/// panicava com backtrace cru em entrada inválida (ex.: `--domain abc`).
+/// Agora: mensagem amigável e exit code 2 (convenção de uso incorreto).
+fn parse_or_exit<T: std::str::FromStr>(name: &str, raw: &str) -> T {
+    match raw.parse::<T>() {
+        Ok(value) => value,
+        Err(_) => {
+            eprintln!("erro: valor inválido para '{name}': '{raw}'");
+            std::process::exit(2);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
-    let domain: u32 = args.get(1).map(|s| s.parse().unwrap()).unwrap_or(77);
-    let n: usize = args.get(2).map(|s| s.parse().unwrap()).unwrap_or(20);
+    let domain: u32 = args
+        .get(1)
+        .map(|s| parse_or_exit("domain", s))
+        .unwrap_or(77);
+    let n: usize = args.get(2).map(|s| parse_or_exit("n", s)).unwrap_or(20);
     let concurrent = args.iter().any(|a| a == "--concurrent");
 
     let config = ClientConfig {

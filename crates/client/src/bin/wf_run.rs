@@ -169,7 +169,7 @@ async fn run_seq(cfg: &Cfg) -> Result<(), Box<dyn std::error::Error>> {
         vec![a.content.clone(), b.content.clone()],
     )
     .await?;
-    println!("WF_RECORD {}", emit(&cfg.meta, &[a, b, c])?);
+    println!("WF_RECORD {}", emit(&cfg.meta, &[a, b, c]).await?);
     Ok(())
 }
 
@@ -241,7 +241,7 @@ async fn run_fork(cfg: &Cfg, serial: bool) -> Result<(), Box<dyn std::error::Err
         model: cfg.model.clone(),
         out: cfg.meta.out.clone(),
     };
-    println!("WF_RECORD {}", emit(&meta, &[a, b, c])?);
+    println!("WF_RECORD {}", emit(&meta, &[a, b, c]).await?);
     Ok(())
 }
 
