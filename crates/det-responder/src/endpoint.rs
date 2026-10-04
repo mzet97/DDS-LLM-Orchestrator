@@ -1,5 +1,29 @@
 //! Atendimento de uma `LLM.InferenceRequest`: valida, deriva a fixture,
 //! publica chunks/erro e registra o resultado no log JSONL.
+//!
+//! # Divergências de paridade DELIBERADAS vs o stub HTTP Python
+//! (`benchmarks/orchestration/src/bench/backend_deterministic/server.py`)
+//! — registradas para a equivalência temporal de EXP1/EXP3 (REQ/T-820-14):
+//!
+//! 1. **Saturação**: aqui a fila do mpsc (`--queue`, default 64) lotada
+//!    rejeita **429 imediatamente** ([`Endpoint::admit`], erro observável no
+//!    tópico `LLM.Error` + registro `rejected_full`). O stub Python espera
+//!    até **30 s** num semáforo (`state.sem.acquire(timeout=30)`) antes de
+//!    rejeitar. Em overload, o ponto de rejeição e a latência de fila
+//!    diferem entre os backends: o Rust mede rejeição instantânea; o Python
+//!    mede espera-bloqueante. Qualquer análise cross-backend de cauda
+//!    (p99+) precisa isolar esse efeito.
+//! 2. **Derivação de estágio**: aqui o estágio vem do marcador
+//!    **`PROMPT_VERSION:`** na mensagem `system` do payload
+//!    (`fixture::parse` — nunca do conteúdo fora do contrato). O stub Python
+//!    recebe o estágio **out-of-band**, no campo `bench.stage` do corpo
+//!    HTTP. O hash da fixture e o chunking (2 chunks, mid-point) são
+//!    paridade CONFIRMADA — as divergências acima não afetam o conteúdo.
+//!
+//! # Relógio do log
+//! `arrival_ns`/`started_ns`/`finished_ns` nas linhas JSONL são relativos ao
+//! **t0 do processo** (`Instant`), enquanto o driver de benchmark usa epoch
+//! ns — NÃO comparar timestamps entre os dois artefatos sem reancorar.
 
 use crate::fixture::{self, Invalid};
 use dds_contract::generated::orchestrator::{
