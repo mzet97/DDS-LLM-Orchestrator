@@ -58,6 +58,27 @@ impl From<TaskStatus> for i32 {
     }
 }
 
+impl TaskStatus {
+    /// Estado terminal do ciclo de vida (`DONE`/`FAILED`) — espelha o filtro
+    /// de terminais do `_tasks_cache` Python. Substitui os magic numbers
+    /// `3|4` do `cache.rs` (T-820-06/P3).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Done | Self::Failed)
+    }
+
+    /// [`is_terminal`](Self::is_terminal) sobre o valor cru do wire (o campo
+    /// `Task.status` é `long` cru no IDL); valores desconhecidos nunca são
+    /// terminais.
+    #[must_use]
+    pub fn is_terminal_i32(v: i32) -> bool {
+        match Self::try_from(v) {
+            Ok(s) => s.is_terminal(),
+            Err(_) => false,
+        }
+    }
+}
+
 /// Prioridade de tarefa (`Task.priority`). **Os valores NÃO são a numeração
 /// sequencial 0/1/2 que `OrchestratorV4.idl`'s `enum TaskPriority` implicaria
 /// por ordem de declaração** — são 1/5/10, os valores realmente usados em
@@ -311,17 +332,22 @@ impl From<SecurityLevel> for i32 {
     }
 }
 
-/// Status de uma chamada de ferramenta (`ToolCallRequest.status`). Sem
-/// enum declarado no IDL e sem evidência de valores usados nesta sessão —
-/// modelado com o padrão mínimo óbvio (pendente/concluído/falhou) até haver
-/// confirmação de um consumidor real; **valores especulativos, revisar
-/// antes de depender deles**.
+/// Status de uma chamada de ferramenta (`ToolCallRequest.status`). Sem enum
+/// declarado no IDL (o campo é `long` cru) — o canon de wire é o
+/// `ToolCallStatus` de `src/orchestrator/orchestrator/models.py:101-107`
+/// (PENDING=0, ALLOWED=1, DENIED=2, EXECUTING=3, COMPLETED=4, FAILED=5), o
+/// mesmo vocabulário já assumido pelo `cache.rs` (`is_call_terminal` = 2|4|5)
+/// e pelo policy-engine. Antes da revisão T-820-02 (P1-1) este enum usava
+/// discriminantes especulativos 0/1/2 que classificavam estados errados.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum ToolCallStatus {
     Pending = 0,
-    Completed = 1,
-    Failed = 2,
+    Allowed = 1,
+    Denied = 2,
+    Executing = 3,
+    Completed = 4,
+    Failed = 5,
 }
 
 impl TryFrom<i32> for ToolCallStatus {
@@ -329,8 +355,11 @@ impl TryFrom<i32> for ToolCallStatus {
     fn try_from(v: i32) -> Result<Self, Self::Error> {
         match v {
             0 => Ok(Self::Pending),
-            1 => Ok(Self::Completed),
-            2 => Ok(Self::Failed),
+            1 => Ok(Self::Allowed),
+            2 => Ok(Self::Denied),
+            3 => Ok(Self::Executing),
+            4 => Ok(Self::Completed),
+            5 => Ok(Self::Failed),
             _ => Err(UnknownEnumValue {
                 enum_name: "ToolCallStatus",
                 value: v,
@@ -342,6 +371,44 @@ impl TryFrom<i32> for ToolCallStatus {
 impl From<ToolCallStatus> for i32 {
     fn from(v: ToolCallStatus) -> i32 {
         v as i32
+    }
+}
+
+impl std::fmt::Display for ToolCallStatus {
+    /// Nome canônico em maiúsculas do vocabulário de wire
+    /// (`models.py::ToolCallStatus`), para logs/traces — não é o formato do
+    /// campo no wire (que é o `i32` cru; ver `From<ToolCallStatus> for i32`).
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let name = match self {
+            Self::Pending => "PENDING",
+            Self::Allowed => "ALLOWED",
+            Self::Denied => "DENIED",
+            Self::Executing => "EXECUTING",
+            Self::Completed => "COMPLETED",
+            Self::Failed => "FAILED",
+        };
+        f.write_str(name)
+    }
+}
+
+impl ToolCallStatus {
+    /// Estado terminal do fluxo de tool call no canon (`DENIED`/`COMPLETED`/
+    /// `FAILED`) — a partir daqui a instância `ToolCall.Request` não evolui
+    /// mais. Bate com `cache.rs::is_call_terminal` (2|4|5).
+    #[must_use]
+    pub const fn is_terminal(self) -> bool {
+        matches!(self, Self::Denied | Self::Completed | Self::Failed)
+    }
+
+    /// [`is_terminal`](Self::is_terminal) sobre o valor cru do wire (o campo
+    /// `ToolCallRequest.status` é `long` cru no IDL); valores desconhecidos
+    /// nunca são terminais.
+    #[must_use]
+    pub fn is_terminal_i32(v: i32) -> bool {
+        match Self::try_from(v) {
+            Ok(s) => s.is_terminal(),
+            Err(_) => false,
+        }
     }
 }
 
@@ -521,6 +588,70 @@ mod tests {
     fn task_status_variants() {
         assert_ne!(TaskStatus::Pending, TaskStatus::Running);
         assert_ne!(TaskStatus::Done, TaskStatus::Failed);
+    }
+
+    #[test]
+    fn tool_call_status_discriminants_match_wire_canon() {
+        // T-820-02: canon = `models.py::ToolCallStatus` (PENDING=0..FAILED=5).
+        assert_eq!(i32::from(ToolCallStatus::Pending), 0);
+        assert_eq!(i32::from(ToolCallStatus::Allowed), 1);
+        assert_eq!(i32::from(ToolCallStatus::Denied), 2);
+        assert_eq!(i32::from(ToolCallStatus::Executing), 3);
+        assert_eq!(i32::from(ToolCallStatus::Completed), 4);
+        assert_eq!(i32::from(ToolCallStatus::Failed), 5);
+        // Variantes além das antigas 0/1/2 parseiam (o bug da revisão fazia
+        // DENIED/EXECUTING/COMPLETED/FAILED virarem UnknownEnumValue).
+        assert_eq!(ToolCallStatus::try_from(2), Ok(ToolCallStatus::Denied));
+        assert_eq!(ToolCallStatus::try_from(3), Ok(ToolCallStatus::Executing));
+        assert_eq!(ToolCallStatus::try_from(4), Ok(ToolCallStatus::Completed));
+        assert_eq!(ToolCallStatus::try_from(5), Ok(ToolCallStatus::Failed));
+        assert_eq!(
+            ToolCallStatus::try_from(6),
+            Err(UnknownEnumValue {
+                enum_name: "ToolCallStatus",
+                value: 6,
+            })
+        );
+        // Display devolve o nome canônico do vocabulário Python (para logs).
+        assert_eq!(ToolCallStatus::Pending.to_string(), "PENDING");
+        assert_eq!(ToolCallStatus::Allowed.to_string(), "ALLOWED");
+        assert_eq!(ToolCallStatus::Denied.to_string(), "DENIED");
+        assert_eq!(ToolCallStatus::Executing.to_string(), "EXECUTING");
+        assert_eq!(ToolCallStatus::Completed.to_string(), "COMPLETED");
+        assert_eq!(ToolCallStatus::Failed.to_string(), "FAILED");
+    }
+
+    #[test]
+    fn tool_call_status_terminal_matches_cache_canon() {
+        // Terminais batem com `cache.rs::is_call_terminal` (2|4|5).
+        assert!(ToolCallStatus::Denied.is_terminal());
+        assert!(ToolCallStatus::Completed.is_terminal());
+        assert!(ToolCallStatus::Failed.is_terminal());
+        assert!(!ToolCallStatus::Pending.is_terminal());
+        assert!(!ToolCallStatus::Allowed.is_terminal());
+        assert!(!ToolCallStatus::Executing.is_terminal());
+        assert!(ToolCallStatus::is_terminal_i32(2));
+        assert!(ToolCallStatus::is_terminal_i32(4));
+        assert!(ToolCallStatus::is_terminal_i32(5));
+        assert!(!ToolCallStatus::is_terminal_i32(1));
+        assert!(!ToolCallStatus::is_terminal_i32(3));
+        assert!(!ToolCallStatus::is_terminal_i32(99));
+        assert!(!ToolCallStatus::is_terminal_i32(-1));
+    }
+
+    #[test]
+    fn task_status_terminal_matches_python_sweeper() {
+        // Terminais do ciclo de vida da task (DONE=3, FAILED=4).
+        assert!(TaskStatus::Done.is_terminal());
+        assert!(TaskStatus::Failed.is_terminal());
+        assert!(!TaskStatus::Pending.is_terminal());
+        assert!(!TaskStatus::Assigned.is_terminal());
+        assert!(!TaskStatus::Running.is_terminal());
+        assert!(TaskStatus::is_terminal_i32(3));
+        assert!(TaskStatus::is_terminal_i32(4));
+        assert!(!TaskStatus::is_terminal_i32(0));
+        assert!(!TaskStatus::is_terminal_i32(2));
+        assert!(!TaskStatus::is_terminal_i32(-1));
     }
 
     #[test]
