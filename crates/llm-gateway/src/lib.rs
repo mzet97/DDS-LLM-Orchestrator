@@ -70,20 +70,32 @@ impl TryFrom<&str> for ProviderConstraint {
     }
 }
 
+/// T-820-12: chave do cache = hash FNV-1a de (constraint, model_name,
+/// messages_json), com prefixos de comprimento por campo para não haver
+/// ambiguidade de concatenação (model="a|b"+msg="c" ≠ model="a"+msg="b|c").
+///
+/// Antes a chave embutia o `messages_json` COMPLETO no formato (até 256 KB
+/// por chave no DashMap) — agora cabe em 16 hex chars. Decisões da revisão:
+/// - `agent_id` SAIU da chave: hits cross-agent são justamente o objetivo de
+///   um cache de LLM (dois agentes com o mesmo prompt compartilham a entrada);
+/// - `temperature`/`max_tokens`/`security_level` também não entram — a chave
+///   canônica do workload é (constraint, modelo, mensagens), alinhada ao
+///   conjunto decidido em T-820-12.
 fn cache_key(request: &LLMInferenceRequest, constraint: ProviderConstraint) -> String {
-    format!(
-        "{}|{}:{}|{}:{}|{}:{}|{}|{}|{}",
-        constraint.as_literal(),
-        request.agent_id.len(),
-        request.agent_id,
-        request.model_name.len(),
-        request.model_name,
-        request.messages_json.len(),
-        request.messages_json,
-        request.temperature.to_bits(),
-        request.max_tokens,
-        request.security_level,
-    )
+    let mut bytes =
+        Vec::with_capacity(8 + request.model_name.len() + 8 + request.messages_json.len());
+    push_len_prefixed(&mut bytes, constraint.as_literal().as_bytes());
+    push_len_prefixed(&mut bytes, request.model_name.as_bytes());
+    push_len_prefixed(&mut bytes, request.messages_json.as_bytes());
+    format!("llm-{:016x}", dds_dataspace::fnv1a64(&bytes))
+}
+
+/// Acrescenta `field` ao buffer prefixado pelo comprimento (u64 LE) —
+/// delimitação sem ambiguidade sem depender de separadores.
+fn push_len_prefixed(bytes: &mut Vec<u8>, field: &[u8]) {
+    let len = field.len() as u64;
+    bytes.extend_from_slice(&len.to_le_bytes());
+    bytes.extend_from_slice(field);
 }
 
 /// Erro do gateway.
@@ -180,34 +192,54 @@ impl RateLimiter {
 /// Cache de resultados LLM.
 ///
 /// `ahash` em vez do hasher default (Fase 2 do `OPTIMIZATION_PLAN.md`).
+/// T-820-12: eviction FIFO REAL — cada entrada carrega um contador de
+/// inserção monotônico e o despejo remove a de MENOR contador. Antes removia
+/// "o primeiro do iterador" do DashMap (entrada arbitrária, dependente de
+/// sharding), o que podia despejar a entrada mais recente.
 pub struct LlmCache {
-    cache: dashmap::DashMap<String, LLMInferenceResult, ahash::RandomState>,
+    cache: dashmap::DashMap<String, CacheEntry, ahash::RandomState>,
+    clock: AtomicU64,
     max_size: usize,
+}
+
+/// Entrada do cache: resultado + número de inserção (ordem FIFO).
+struct CacheEntry {
+    seq: u64,
+    result: LLMInferenceResult,
 }
 
 impl LlmCache {
     pub fn new(max_size: usize) -> Self {
         Self {
             cache: dashmap::DashMap::with_hasher(ahash::RandomState::default()),
+            clock: AtomicU64::new(0),
             max_size,
         }
     }
 
     pub fn get(&self, key: &str) -> Option<LLMInferenceResult> {
-        self.cache.get(key).map(|v| v.clone())
+        self.cache.get(key).map(|e| e.value().result.clone())
     }
 
     pub fn insert(&self, key: String, result: LLMInferenceResult) {
         if self.cache.len() >= self.max_size {
-            // Evict oldest (simplistic — could use LRU).
+            // Eviction FIFO: menor contador de inserção. A varredura O(n) só
+            // acontece no teto de capacidade (n ≤ `max_size`) — varrer tudo
+            // por inserção é o preço de manter FIFO correto sem VecDeque
+            // paralelo (que teria duplicatas/entrada órfã em re-inserção).
             // NB: o iterador precisa morrer ANTES do remove() — segurar o
             // `iter()` do DashMap durante `remove()` causa deadlock no shard.
-            let first_key = self.cache.iter().next().map(|e| e.key().clone());
-            if let Some(k) = first_key {
+            let oldest_key = self
+                .cache
+                .iter()
+                .min_by_key(|e| e.value().seq)
+                .map(|e| e.key().clone());
+            if let Some(k) = oldest_key {
                 self.cache.remove(&k);
             }
         }
-        self.cache.insert(key, result);
+        let seq = self.clock.fetch_add(1, Ordering::Relaxed);
+        self.cache.insert(key, CacheEntry { seq, result });
     }
 
     pub fn len(&self) -> usize {
@@ -462,6 +494,60 @@ pub struct GatewayProviders {
     pub cloud: Option<Arc<dyn LlmProvider>>,
     /// Failover configs: provider name → list of failover targets (ordered by priority).
     failover_configs: HashMap<String, Vec<FailoverTarget>>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn req_for_key(model: &str, messages: &str, agent: &str) -> LLMInferenceRequest {
+        LLMInferenceRequest {
+            request_id: "k".into(),
+            task_id: "k".into(),
+            agent_id: agent.into(),
+            model_name: model.into(),
+            messages_json: messages.into(),
+            temperature: 0.7,
+            max_tokens: 16,
+            stream: false,
+            security_level: 0,
+            provider_constraint: "LOCAL_ONLY".into(),
+            created_at_ns: 0,
+        }
+    }
+
+    /// T-820-12: mesma (constraint, model, messages) com `agent_id` diferente
+    /// → MESMA chave (hit cross-agent é o objetivo do cache); a delimitação
+    /// por comprimento impede colisão de fronteira entre campos; conteúdo
+    /// distinto → chave distinta.
+    #[test]
+    fn t820_cache_key_cross_agent_igual_e_sem_ambiguidade_de_fronteira() {
+        let a = cache_key(
+            &req_for_key("m", "[]", "agent-1"),
+            ProviderConstraint::LocalOnly,
+        );
+        let b = cache_key(
+            &req_for_key("m", "[]", "agent-2"),
+            ProviderConstraint::LocalOnly,
+        );
+        assert_eq!(a, b, "agent_id não deve entrar na chave (T-820-12)");
+        assert_eq!(
+            a.len(),
+            20,
+            "chave = prefixo + 16 hex (payload NÃO embutido)"
+        );
+
+        let left = cache_key(&req_for_key("b:c", "x", "a"), ProviderConstraint::LocalOnly);
+        let right = cache_key(&req_for_key("c", "x", "a:b"), ProviderConstraint::LocalOnly);
+        assert_ne!(left, right, "fronteira de campo não pode colidir no hash");
+
+        let m1 = cache_key(&req_for_key("m", "[]", "a"), ProviderConstraint::LocalOnly);
+        let m2 = cache_key(
+            &req_for_key("m", r#"[{"q":1}]"#, "a"),
+            ProviderConstraint::LocalOnly,
+        );
+        assert_ne!(m1, m2, "mensagens diferentes → chaves diferentes");
+    }
 }
 
 /// A single failover target with its circuit breaker.

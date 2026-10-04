@@ -12,7 +12,7 @@
 //! requisições e evita martelar um provider já degradado.
 
 use dashmap::DashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -45,12 +45,24 @@ impl From<u8> for BreakerState {
 /// - **closed**: passa tudo; conta falhas consecutivas.
 /// - **open**: após `failure_threshold` falhas seguidas, bloqueia por
 ///   `reset_after`.
-/// - **half-open**: decorrido `reset_after`, libera uma sonda; sucesso volta
-///   a closed, falha reabre o breaker.
+/// - **half-open**: decorrido `reset_after`, libera UMA sonda (T-820-12);
+///   sucesso volta a closed, falha reabre o breaker. Chamadas concorrentes
+///   durante a sonda são bloqueadas ("breaker open") até a sonda resolver.
+///
+/// Contrato (T-820-12): todo `is_available() == true` em half-open DEVE ser
+/// seguido de `record_success` OU `record_failure` do mesmo chamador — é o
+/// que libera a sonda (em closed os dois métodos também são inofensivos).
+/// `process_routed` (lib.rs) sempre cumpre o par; usar o breaker fora dele
+/// exige o mesmo par.
 #[derive(Debug)]
 pub struct CircuitBreaker {
     state: AtomicU8,
     consecutive_failures: AtomicU32,
+    /// T-820-12: sonda única do half-open — `true` enquanto uma chamada
+    /// autorizada em half-open está em voo. Antes, TODAS as chamadas
+    /// concorrentes passavam em half-open (martelavam o provider degradado
+    /// em burst, anulando o propósito do estado).
+    probe_in_flight: AtomicBool,
     failure_threshold: u32,
     reset_after: Duration,
     opened_at_ms: AtomicU64,
@@ -62,6 +74,7 @@ impl CircuitBreaker {
         Self {
             state: AtomicU8::new(BreakerState::Closed as u8),
             consecutive_failures: AtomicU32::new(0),
+            probe_in_flight: AtomicBool::new(false),
             failure_threshold: failure_threshold.max(1),
             reset_after,
             opened_at_ms: AtomicU64::new(0),
@@ -73,41 +86,53 @@ impl CircuitBreaker {
         self.started_at.elapsed().as_millis() as u64
     }
 
-    /// True se uma tentativa pode ser feita agora: closed, half-open, ou
-    /// open com `reset_after` já decorrido (transiciona para half-open e
-    /// libera a sonda).
+    /// True se uma tentativa pode ser feita agora: closed sempre; half-open
+    /// só para a sonda única; open com `reset_after` decorrido transiciona
+    /// para half-open e disputa a sonda.
     pub fn is_available(&self) -> bool {
         match BreakerState::from(self.state.load(Ordering::Acquire)) {
-            BreakerState::Closed | BreakerState::HalfOpen => true,
+            BreakerState::Closed => true,
+            BreakerState::HalfOpen => self.try_acquire_probe(),
             BreakerState::Open => {
                 let opened_at = self.opened_at_ms.load(Ordering::Acquire);
                 let elapsed_ms = self.now_ms().saturating_sub(opened_at);
-                if elapsed_ms >= self.reset_after.as_millis() as u64 {
-                    // CAS best-effort: se outra thread já transicionou, tudo bem
-                    // (ambas concluem que está disponível).
-                    let _ = self.state.compare_exchange(
-                        BreakerState::Open as u8,
-                        BreakerState::HalfOpen as u8,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    );
-                    true
-                } else {
-                    false
+                if elapsed_ms < self.reset_after.as_millis() as u64 {
+                    return false;
                 }
+                // CAS best-effort: se outra thread já transicionou, tudo bem
+                // (ambas caem na disputa da sonda abaixo).
+                let _ = self.state.compare_exchange(
+                    BreakerState::Open as u8,
+                    BreakerState::HalfOpen as u8,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+                self.try_acquire_probe()
             }
         }
     }
 
-    /// Registra sucesso: fecha o breaker e zera o contador de falhas.
+    /// Disputa a sonda única do half-open (T-820-12): só UM chamador vence;
+    /// os demais recebem `false` (breaker tratado como aberto) até a sonda
+    /// resolver via `record_success`/`record_failure`.
+    fn try_acquire_probe(&self) -> bool {
+        self.probe_in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    /// Registra sucesso: fecha o breaker, zera o contador de falhas e libera
+    /// a sonda (ver contrato no doc do tipo).
     pub fn record_success(&self) {
         self.consecutive_failures.store(0, Ordering::Release);
+        self.probe_in_flight.store(false, Ordering::Release);
         self.state
             .store(BreakerState::Closed as u8, Ordering::Release);
     }
 
-    /// Registra falha: em half-open, reabre imediatamente (1 falha basta);
-    /// em closed, reabre ao atingir `failure_threshold` consecutivas.
+    /// Registra falha: em half-open, reabre imediatamente (1 falha basta) e
+    /// libera a sonda; em closed, reabre ao atingir `failure_threshold`
+    /// consecutivas.
     pub fn record_failure(&self) {
         let failures = self.consecutive_failures.fetch_add(1, Ordering::AcqRel) + 1;
         let was_half_open =
@@ -117,6 +142,9 @@ impl CircuitBreaker {
                 .store(BreakerState::Open as u8, Ordering::Release);
             self.opened_at_ms.store(self.now_ms(), Ordering::Release);
         }
+        // Libera a sonda por último: com o state já em Open, a próxima
+        // `is_available` só passa após `reset_after` (nova sonda).
+        self.probe_in_flight.store(false, Ordering::Release);
     }
 
     pub fn health(&self) -> HealthStatus {
@@ -333,6 +361,36 @@ mod tests {
         assert!(cb.is_available(), "deveria permitir sonda em half-open");
         cb.record_success();
         assert_eq!(cb.health(), HealthStatus::Healthy);
+    }
+
+    /// T-820-12: half-open libera UMA única sonda — chamadas concorrentes
+    /// durante a sonda são bloqueadas até `record_success`/`record_failure`
+    /// resolver (antes, TODAS passavam em half-open e martelavam o provider
+    /// degradado em burst).
+    #[test]
+    fn half_open_libera_uma_unica_sonda() {
+        let cb = CircuitBreaker::new(1, Duration::from_millis(10));
+        cb.record_failure(); // abre
+        std::thread::sleep(Duration::from_millis(25));
+        assert!(cb.is_available(), "1ª chamada em half-open = sonda");
+        assert!(
+            !cb.is_available(),
+            "2ª chamada concorrente em half-open deve ser bloqueada enquanto a sonda está em voo"
+        );
+        assert!(
+            !cb.is_available(),
+            "N chamadas concorrentes em half-open: todas bloqueadas além da sonda"
+        );
+        // Sonda falha → reabre e LIBERA a sonda (próximo ciclo half-open
+        // após reset_after concede nova sonda).
+        cb.record_failure();
+        assert!(!cb.is_available());
+        std::thread::sleep(Duration::from_millis(25));
+        assert!(cb.is_available(), "novo ciclo half-open libera nova sonda");
+        // Sonda bem-sucedida → closed e chamadas voltam a fluir.
+        cb.record_success();
+        assert!(cb.is_available());
+        assert!(cb.is_available(), "closed não disputa sonda");
     }
 
     #[test]
