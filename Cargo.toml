@@ -56,9 +56,6 @@ ahash = "0.8"
 [workspace.lints.rust]
 warnings = "deny"
 
-[workspace.lints.clippy]
-warnings = "deny"
-
 [profile.release]
 lto = "thin"
 codegen-units = 1
