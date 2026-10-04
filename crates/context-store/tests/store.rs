@@ -386,3 +386,44 @@ async fn journal_preserva_expiracao_absoluta_no_replay() {
     }
     let _ = std::fs::remove_file(&path);
 }
+
+/// REQ/T-820-15: `expire_ttl` grava tombstone no journal — após o restart o
+/// replay NÃO ressuscita o contexto expirado (a expiração é absoluta na
+/// escrita, e a remoção é durável).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn expire_ttl_e_replay_nao_ressuscita_expirado() {
+    let path = temp_journal_path();
+    {
+        let store = LocalContextStore::open(&path).await.unwrap();
+        store
+            .put_snapshot(&snap("ctx-morto", "s", "[]", 0)) // ttl=0 → nasce vencido
+            .await
+            .unwrap();
+        store
+            .put_snapshot(&snap("ctx-vivo", "s", "[]", 3600))
+            .await
+            .unwrap();
+        assert_eq!(store.len(), 2);
+
+        let removed = store.expire_ttl().await.unwrap();
+        assert_eq!(removed, 1);
+        assert!(store.get("ctx-morto").await.unwrap().is_none());
+        assert_eq!(store.len(), 1);
+    }
+    {
+        // Após o "restart", o replay aplica Put(expirado) + tombstone Expire:
+        // o contexto NÃO volta.
+        let store = LocalContextStore::open(&path).await.unwrap();
+        assert!(
+            store.get("ctx-morto").await.unwrap().is_none(),
+            "replay não deve ressuscitar contexto expirado (tombstone)"
+        );
+        assert!(store.get("ctx-vivo").await.unwrap().is_some());
+        assert_eq!(store.len(), 1);
+
+        // Segunda varredura pós-replay: nada a remover (não fica removendo
+        // de novo o mesmo contexto a cada boot).
+        assert_eq!(store.expire_ttl().await.unwrap(), 0);
+    }
+    let _ = std::fs::remove_file(&path);
+}

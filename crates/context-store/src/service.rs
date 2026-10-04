@@ -18,6 +18,11 @@ use dds_dataspace::DataSpace;
 use futures::StreamExt;
 use std::sync::Arc;
 
+/// Intervalo da varredura de TTL (REQ/T-820-15): sem ela, `expire_ttl` não
+/// tem chamador no serviço — contextos expirados ficam para sempre
+/// (crescimento sem limite e boot replay cada vez mais caro).
+const EXPIRE_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Serviço Context Store: consome os tópicos Context.* e persiste no store.
 pub struct ContextStoreService<S: ContextStore> {
     dataspace: Arc<DataSpace>,
@@ -48,11 +53,14 @@ impl<S: ContextStore> ContextStoreService<S> {
     }
 
     /// Roda até `shutdown` completar (Ctrl+C/SIGTERM no binário) ou ambas as
-    /// streams fecharem. Cada amostra recebida alimenta o store.
+    /// streams fecharem. Cada amostra recebida alimenta o store. A cada
+    /// [`EXPIRE_INTERVAL`] roda `expire_ttl` (REQ/T-820-15) — sem a varredura
+    /// periódica, contextos expirados nunca saem do store.
     pub async fn run(&self, shutdown: impl std::future::Future<Output = ()> + Send) {
         let mut snapshots = Box::pin(self.dataspace.stream_context_snapshots());
         let mut updates = Box::pin(self.dataspace.stream_context_updates());
         let mut shutdown = Box::pin(shutdown);
+        let mut expire_tick = tokio::time::interval(EXPIRE_INTERVAL);
         tracing::info!(domain_id = self.domain_id, "Context Store iniciado");
 
         loop {
@@ -93,6 +101,17 @@ impl<S: ContextStore> ContextStoreService<S> {
                         None => {
                             tracing::warn!("stream Context.Update fechada");
                             break;
+                        }
+                    }
+                }
+                _ = expire_tick.tick() => {
+                    match self.store.expire_ttl().await {
+                        Ok(removed) if removed > 0 => {
+                            tracing::debug!(removed, "varredura TTL removeu contextos expirados");
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            tracing::warn!(error = %e, "varredura TTL falhou — segue no próximo tick");
                         }
                     }
                 }
