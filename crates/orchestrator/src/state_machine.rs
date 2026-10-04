@@ -106,6 +106,18 @@ pub fn fail(task: &mut Task, reason: &str) -> Result<(), TransitionError> {
 }
 
 /// Reassign: ASSIGNED/RUNNING → PENDING (incrementa retry_count).
+///
+/// Retorna `Ok(true)` se a task voltou para PENDING e `Ok(false)` se o teto
+/// de retries foi atingido — nesse caso a task é transicionada para
+/// FAILED com `finish_reason = "MAX_RETRIES_EXCEEDED"` (terminal; o cliente
+/// deixa de esperar).
+///
+/// T-820-03: renova `created_at_ns = now_ns()`. A elegibilidade de claim do
+/// agente rejeita task PENDING com idade > 10 s (`agent/src/claim.rs`,
+/// `is_eligible`); uma task re-emitida pelo reaper com o `created_at_ns`
+/// original nasceria "velha" e ficaria permanentemente in-claimável.
+/// Zera também `assigned_at_ns`/`started_at_ns` para que o reaper de
+/// progresso (T-820-03) não re-coleta a task recém-reatribuída.
 pub fn reassign(task: &mut Task, max_retries: u32) -> Result<bool, TransitionError> {
     if task.retry_count >= max_retries {
         fail(task, "MAX_RETRIES_EXCEEDED")?;
@@ -116,6 +128,7 @@ pub fn reassign(task: &mut Task, max_retries: u32) -> Result<bool, TransitionErr
     task.assigned_agent.clear();
     task.assigned_at_ns = 0;
     task.started_at_ns = 0;
+    task.created_at_ns = now_ns(); // T-820-03: renascimento — ver doc acima
     Ok(true)
 }
 
@@ -194,6 +207,40 @@ mod tests {
         t.retry_count = 3;
         assert!(!reassign(&mut t, 3).unwrap());
         assert_eq!(t.status, 4); // FAILED
+                                 // T-820-03: o motivo terminal é observável pelo cliente — é o que
+                                 // destrava o `submit()` que aguardava DONE/FAILED.
+        assert_eq!(t.finish_reason, "MAX_RETRIES_EXCEEDED");
+    }
+
+    /// T-820-03: `reassign` renova `created_at_ns` — task re-emitida com o
+    /// nascimento original (>10 s) seria rejeitada pelo filtro de idade de
+    /// `agent/src/claim.rs::is_eligible` e ficaria permanentemente
+    /// in-claimável (P0-2 do code review de 2026-10-04).
+    #[test]
+    fn test_reassign_renova_created_at_ns() {
+        let mut t = make_task(1); // ASSIGNED
+        t.created_at_ns = 1; // nascimento "antigo" (1 ns após a época)
+        t.assigned_at_ns = 42;
+        t.started_at_ns = 43;
+        assert!(reassign(&mut t, 3).unwrap());
+        assert_eq!(t.status, 0); // PENDING
+        assert!(
+            t.created_at_ns > 1_000_000_000,
+            "created_at_ns deveria ter sido renovado para ~agora, veio {}",
+            t.created_at_ns
+        );
+        // Timestamps da tentativa morta zerados: o reaper de progresso
+        // (T-820-03) não pode re-coletar a task recém-reatribuída.
+        assert_eq!(t.assigned_at_ns, 0);
+        assert_eq!(t.started_at_ns, 0);
+        // No caminho FAILED (max retries) o created_at_ns NÃO é renovado:
+        // a task está terminal, não vai ser re-claimada.
+        let mut dead = make_task(2);
+        dead.created_at_ns = 1;
+        dead.retry_count = 3;
+        assert!(!reassign(&mut dead, 3).unwrap());
+        assert_eq!(dead.created_at_ns, 1);
+        assert_eq!(dead.status, 4);
     }
 
     #[test]

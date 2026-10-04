@@ -75,6 +75,25 @@ fn t402_scheduler_ordem_prioridade_depois_idade() {
     assert!(s.pop().is_none());
 }
 
+/// T-820-10: com a fila cheia, `push` descarta a task de MENOR prioridade —
+/// não a de maior. Regressão do código original (`items.sort(); items.pop()`
+/// removia o máximo do `Ord` = maior prioridade/mais antiga, exatamente a
+/// próxima task a ser servida).
+#[test]
+fn t820_scheduler_cheio_descarta_menor_prioridade() {
+    let mut s = Scheduler::new();
+    for i in 0..1024 {
+        // MAX_SCHEDULER_SIZE = 1024 (constante privada do crate).
+        s.push(make_task(&format!("low-{i}"), 1, i as u64 + 1, 0));
+    }
+    s.push(make_task("high", 100, 5000, 0));
+
+    assert_eq!(s.len(), 1024, "fila continua no teto (1 descarte)");
+    // A task de maior prioridade sobrevive — antes era exatamente ela que
+    // era descartada pelo `pop()` do Vec ordenado.
+    assert_eq!(s.pop().unwrap().task_id, "high");
+}
+
 #[test]
 fn t404_selector_roteamento_por_especializacao() {
     let agents = vec![

@@ -91,7 +91,7 @@ async fn t403_agente_morto_reatribui_tasks() {
         .unwrap();
 
     tokio::time::sleep(Duration::from_millis(800)).await;
-    std::mem::forget(ds_agent); // SIGKILL: heartbeat para → staleness
+    drop(ds_agent); // morte real: o PARTICIPANTE é destruído (SIGKILL derruba o processo inteiro) → o writer do dono é removido e o RHC faz relinquish do ownership — sem isso o write de reatribuição (strength 10) é descartado para sempre
 
     // Reaper (stale_after=2s, check 500ms) deve reatribuir para PENDING, retry=1
     let mut stream = Box::pin(orch.dataspace().stream_tasks());
@@ -117,6 +117,102 @@ async fn t403_agente_morto_reatribui_tasks() {
         reassigned,
         "reaper não reatribuiu a task do agente morto para PENDING"
     );
+}
+
+/// T-820-03 (P0-1/P0-2 do code review de 2026-10-04): cadeia de failover
+/// COMPLETA — agente A claima, morre, o reaper reatribui (PENDING, retry=1,
+/// `created_at_ns` renovado) e o agente B CONSEGUE claimar e concluir.
+///
+/// Com o defeito original, o write do reaper saía pelo pool do papel
+/// ORQUESTRATOR (strength 200, `Ownership::Exclusive`): o orquestrador virava
+/// dono da instância e o ASSIGNED do agente B (strength 100) era descartado
+/// pelo RHC para sempre — a task congelava em PENDING. Aqui o claim de B
+/// vence a arbitragem (reaper publica com strength de cliente) e o DONE de B
+/// fecha o ciclo no mesh.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn t820_failover_reatribuicao_e_reclaim_por_outro_agente() {
+    const DOMAIN_C: u32 = 107; // domínio próprio — testes do arquivo rodam em paralelo
+    let orch = Arc::new(
+        OrchestratorDds::new(DOMAIN_C, Arc::new(qos_nfcm::Nfcm::qos_default()), None).unwrap(),
+    );
+    let _feeders = orch.spawn_cache_feeders();
+    let _mon = orch.spawn_registry_monitor(Duration::from_secs(1), Duration::from_millis(300));
+
+    let ds_a = DataSpace::new(DOMAIN_C, DataSpace::STRENGTH_AGENT).unwrap();
+    ds_a.write_agent_state(make_agent("agent-a-t820"))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    let original_created = now_ns();
+    ds_a.write_task(make_task("failover-task-1", "agent-a-t820", 1))
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    drop(ds_a); // morte real: participante destruído → relinquish do ownership (ver T-820-03)
+
+    // 1) Reaper reatribui: PENDING, retry=1, sem dono, created_at_ns renovado.
+    let mut stream = Box::pin(orch.dataspace().stream_tasks());
+    let mut reassigned: Option<dds_contract::generated::dds_llm_orchestrator::Task> = None;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    while reassigned.is_none() && tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout(Duration::from_secs(3), stream.next()).await {
+            Ok(Some(t))
+                if t.task_id == "failover-task-1"
+                    && t.status == 0
+                    && t.retry_count == 1
+                    && t.assigned_agent.is_empty() =>
+            {
+                assert!(
+                    t.created_at_ns > original_created,
+                    "reaper deveria renovar created_at_ns (T-820-03/P0-2): {} <= {}",
+                    t.created_at_ns,
+                    original_created
+                );
+                reassigned = Some((*t).clone());
+            }
+            _ => continue,
+        }
+    }
+    let pending = reassigned.expect("reaper não reatribuiu a task (PENDING, retry=1)");
+
+    // 2) Agente B claima — prova que o write do reaper (strength de cliente)
+    // NÃO tomou ownership da instância: com strength 200 o ASSIGNED de B
+    // seria descartado pelo RHC e o readback devolveria PENDING eterno.
+    let ds_b = DataSpace::new(DOMAIN_C, DataSpace::STRENGTH_AGENT).unwrap();
+    let mut claimed = pending.clone();
+    claimed.status = 1; // ASSIGNED
+    claimed.assigned_agent = "agent-b-t820".into();
+    claimed.assigned_at_ns = now_ns();
+    ds_b.write_task(claimed).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    let mesh = orch
+        .dataspace()
+        .read_task_mesh("failover-task-1")
+        .expect("read_task_mesh")
+        .expect("task deveria estar no mesh após o claim de B");
+    assert_eq!(
+        mesh.status, 1,
+        "claim do agente B deveria vencer a arbitragem (reaper sem ownership)"
+    );
+    assert_eq!(mesh.assigned_agent, "agent-b-t820");
+
+    // 3) B conclui: DONE fecha o ciclo de failover no mesh.
+    let mut done = mesh.clone();
+    done.status = 3; // DONE
+    done.completed_at_ns = now_ns();
+    done.finish_reason = "COMPLETION".into();
+    ds_b.write_task(done).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(800)).await;
+
+    let mesh = orch
+        .dataspace()
+        .read_task_mesh("failover-task-1")
+        .expect("read_task_mesh")
+        .expect("task deveria estar no mesh pós-DONE");
+    assert_eq!(mesh.status, 3, "DONE do agente B deveria persistir no mesh");
+    assert_eq!(mesh.finish_reason, "COMPLETION");
 }
 
 /// Regressão (Rodada 5, 2026-07-22): achado em produção real — um agente
@@ -148,7 +244,7 @@ async fn t403b_agente_morto_nao_republica_violacao_a_cada_ciclo() {
         .await
         .unwrap();
     tokio::time::sleep(Duration::from_millis(500)).await;
-    std::mem::forget(ds_agent); // heartbeat para
+    drop(ds_agent); // morte real: participante destruído → relinquish do ownership
 
     // stale_after=1s + ~4s de observação ⇒ ~13 ciclos de reap (300ms) depois
     // que o agente vira "morto" — sem o fix, esperaríamos ~10+ violações

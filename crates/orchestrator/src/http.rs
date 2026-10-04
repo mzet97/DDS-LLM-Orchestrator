@@ -173,6 +173,14 @@ async fn wait_for_task(
         if let Some(current) = state.backend.read_task(task_id) {
             match current.status {
                 3 => {
+                    // T-820-10: `finish_reason` é passado CRU do wire — com o
+                    // agente publicando o vocabulário canônico
+                    // (`orch_common::FinishReason`, ex. "COMPLETION"; fix
+                    // T-820-09), o valor aqui é parseável por
+                    // `FinishReason::parse`. `tokens_prompt` permanece 0 por
+                    // contrato (adiamento deliberado da fase — ver
+                    // specs/820-review-fixes/tasks.md: o campo não é
+                    // propagado no IDL/TaskOutput no sistema inteiro).
                     return Ok(Json(json!({
                         "task_id": task_id,
                         "status": "completed",
