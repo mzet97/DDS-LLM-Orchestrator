@@ -33,6 +33,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         );
     }
     ui.label("P4 local; nada é criado.");
+    if state.dir.as_os_str().is_empty() {
+        ui.label("Nenhum diretório padrão: defina STUDIO_MODELS_DIR (ou edite o campo acima).");
+    }
     if !state.error.is_empty() {
         ui.label(&state.error);
     }

@@ -15,6 +15,10 @@ pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
                 if ui.button("Ler snapshot").clicked() {
                     shared.refresh();
                 }
+                // Acompanhamento incremental desde o cursor (T-830-02).
+                if ui.button("Acompanhar eventos").clicked() {
+                    shared.follow_events();
+                }
             });
         });
         ui.horizontal(|ui| {

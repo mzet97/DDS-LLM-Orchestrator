@@ -6,6 +6,10 @@
 //!
 //! Duas fases para nunca travar a UI: listagem instantânea (só metadados) e
 //! hash em thread dedicada com progresso e cancelamento.
+//!
+//! Diretório padrão (T-830-06), nesta ordem: `STUDIO_MODELS_DIR` (se definido)
+//! → `$HOME/tese/models` (se existir) → vazio (a UI sugere configurar
+//! `STUDIO_MODELS_DIR`; o campo de caminho continua editável).
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -112,12 +116,37 @@ pub struct ModelsState {
     cancel: Option<Arc<AtomicBool>>,
 }
 
+/// Ordem de resolução do diretório de modelos (T-830-06): `env_dir` vence;
+/// sem env, `$HOME/tese/models` somente se existir; senão vazio (a UI pede
+/// `STUDIO_MODELS_DIR`). Função pura (env/home como parâmetros) para teste
+/// direto, sem ambiente global.
+fn resolve_models_dir(env_dir: Option<&str>, home: Option<&str>) -> String {
+    if let Some(dir) = env_dir.map(str::trim).filter(|dir| !dir.is_empty()) {
+        return String::from(dir);
+    }
+    match home.map(Path::new) {
+        Some(home) if home.join("tese/models").is_dir() => {
+            home.join("tese/models").display().to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+/// Diretório padrão do primeiro render (T-830-06); ver [`resolve_models_dir`].
+#[must_use]
+pub fn default_models_dir() -> String {
+    let env_dir = std::env::var("STUDIO_MODELS_DIR").ok();
+    let home = std::env::var("HOME").ok();
+    resolve_models_dir(env_dir.as_deref(), home.as_deref())
+}
+
 impl ModelsState {
-    /// Padrão honesto: diretório de modelos do checkout.
+    /// Padrão honesto: resolução por ambiente (T-830-06), sem caminho de
+    /// usuário cravado no código.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            dir: PathBuf::from("/home/mzet/projetos/tese/models"),
+            dir: PathBuf::from(default_models_dir()),
             list: Vec::new(),
             hashing: None,
             error: String::new(),
@@ -298,5 +327,36 @@ mod tests {
         let err = quick_inventory(&dir).expect_err("ausente deve falhar");
 
         assert!(matches!(err, ModelsError::Unreadable { .. }));
+    }
+
+    #[test]
+    fn env_dir_wins_over_home_fallback() {
+        // T-830-06: env definido (mesmo apontando fora de HOME) vence.
+        assert_eq!(
+            resolve_models_dir(Some("/opt/modelos"), Some("/home/alguem")),
+            "/opt/modelos"
+        );
+        // Espaços nas bordas não criam diretório fantasma.
+        assert_eq!(resolve_models_dir(Some("  "), Some("/home/alguem")), "");
+    }
+
+    #[test]
+    fn home_fallback_only_when_tese_models_exists() {
+        let home = std::env::temp_dir().join(format!("studio-models-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(home.join("tese/models")).expect("fixture home");
+        let expected = home.join("tese/models").display().to_string();
+
+        assert_eq!(
+            resolve_models_dir(None, home.to_str()),
+            expected,
+            "$HOME/tese/models existente é o fallback"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+
+        // Sem o diretório (ou sem HOME): vazio — a UI sugere STUDIO_MODELS_DIR.
+        assert_eq!(resolve_models_dir(None, home.to_str()), "");
+        assert_eq!(resolve_models_dir(None, Some("/inexistente")), "");
+        assert_eq!(resolve_models_dir(None, None), "");
     }
 }

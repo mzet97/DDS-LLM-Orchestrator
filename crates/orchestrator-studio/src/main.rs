@@ -15,13 +15,13 @@ use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::state::AppState;
 use orchestrator_studio::workload::DispatchState;
-use studio_core::catalog::Catalog;
 
 /// Seção exibida no painel central (navegação lateral exigida no §30).
+/// Sem "Catálogo" local (T-830-04): a leitura do catálogo vive em
+/// "Catálogo compartilhado" (autoridade no nó via `catalog_remote`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Overview,
-    Catalog,
     Node,
     Inference,
     Launch,
@@ -37,7 +37,6 @@ impl Section {
     fn label(self) -> &'static str {
         match self {
             Self::Overview => "Visão geral",
-            Self::Catalog => "Catálogo",
             Self::Node => "Nó studio-node",
             Self::Inference => "Inferência",
             Self::Launch => "Subir inferência",
@@ -53,7 +52,6 @@ impl Section {
     fn all() -> &'static [Self] {
         &[
             Self::Overview,
-            Self::Catalog,
             Self::Node,
             Self::Inference,
             Self::Launch,
@@ -70,7 +68,6 @@ impl Section {
 struct StudioApp {
     section: Section,
     state: AppState,
-    catalog: Catalog,
     node_url: String,
     inference: InferenceState,
     launch: LaunchState,
@@ -88,7 +85,6 @@ impl StudioApp {
         Self {
             section: Section::Overview,
             state: AppState::new(),
-            catalog: Catalog::new(),
             node_url: String::from("http://127.0.0.1:4317"),
             inference: InferenceState::new(),
             launch: LaunchState::new(),
@@ -171,7 +167,6 @@ impl eframe::App for StudioApp {
                         "Recompile com --features dds para observar Tasks/TaskOutput ao vivo.",
                     );
                 }
-                Section::Catalog => views::catalog::show(ui, &mut self.catalog, &mut self.state),
             });
         });
     }

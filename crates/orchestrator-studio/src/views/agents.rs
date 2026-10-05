@@ -5,14 +5,21 @@ use orchestrator_studio::agents::AgentsState;
 
 /// URL, botão de leitura, erro e tabela de agentes.
 pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState) {
+    // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19, T-830-01).
+    agents.poll();
     ui.collapsing("Agentes (orquestrador ao vivo)", |ui| {
         ui.horizontal(|ui| {
             ui.label("orquestrador:");
             ui.text_edit_singleline(&mut agents.url);
-            if ui.button("Atualizar").clicked() {
-                agents.refresh();
-            }
+            ui.add_enabled_ui(!agents.busy, |ui| {
+                if ui.button("Atualizar").clicked() {
+                    agents.refresh();
+                }
+            });
         });
+        if agents.busy {
+            ui.label("lendo agentes…");
+        }
         if !agents.error.is_empty() {
             ui.label(&agents.error);
         }

@@ -74,3 +74,63 @@ async fn unreachable_orchestrator_becomes_typed_error() {
         orchestrator_studio::agents::AgentsError::Unreachable { .. }
     ));
 }
+
+/// Drena o worker do painel como a view faria por frame (REQ/T-820-19,
+/// T-830-01), com teto de tempo para falhar rápido se o worker travar.
+async fn drain(state: &mut orchestrator_studio::agents::AgentsState) {
+    assert!(state.busy, "refresh deve sinalizar leitura em background");
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+    while state.busy {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "worker de agentes não respondeu a tempo"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        state.poll();
+    }
+}
+
+#[tokio::test]
+async fn state_refresh_populates_table_through_poll() {
+    let url = live_base_url().await;
+    let mut state = orchestrator_studio::agents::AgentsState::new();
+    state.url = url;
+
+    state.refresh();
+    drain(&mut state).await;
+
+    assert!(state.error.is_empty());
+    assert_eq!(state.list.len(), 1);
+    assert_eq!(state.list[0].agent_id, "agent-teste");
+    assert_eq!(state.list[0].slots_total, 8);
+    // Reentrada durante busy é ignorada: refresh repetido após drenar
+    // simplesmente relê; nada duplica a tabela.
+    state.refresh();
+    drain(&mut state).await;
+    assert_eq!(state.list.len(), 1);
+}
+
+#[tokio::test]
+async fn connection_refused_sets_error_state_without_panicking() {
+    let probe = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("loopback deve ligar");
+    let port = probe.local_addr().expect("porta legivel").port();
+    drop(probe);
+    let mut state = orchestrator_studio::agents::AgentsState::new();
+    state.url = format!("http://127.0.0.1:{port}");
+
+    state.refresh();
+    drain(&mut state).await;
+
+    assert!(!state.error.is_empty());
+    assert!(
+        state.error.contains("falha ao ler agentes"),
+        "mesmo texto do erro tipado: {}",
+        state.error
+    );
+    assert!(
+        state.list.is_empty(),
+        "erro preserva lista (sempre vazia aqui)"
+    );
+}

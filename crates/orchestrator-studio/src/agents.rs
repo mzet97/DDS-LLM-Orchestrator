@@ -2,6 +2,12 @@
 //!
 //! Números crus do backend, sem semáforo inventado: saúde, slots e
 //! contadores aparecem como o orquestrador anuncia.
+//!
+//! O HTTP bloqueante roda em THREAD de trabalho (padrão `models.rs`/
+//! `catalog_remote.rs`: thread + mpsc + `poll` por frame — REQ/T-820-19,
+//! agora também aqui: T-830-01). A thread de UI nunca bloqueia.
+
+use std::sync::mpsc;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -29,12 +35,19 @@ pub enum AgentsError {
     Unreachable { url: String, detail: String },
 }
 
+/// Mensagem do worker de agentes: lista crua ou motivo da falha
+/// (`AgentsError` já serializado em texto pelo `to_string`).
+type AgentsMsg = Result<Vec<AgentInfo>, String>;
+
 /// Estado do painel de agentes: URL, última lista e último erro.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default)]
 pub struct AgentsState {
     pub url: String,
     pub list: Vec<AgentInfo>,
     pub error: String,
+    /// `true` enquanto há HTTP em background (`poll` drena e libera).
+    pub busy: bool,
+    receiver: Option<mpsc::Receiver<AgentsMsg>>,
 }
 
 impl AgentsState {
@@ -43,28 +56,47 @@ impl AgentsState {
     pub fn new() -> Self {
         Self {
             url: String::from("http://127.0.0.1:8085"),
-            list: Vec::new(),
-            error: String::new(),
+            ..Self::default()
         }
     }
 
-    /// Recarrega a lista; erro preserva a lista anterior e registra o motivo.
+    /// Recarrega a lista em THREAD de trabalho (REQ/T-820-19; T-830-01);
+    /// erro preserva a lista anterior e registra o motivo. Clique durante
+    /// `busy` é ignorado.
     pub fn refresh(&mut self) {
-        match list_agents(&self.url.clone()) {
-            Ok(list) => {
-                self.list = list;
-                self.error.clear();
-            }
-            Err(err) => {
-                self.error = err.to_string();
+        if self.busy {
+            return;
+        }
+        let url = self.url.clone();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(list_agents(&url).map_err(|err| err.to_string()));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+    }
+
+    /// Drena o worker; chamar a cada frame enquanto `busy`.
+    pub fn poll(&mut self) {
+        let mut finished = false;
+        if let Some(rx) = &self.receiver {
+            while let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(list) => {
+                        self.list = list;
+                        self.error.clear();
+                    }
+                    Err(detail) => {
+                        self.error = detail;
+                    }
+                }
+                finished = true;
             }
         }
-    }
-}
-
-impl Default for AgentsState {
-    fn default() -> Self {
-        Self::new()
+        if finished {
+            self.receiver = None;
+            self.busy = false;
+        }
     }
 }
 
@@ -100,4 +132,17 @@ pub fn list_agents(base_url: &str) -> Result<Vec<AgentInfo>, AgentsError> {
             url: String::from(url),
             detail: err.to_string(),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_state_is_honest_local_orchestrator() {
+        let state = AgentsState::new();
+        assert_eq!(state.url, "http://127.0.0.1:8085");
+        assert!(state.list.is_empty());
+        assert!(!state.busy);
+    }
 }

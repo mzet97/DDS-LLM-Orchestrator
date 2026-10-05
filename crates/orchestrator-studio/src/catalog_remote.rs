@@ -9,7 +9,7 @@
 //! bloqueia (REQ/T-820-19).
 
 use std::sync::mpsc;
-use studio_core::catalog::{Event, Snapshot};
+use studio_core::catalog::{DefinitionId, Event, EventKind, Snapshot};
 use thiserror::Error;
 
 /// Erros do catálogo compartilhado (fronteira GUI ↔ autoridade).
@@ -87,7 +87,13 @@ fn mutate(
     let mut body = serde_json::json!({"id": id, "base": base});
     if action == "publish" {
         body["value"] = serde_json::json!(value.unwrap_or_default());
-        body["generation"] = serde_json::json!(0);
+        // REQ-801 (T-830-03): o nó agora recusa geração regressiva/repetida.
+        // A GUI não conhece a geração vigente (o snapshot não a carrega), mas
+        // derivá-la da base mantém a monotonia: criação semeia 0; atualizar
+        // a partir de r declara r+1 — estritamente maior que a geração da
+        // atualização anterior (r-1 → r). Conflito de geração real (outro
+        // editor semeou geração maior) vira erro honesto na UI.
+        body["generation"] = serde_json::json!(base.map_or(0, |base| base + 1));
     }
     let response = client(url)
         .map_err(|_| fail(String::from("cliente http")))?
@@ -144,6 +150,25 @@ pub fn events_since(base_url: &str, since: u64) -> Result<Vec<Event>, SharedCata
     }
 }
 
+/// Resultado do acompanhamento de eventos (T-830-02), resolvido no worker.
+enum FollowOutcome {
+    /// Sem eventos: o cursor local já cobre o log.
+    UpToDate,
+    /// Só exclusões: o evento descreve tudo (id + revisão); a remoção é
+    /// aplicada incrementalmente na tabela exibida.
+    Deleted(Vec<Event>),
+    /// Criação/atualização presente: o evento NÃO carrega o valor, então o
+    /// lote termina em snapshot fresco (convergência honesta da tabela).
+    Applied {
+        count: usize,
+        snapshot: Result<Snapshot, String>,
+    },
+    /// 410 `CursorExpired`: ressincronização total pelo snapshot.
+    Resync(Result<Snapshot, String>),
+    /// Falha de transporte: estado permanece; motivo vira aviso.
+    Failed(String),
+}
+
 /// Mensagem do worker do catálogo.
 enum CatalogMsg {
     /// Resposta de leitura do snapshot.
@@ -154,6 +179,8 @@ enum CatalogMsg {
         notice: String,
         then_snapshot: Option<Result<Snapshot, String>>,
     },
+    /// Resultado do acompanhamento de eventos (T-830-02).
+    Followed(FollowOutcome),
 }
 
 /// Estado do painel de catálogo compartilhado.
@@ -161,6 +188,9 @@ enum CatalogMsg {
 pub struct SharedCatalog {
     pub url: String,
     pub snapshot: Option<Snapshot>,
+    /// Cursor do log já incorporado à visão local (T-830-02): derivado do
+    /// último snapshot aplicado ou do último lote só de exclusões.
+    pub cursor: u64,
     pub form_id: String,
     pub form_value: String,
     pub form_base: String,
@@ -251,7 +281,45 @@ impl SharedCatalog {
         self.notice = String::from("removendo…");
     }
 
+    /// Acompanha eventos desde o cursor local (T-830-02) — em background
+    /// (REQ/T-820-19). Clique durante `busy` é ignorado. Lote só de
+    /// `Deleted` aplica a remoção incrementalmente; qualquer `Created`/
+    /// `Updated` (evento não carrega valor) ou 410 `CursorExpired` termina
+    /// em snapshot fresco. Nó inalcançável: estado permanece, motivo vira
+    /// aviso com o mesmo texto do erro tipado.
+    pub fn follow_events(&mut self) {
+        if self.busy {
+            return;
+        }
+        let url = self.url.clone();
+        let cursor = self.cursor;
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let outcome = match events_since(&url, cursor) {
+                Ok(events) if events.is_empty() => FollowOutcome::UpToDate,
+                Ok(events) if events.iter().all(|event| event.kind == EventKind::Deleted) => {
+                    FollowOutcome::Deleted(events)
+                }
+                Ok(events) => FollowOutcome::Applied {
+                    count: events.len(),
+                    snapshot: fetch_snapshot(&url).map_err(|err| err.to_string()),
+                },
+                Err(SharedCatalogError::CursorExpired) => {
+                    FollowOutcome::Resync(fetch_snapshot(&url).map_err(|err| err.to_string()))
+                }
+                Err(err) => FollowOutcome::Failed(err.to_string()),
+            };
+            let _ = tx.send(CatalogMsg::Followed(outcome));
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.notice = format!("acompanhando eventos desde o cursor {cursor}…");
+    }
+
     /// Drena o worker; chamar a cada frame enquanto `busy`.
+    /// Nota: dentro de `poll` o snapshot é aplicado por atribuição direta de
+    /// campos (`cursor` + `snapshot`) — um método `&mut self` conflitaria com
+    /// o empréstimo de `receiver` no mesmo escopo.
     pub fn poll(&mut self) {
         let mut finished = false;
         if let Some(rx) = &self.receiver {
@@ -259,6 +327,7 @@ impl SharedCatalog {
                 match msg {
                     CatalogMsg::Snapshot(result) => match result {
                         Ok(snapshot) => {
+                            self.cursor = snapshot.cursor.0;
                             self.snapshot = Some(snapshot);
                             self.notice.clear();
                         }
@@ -274,6 +343,7 @@ impl SharedCatalog {
                         if let Some(result) = then_snapshot {
                             match result {
                                 Ok(snapshot) => {
+                                    self.cursor = snapshot.cursor.0;
                                     self.snapshot = Some(snapshot);
                                     self.notice.clear();
                                 }
@@ -283,6 +353,57 @@ impl SharedCatalog {
                             }
                         }
                     }
+                    CatalogMsg::Followed(outcome) => match outcome {
+                        FollowOutcome::UpToDate => {
+                            self.notice = format!("sem eventos novos (cursor {})", self.cursor);
+                        }
+                        FollowOutcome::Deleted(events) => {
+                            let removed: Vec<DefinitionId> =
+                                events.iter().map(|event| event.id.clone()).collect();
+                            if let Some(snapshot) = &mut self.snapshot {
+                                // Id excluído ganha tombstone no nó: nunca
+                                // volta, então toda linha com o id sai.
+                                snapshot.items.retain(|item| !removed.contains(&item.id));
+                            }
+                            if let Some(last) = events.last() {
+                                self.cursor = last.seq + 1;
+                            }
+                            self.notice = format!(
+                                "{} exclusão(ões) aplicada(s) (cursor {})",
+                                events.len(),
+                                self.cursor
+                            );
+                        }
+                        FollowOutcome::Applied { count, snapshot } => match snapshot {
+                            Ok(fresh) => {
+                                let cursor = fresh.cursor.0;
+                                self.snapshot = Some(fresh);
+                                self.cursor = cursor;
+                                self.notice = format!(
+                                    "{count} novo(s) evento(s) aplicado(s) (cursor {cursor})"
+                                );
+                            }
+                            Err(err) => {
+                                self.notice = err;
+                            }
+                        },
+                        FollowOutcome::Resync(snapshot) => match snapshot {
+                            Ok(fresh) => {
+                                let cursor = fresh.cursor.0;
+                                self.snapshot = Some(fresh);
+                                self.cursor = cursor;
+                                self.notice = format!(
+                                    "cursor expirado; snapshot reaplicado (cursor {cursor})"
+                                );
+                            }
+                            Err(err) => {
+                                self.notice = err;
+                            }
+                        },
+                        FollowOutcome::Failed(err) => {
+                            self.notice = err;
+                        }
+                    },
                 }
                 finished = true;
             }
