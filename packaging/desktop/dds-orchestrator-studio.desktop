@@ -3,7 +3,8 @@ Version=1.0
 Type=Application
 Name=DDS Orchestrator Studio
 Comment=Administração do enxame DDS-LLM (nó, catálogo, inferência, agentes, topologia)
-Exec=/home/mzet/.local/bin/studio
+# Instalação: cp target/release/studio ~/.local/bin/ (PATH deve incluir ~/.local/bin).
+Exec=studio
 Icon=computer
 Terminal=false
 Categories=Development;System;
