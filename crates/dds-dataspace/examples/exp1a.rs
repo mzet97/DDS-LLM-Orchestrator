@@ -64,9 +64,9 @@ async fn main() -> anyhow::Result<()> {
         let delay = delay_ms;
         tokio::spawn(async move {
             use futures::StreamExt;
-            let mut stream = ds.subscribe_tasks();
+            let mut stream = Some(ds.subscribe_tasks());
             let _ = ready_tx.send(()); // inscrito: main pode escrever
-            while let Some(task) = stream.next().await {
+            while let Some(task) = stream.as_mut().unwrap().next().await {
                 if task.status != 0 || task.assigned_agent != "" {
                     continue;
                 }
@@ -78,14 +78,32 @@ async fn main() -> anyhow::Result<()> {
                     .unwrap()
                     .as_nanos() as u64;
                 eprintln!("[worker] claimando {}", task.task_id);
-                let _ = ds.write_task_without_ownership(claimed).await;
-                // Confirmação por releitura (mesma disciplina do agente real).
+                match ds.write_task_without_ownership(claimed.clone()).await {
+                    Ok(()) => eprintln!("[worker] ASSIGNED escrito"),
+                    Err(e) => eprintln!("[worker] ERRO no write ASSIGNED: {e}"),
+                }
+                // Confirmação por releitura do MESH RHC (não-consumidora e
+                // independente de polling de stream) — o padrão do agente
+                // real (`read_task_mesh` + `confirm_ownership`). A stream de
+                // Tasks tem filtro de conteúdo (só entrega o que interessa ao
+                // claim) e NÃO devolve o ASSIGNED — T-880/EXP1a.
                 let confirmed = tokio::time::timeout(
                     std::time::Duration::from_secs(5),
                     async {
                         loop {
-                            if let Ok(Some(t)) = ds.read_task(&task.task_id).await {
-                                if t.assigned_agent == "worker-exp1a" && t.status == 1 {
+                            #[cfg(feature = "dds")]
+                            let seen = ds.read_task_mesh(&task.task_id)
+                                .ok()
+                                .flatten();
+                            #[cfg(not(feature = "dds"))]
+                            let seen = ds
+                                .read_task(&task.task_id)
+                                .await
+                                .ok()
+                                .flatten()
+                                .map(|arc| (*arc).clone());
+                            if let Some(t) = seen {
+                                if t.status == 1 && t.assigned_agent == "worker-exp1a" {
                                     return true;
                                 }
                             }
@@ -98,7 +116,10 @@ async fn main() -> anyhow::Result<()> {
                 if !confirmed {
                     continue;
                 }
-                let mut running = (*task).clone();
+                // Padrão do agente real: RUNNING/DONE derivam do CLAIMED
+                // (assigned_agent preservado — o filtro monotônico rejeita
+                // assigned preenchido -> vazio).
+                let mut running = claimed.clone();
                 running.status = 2; // RUNNING
                 let _ = ds.write_task_without_ownership(running).await;
                 if delay > 0 {
@@ -120,7 +141,7 @@ async fn main() -> anyhow::Result<()> {
                     };
                     let _ = ds.write_task_output(output).await;
                 }
-                let mut done = (*task).clone();
+                let mut done = claimed.clone();
                 done.status = 3; // DONE
                 done.completed_at_ns = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -131,10 +152,12 @@ async fn main() -> anyhow::Result<()> {
         });
     };
 
+
     // Fluxo A→B→C: 3 estágios sequenciais, cada um uma task no substrato.
-    // Determinístico: só escreve depois do worker confirmar inscrição
-    // (no mock não há TransientLocal para repor amostra perdida).
+    // Determinístico: worker inscreve primeiro; main inscreve a sua stream
+    // e só então escreve (no mock não há TransientLocal para repor amostra).
     let _ = ready_rx.await;
+    eprintln!("[main] pronto; escrevendo");
     // No braço DDS, main e worker escrevem pelo MESMO writer (cliente): sob
     // Exclusive Ownership, writers diferentes em empate de strength podem
     // perder amostras no RHC — e a variável do EXP1a é o substrato, não a
@@ -153,16 +176,28 @@ async fn main() -> anyhow::Result<()> {
             task.status = 0;
             eprintln!("[main] wf{} stage{} escrevendo", wf, si);
             let _ = dataspace.write_task_without_ownership(task).await;
-            // Aguarda DONE do worker (sondagem do cliente, 5 ms).
-            loop {
-                if let Ok(Some(t)) = dataspace.read_task(&task_id).await {
+            // Aguarda DONE via releitura do MESH/cache (não via stream —
+            // mesmo take/read split do confirm do worker).
+            let done = loop {
+                #[cfg(feature = "dds")]
+                let seen = dataspace.read_task_mesh(&task_id)
+                    .ok()
+                    .flatten();
+                #[cfg(not(feature = "dds"))]
+                let seen = dataspace
+                    .read_task(&task_id)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|arc| (*arc).clone());
+                if let Some(t) = seen {
                     if t.status == 3 {
-                        stages[si] = stage_hash(stage, wf, t.retry_count);
-                        break;
+                        break t;
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-            }
+            };
+            stages[si] = stage_hash(stage, wf, done.retry_count);
         }
         records.push(WorkflowRecord {
             workflow: wf,
