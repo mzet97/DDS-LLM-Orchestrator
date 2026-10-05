@@ -1,11 +1,13 @@
-//! `studio-noded`: serve o protocolo administrativo em HTTP localhost.
+//! `studio-noded`: serve o protocolo administrativo em HTTP.
 //!
-//! Porta via `STUDIO_NODE_PORT` (padrão 4317). Serviços próprios via
-//! `STUDIO_NODE_SERVICES` (lista separada por vírgula; padrão `dds-agent`).
-//! Persistência via `STUDIO_NODE_DB`; sem a variável, o padrão agora é
-//! PERSISTENTE em `$HOME/.local/share/studio-node/operations.json`, criado
-//! on demand (T-830-05). `HOME` ausente cai para memória volátil com aviso
-//! explícito — nunca pânico.
+//! Porta via `STUDIO_NODE_PORT` (padrão 4317) e bind via `STUDIO_NODE_BIND`
+//! (padrão `127.0.0.1`; em LAN é **obrigatório** `STUDIO_NODE_TOKEN`, que
+//! protege todas as rotas exceto `GET /version` — T-840-01). Serviços
+//! próprios via `STUDIO_NODE_SERVICES` (lista separada por vírgula; padrão
+//! `dds-agent`). Persistência via `STUDIO_NODE_DB`; sem a variável, o padrão
+//! agora é PERSISTENTE em `$HOME/.local/share/studio-node/operations.json`,
+//! criado on demand (T-830-05). `HOME` ausente cai para memória volátil com
+//! aviso explícito — nunca pânico.
 
 use std::path::PathBuf;
 
@@ -53,9 +55,15 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|_| String::from("4317"))
         .parse()
         .context("STUDIO_NODE_PORT deve ser um numero de porta")?;
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
+    // T-840-01: bind configurável (LAN exige STUDIO_NODE_TOKEN; localhost é o
+    // padrão histórico e segue seguro sem token).
+    let bind: std::net::IpAddr = std::env::var("STUDIO_NODE_BIND")
+        .unwrap_or_else(|_| String::from("127.0.0.1"))
+        .parse()
+        .context("STUDIO_NODE_BIND deve ser um endereco IP")?;
+    let listener = tokio::net::TcpListener::bind((bind, port))
         .await
-        .with_context(|| format!("studio-noded: porta {port} indisponivel em 127.0.0.1"))?;
+        .with_context(|| format!("studio-noded: porta {port} indisponivel em {bind}"))?;
     let services = owned_services();
     let resolved = resolve_db(
         std::env::var("STUDIO_NODE_DB").ok(),
@@ -91,6 +99,32 @@ async fn main() -> Result<()> {
                  defina HOME ou STUDIO_NODE_DB para persistir"
             );
             NodeState::new(services)
+        }
+    };
+    // T-840-01: token opcional; bind fora de 127.0.0.1 sem token é recusado
+    // (expor operações administrativas na LAN sem auth nunca é aceitável).
+    let token = std::env::var("STUDIO_NODE_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty());
+    let state = match (&bind, token.as_deref()) {
+        (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), _)
+        | (std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), _) => match token {
+            Some(token) => state.with_token(&token),
+            None => state,
+        },
+        (_, Some(token)) => {
+            if token.len() < 16 {
+                anyhow::bail!(
+                    "studio-noded: STUDIO_NODE_TOKEN muito curto (>=16 caracteres) para bind em {bind}"
+                );
+            }
+            state.with_token(token)
+        }
+        (_, None) => {
+            anyhow::bail!(
+                "studio-noded: bind em {bind} exige STUDIO_NODE_TOKEN (>=16 caracteres); \
+                 use STUDIO_NODE_BIND=127.0.0.1 para modo localhost sem token"
+            );
         }
     };
     axum::serve(listener, router(state))

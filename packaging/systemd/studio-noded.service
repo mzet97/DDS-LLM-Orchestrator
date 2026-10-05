@@ -6,7 +6,7 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-ExecStart=%h/.local/bin/studio-noded
+ExecStart=%h/dds-llm-rust/studio-noded
 EnvironmentFile=-%h/.config/studio-noded/env
 Restart=on-failure
 RestartSec=5
