@@ -1,0 +1,42 @@
+k=2 agent-k2-1 (61): claims concluídos=0
+k=2 agent-k2-2 (64): claims concluídos=0
+k=4 agent-k2-1 (61): claims concluídos=0
+k=4 agent-k2-2 (64): claims concluídos=0
+k=4 agent-k4-1 (61): claims concluídos=0
+k=4 agent-k4-2 (64): claims concluídos=0
+k=8 agent-k2-1 (61): claims concluídos=0
+k=8 agent-k2-2 (64): claims concluídos=0
+k=8 agent-k4-1 (61): claims concluídos=0
+k=8 agent-k4-2 (64): claims concluídos=0
+k=8 agent-k4-3 (61): claims concluídos=0
+k=8 agent-k4-4 (64): claims concluídos=0
+k=8 agent-k8-1 (61): claims concluídos=0
+k=8 agent-k8-2 (64): claims concluídos=0
+k=2 agent-k2-1 (61): concluídos=0
+k=2 agent-k2-2 (64): concluídos=0
+k=4 agent-k4-1 (61): concluídos=0
+k=4 agent-k4-2 (64): concluídos=0
+k=4 agent-k4-3 (61): concluídos=0
+k=4 agent-k4-4 (64): concluídos=0
+k=8 agent-k8-1 (61): concluídos=0
+k=8 agent-k8-2 (64): concluídos=0
+k=8 agent-k8-3 (61): concluídos=0
+k=8 agent-k8-4 (64): concluídos=0
+k=8 agent-k8-5 (61): concluídos=0
+k=8 agent-k8-6 (64): concluídos=0
+k=8 agent-k8-7 (61): concluídos=0
+k=8 agent-k8-8 (64): concluídos=0
+k=2 agent-k2-1 (61): concluídos=176
+k=2 agent-k2-2 (64): concluídos=24
+k=4 agent-k4-1 (61): concluídos=101
+k=4 agent-k4-2 (64): concluídos=3
+k=4 agent-k4-3 (61): concluídos=94
+k=4 agent-k4-4 (64): concluídos=2
+k=8 agent-k8-1 (61): concluídos=50
+k=8 agent-k8-2 (64): concluídos=3
+k=8 agent-k8-3 (61): concluídos=55
+k=8 agent-k8-4 (64): concluídos=2
+k=8 agent-k8-5 (61): concluídos=43
+k=8 agent-k8-6 (64): concluídos=1
+k=8 agent-k8-7 (61): concluídos=44
+k=8 agent-k8-8 (64): concluídos=2

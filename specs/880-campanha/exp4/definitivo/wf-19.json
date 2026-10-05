@@ -1,0 +1,41 @@
+{
+  "entry": "exp4 def 19",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
+      "expects": [],
+      "finished_ms": 1791226297977,
+      "latency_ms": 509,
+      "stage": "A",
+      "started_ms": 1791226297468,
+      "task_id": "42b34e9c-c91a-41ef-b894-f3c0faf6d4e0"
+    },
+    {
+      "content": "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
+      "expects": [
+        "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004"
+      ],
+      "finished_ms": 1791226298483,
+      "latency_ms": 505,
+      "stage": "B",
+      "started_ms": 1791226297977,
+      "task_id": "ed0a62ad-49ea-4ea7-aec7-e6822a307381"
+    },
+    {
+      "content": "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
+      "expects": [
+        "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
+        "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004"
+      ],
+      "finished_ms": 1791226298990,
+      "latency_ms": 506,
+      "stage": "C",
+      "started_ms": 1791226298483,
+      "task_id": "f690cbec-cf4b-4e8a-9edd-256bb0d39a01"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}
