@@ -1,0 +1,41 @@
+{
+  "entry": "O checkpoint incremental salva apenas páginas alteradas desde o último marco.",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "[fixture stage=A h=c7750941b7d443a6 n=2]",
+      "expects": [],
+      "finished_ms": 1791216093505,
+      "latency_ms": 304,
+      "stage": "A",
+      "started_ms": 1791216093201,
+      "task_id": "41df6e79-de7d-495e-8430-5cbbd36428cf"
+    },
+    {
+      "content": "[fixture stage=B h=38781999d66ee269 n=3]",
+      "expects": [
+        "[fixture stage=A h=c7750941b7d443a6 n=2]"
+      ],
+      "finished_ms": 1791216093810,
+      "latency_ms": 305,
+      "stage": "B",
+      "started_ms": 1791216093505,
+      "task_id": "562f1b2a-6654-4027-b410-2ff2af745679"
+    },
+    {
+      "content": "[fixture stage=C h=e34d3ef3dc5399e4 n=4]",
+      "expects": [
+        "[fixture stage=A h=c7750941b7d443a6 n=2]",
+        "[fixture stage=B h=38781999d66ee269 n=3]"
+      ],
+      "finished_ms": 1791216094113,
+      "latency_ms": 302,
+      "stage": "C",
+      "started_ms": 1791216093810,
+      "task_id": "55aea9f8-c2d1-4745-9efc-c95be1c9e881"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}

@@ -1,0 +1,27 @@
+{
+  "experimento": "EXP0-confirmatorio",
+  "data": "2026-10-05T13:11:19",
+  "protocolo": "dissertacao Tab.11: 5 runs/sistema; unidade=caso; aceite=equivalencia semantica (oraculo byte-identico)",
+  "runtime_rust_commit": "4ac69c3",
+  "tag_congelamento": "congelamento-pre-campanha (853c968)",
+  "dds": {
+    "dominio": 186,
+    "topologia": "mesma-host (loopback); equivalencia funcional nao depende de topologia",
+    "caminho": "wf-run(seq_chain_v1, prompts congelados) -> agent(engine=dds) -> det-responder(delay=50,cap=4,queue=64)",
+    "runs": 5,
+    "workflows_por_run": 5,
+    "workflows_completed": "25/25",
+    "det_log_sha16": ""
+  },
+  "python": {
+    "sistemas": [
+      "maf",
+      "langgraph"
+    ],
+    "runs_por_sistema": 5,
+    "workflows_por_run": 5,
+    "backend": "deterministic-stub (HTTP)",
+    "venv": "locks/requirements-frozen.txt (233 pacotes, python 3.14.7)"
+  },
+  "oraculo": "oracle.md — 85 fontes (17/caso), 0 conflitos, BYTE-IDENTICO (inclui pilotos de 2026-09-10: reprodutibilidade entre epocas/hosts)"
+}

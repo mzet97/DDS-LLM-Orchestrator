@@ -1,0 +1,41 @@
+{
+  "entry": "A fila limitada a 1000 itens descarta excedente com erro tipado.",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "[fixture stage=A h=3404a3d77ca0f9b6 n=2]",
+      "expects": [],
+      "finished_ms": 1791216096427,
+      "latency_ms": 304,
+      "stage": "A",
+      "started_ms": 1791216096122,
+      "task_id": "cf218ead-9349-464b-92ae-2975c38f5712"
+    },
+    {
+      "content": "[fixture stage=B h=8fc4151834ef8641 n=3]",
+      "expects": [
+        "[fixture stage=A h=3404a3d77ca0f9b6 n=2]"
+      ],
+      "finished_ms": 1791216096730,
+      "latency_ms": 303,
+      "stage": "B",
+      "started_ms": 1791216096427,
+      "task_id": "177e3914-a896-439f-bc46-360ecf633331"
+    },
+    {
+      "content": "[fixture stage=C h=8a8bea6ebf38b701 n=4]",
+      "expects": [
+        "[fixture stage=A h=3404a3d77ca0f9b6 n=2]",
+        "[fixture stage=B h=8fc4151834ef8641 n=3]"
+      ],
+      "finished_ms": 1791216097034,
+      "latency_ms": 303,
+      "stage": "C",
+      "started_ms": 1791216096730,
+      "task_id": "5db89023-bf5f-4447-92f3-9560ed19d1bd"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}
