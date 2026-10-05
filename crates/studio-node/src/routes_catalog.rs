@@ -15,6 +15,12 @@ fn authority_error(err: AuthorityError) -> (StatusCode, Json<ApiErrorBody>) {
             format!("base obsoleta; vigente: {current:?}"),
             serde_json::json!({"current": current}),
         ),
+        AuthorityError::StaleGeneration { got, current } => api_error_details(
+            StatusCode::CONFLICT,
+            "stale_generation",
+            format!("geracao obsoleta: proposta {got}, vigente {current}"),
+            serde_json::json!({"got": got, "current": current}),
+        ),
         AuthorityError::Tombstoned { deleted_at } => api_error(
             StatusCode::GONE,
             "tombstoned",

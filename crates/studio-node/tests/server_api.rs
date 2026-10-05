@@ -277,12 +277,16 @@ mod tests {
     #[tokio::test]
     async fn shared_catalog_enforces_revision_tombstone_and_cursor() {
         let app = router(NodeState::new(Vec::new()));
+        // REQ-801 (T-830-03): geração monotônica derivada da base — criação
+        // semeia 0; atualizar a partir de r declara r+1 (mesma derivação do
+        // cliente da GUI em `orchestrator-studio/src/catalog_remote.rs`).
         let publish = |id: &str, base: Option<u64>, value: &str| {
             Request::post("/catalog/publish")
                 .header("content-type", "application/json")
                 .body(Body::from(
                     serde_json::json!({
-                        "id": id, "base": base, "value": value, "generation": 0,
+                        "id": id, "base": base, "value": value,
+                        "generation": base.map_or(0, |base| base + 1),
                     })
                     .to_string(),
                 ))
@@ -314,6 +318,30 @@ mod tests {
             .await
             .expect("rota existe");
         assert_eq!(updated.status(), StatusCode::OK);
+
+        // REQ-801 (T-830-03): geração regressiva/repetida sobre item vigente
+        // vira 409 com código estável `stale_generation` (base == vigente 1,
+        // geração proposta 1 <= vigente 1).
+        let stale_generation = app
+            .clone()
+            .oneshot(
+                Request::post("/catalog/publish")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({
+                            "id": "proj-a", "base": 1, "value": "antigo", "generation": 1,
+                        })
+                        .to_string(),
+                    ))
+                    .expect("request valido"),
+            )
+            .await
+            .expect("rota existe");
+        assert_eq!(stale_generation.status(), StatusCode::CONFLICT);
+        assert_eq!(
+            body_json(stale_generation).await["code"],
+            serde_json::json!("stale_generation")
+        );
 
         let snapshot = app
             .clone()

@@ -40,6 +40,9 @@ pub enum AuthorityError {
     /// Conflito de revisão ou id ausente onde exigido (G-47).
     #[error("conflito de revisao")]
     Conflict { current: Option<u64> },
+    /// Geração de intenção regressiva/repetida sobre item vigente (REQ-801).
+    #[error("geracao obsoleta: proposta {got}, vigente {current}")]
+    StaleGeneration { got: u64, current: u64 },
     /// Id com tombstone vigente (G-57).
     #[error("id removido")]
     Tombstoned { deleted_at: u64 },
@@ -58,6 +61,10 @@ impl AuthorityError {
         match err {
             CatalogError::Conflict { current } => Self::Conflict {
                 current: current.map(|revision| revision.0),
+            },
+            CatalogError::StaleGeneration { got, current } => Self::StaleGeneration {
+                got: got.0,
+                current: current.0,
             },
             CatalogError::Tombstoned { deleted_at } => Self::Tombstoned {
                 deleted_at: deleted_at.0,
