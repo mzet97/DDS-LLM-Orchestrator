@@ -648,9 +648,15 @@ impl OrchestratorDds {
                 done.push(task_id);
                 continue;
             }
+            // T-880/EXP4: renova `created_at_ns` a cada re-publicação — sem
+            // isto, quando a visibilidade só chega após o lease do writer
+            // morto (SIGSTOP/lease do DDSI), o `is_eligible` do agente
+            // rejeita a task por idade (>10 s) e o workflow pendura.
+            let mut republished = pending.clone();
+            republished.created_at_ns = now_ns();
             if let Err(err) = self
                 .dataspace
-                .write_task_without_ownership((*pending).clone())
+                .write_task_without_ownership(republished)
                 .await
             {
                 tracing::debug!(task_id = %task_id, error = %err, "republisher: falha de write");
