@@ -2,7 +2,8 @@
 //!
 //! O **contrato DDS único**: tipos de tópico (gerados do IDL) e perfis de QoS.
 //! Autoridade contratual: `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md`
-//! §§11–12 (18 tópicos, dicionário de campos/chaves, divergências §12.8).
+//! §§11–12 (18 tópicos canônicos da Tab. 13 + o 19º, `Studio.NodePresence`,
+//! aprovado em 2026-10-05 — T-890; dicionário de campos/chaves, divergências §12.8).
 //! Os arquivos `.idl` são a renderização mecânica desse contrato; a fonte de
 //! geração é `third_party/llama.cpp_dds/dds/{idl,v4/idl}/` (a cópia em
 //! `src/llama_cpp/dds/` é espelho sincronizado + gate anti-drift em testes).
@@ -20,8 +21,9 @@
 
 /// Nomes canônicos dos tópicos (iguais aos do Python/C++). REQ-007.
 pub mod topics {
-    /// Complete canonical topic inventory (REQ-708).
-    pub const ALL: [&str; 18] = [
+    /// Complete canonical topic inventory (REQ-708) — 19 entradas desde
+    /// T-890 (19º tópico `Studio.NodePresence`, aprovado 2026-10-05).
+    pub const ALL: [&str; 19] = [
         TASKS,
         AGENT_REGISTRY,
         TASK_OUTPUT,
@@ -39,6 +41,7 @@ pub mod topics {
         SECURITY_POLICY_UPDATE,
         QOS_METRIC,
         QOS_VIOLATION,
+        STUDIO_NODE_PRESENCE,
         QOS_DISCOVERY,
     ];
     pub const TASKS: &str = "Tasks";
@@ -58,6 +61,9 @@ pub mod topics {
     pub const SECURITY_POLICY_UPDATE: &str = "Security.PolicyUpdate";
     pub const QOS_METRIC: &str = "QoS.Metric";
     pub const QOS_VIOLATION: &str = "QoS.Violation";
+    /// 19º tópico canônico (T-890, decisão de 2026-10-05): presença de
+    /// instalações do Studio — descoberta DDS-nativa (mDNS eliminado).
+    pub const STUDIO_NODE_PRESENCE: &str = "Studio.NodePresence";
     pub const QOS_DISCOVERY: &str = "QoS.Discovery";
 }
 
@@ -361,6 +367,22 @@ pub mod generated {
             pub warmup: bool,
         }
 
+        /// Espelho mock (build sem `--features dds`) do `StudioNodePresence`
+        /// do `OrchestratorV4.idl` — 19º tópico canônico `Studio.NodePresence`
+        /// (T-890, decisão de 2026-10-05; mDNS eliminado). Presença das
+        /// instalações do Studio no domínio; `node_id` é @key (instância por
+        /// instalação, heartbeat por sobrescrita de `last_seen_ns`).
+        #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+        pub struct StudioNodePresence {
+            pub node_id: String,
+            pub url: String,
+            pub protocol_major: i32,
+            pub protocol_minor: i32,
+            pub token_required: bool,
+            pub services_hint: String,
+            pub last_seen_ns: u64,
+        }
+
         #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
         pub struct DiscoveryEvent {
             pub event_id: String,
@@ -400,6 +422,7 @@ pub mod typenames {
     pub const SECURITY_POLICY_UPDATE: &str = "dds_llm_orchestrator::SecurityPolicyUpdate";
     pub const QOS_METRIC: &str = "dds_llm_orchestrator::QoSMetric";
     pub const QOS_VIOLATION: &str = "dds_llm_orchestrator::QoSViolation";
+    pub const STUDIO_NODE_PRESENCE: &str = "dds_llm_orchestrator::StudioNodePresence";
     pub const DISCOVERY_EVENT: &str = "dds_llm_orchestrator::DiscoveryEvent";
 }
 
@@ -415,6 +438,9 @@ mod tests {
         assert_eq!(topics::LLM_REQUEST, "LLM.InferenceRequest");
         assert_eq!(topics::LLM_RESULT, "LLM.InferenceResult");
         assert_eq!(topics::LLM_ERROR, "LLM.InferenceError");
+        // T-890: 19º tópico canônico.
+        assert_eq!(topics::STUDIO_NODE_PRESENCE, "Studio.NodePresence");
+        assert_eq!(topics::ALL.len(), 19);
     }
 
     #[test]
@@ -432,6 +458,47 @@ mod tests {
         assert!(typenames::LLM_INFERENCE_REQUEST.starts_with("orchestrator::"));
         assert!(typenames::TASK.starts_with("dds_llm_orchestrator::"));
         assert!(!typenames::LLM_INFERENCE_REQUEST.contains(' '));
+        // T-890: typename do 19º tópico casa com o module::Struct do IDL
+        // (mesma convenção verificada com a feature `dds` em
+        // `wire_typenames_match_idl_modules`).
+        assert_eq!(
+            typenames::STUDIO_NODE_PRESENCE,
+            "dds_llm_orchestrator::StudioNodePresence"
+        );
+    }
+
+    // T-890: roundtrip serde do MOCK do `StudioNodePresence` (caminho sem
+    // `--features dds`; o wire XCDR do tipo gerado é exercido pelos testes
+    // `dds` e pelo `contract_real_dds`). O mock nunca sai em CDR — o que
+    // trava aqui é a forma (nomes de campos, chave lógica e tipos Rust).
+    // Gate `not(dds)` como o `tests/mock_parity.rs`: com unificação de
+    // features (`--workspace` — o `det-responder` liga `dds-contract/dds`
+    // incondicionalmente) `generated::*` resolve para o tipo idlc gerado,
+    // que não tem `Serialize`/`Deserialize` (só `DdsType`/XCDR).
+    #[cfg(not(feature = "dds"))]
+    #[test]
+    fn roundtrip_mock_studio_node_presence() {
+        use generated::dds_llm_orchestrator::StudioNodePresence;
+
+        let sample = StudioNodePresence {
+            node_id: "studio-lab-1".into(),
+            url: "http://127.0.0.1:4317".into(),
+            protocol_major: 1,
+            protocol_minor: 0,
+            token_required: true,
+            services_hint: "dds-agent,llm-local".into(),
+            last_seen_ns: 1_234_567_890,
+        };
+        let json = serde_json::to_string(&sample).expect("serialize StudioNodePresence");
+        let back: StudioNodePresence =
+            serde_json::from_str(&json).expect("deserialize StudioNodePresence");
+        assert_eq!(back.node_id, "studio-lab-1");
+        assert_eq!(back.url, "http://127.0.0.1:4317");
+        assert_eq!(back.protocol_major, 1);
+        assert_eq!(back.protocol_minor, 0);
+        assert!(back.token_required);
+        assert_eq!(back.services_hint, "dds-agent,llm-local");
+        assert_eq!(back.last_seen_ns, 1_234_567_890);
     }
 }
 
@@ -439,7 +506,9 @@ mod tests {
 mod dds_tests {
     use super::*;
     use cyclonedds::{CdrDeserializer, CdrEncoding, CdrSerializer, DdsType};
-    use generated::dds_llm_orchestrator::{AgentState, SystemMetric, Task, TaskOutput};
+    use generated::dds_llm_orchestrator::{
+        AgentState, StudioNodePresence, SystemMetric, Task, TaskOutput,
+    };
     use generated::orchestrator::{
         LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
     };
@@ -467,6 +536,11 @@ mod dds_tests {
         assert_eq!(AgentState::type_name(), typenames::AGENT_STATE);
         assert_eq!(TaskOutput::type_name(), typenames::TASK_OUTPUT);
         assert_eq!(SystemMetric::type_name(), typenames::SYSTEM_METRIC);
+        // T-890: 19º tópico — typename gerado casa com o canônico.
+        assert_eq!(
+            StudioNodePresence::type_name(),
+            typenames::STUDIO_NODE_PRESENCE
+        );
     }
 
     #[test]
@@ -503,6 +577,18 @@ mod dds_tests {
         assert!(metric_keys.iter().any(|n| n == "metric_name"));
         assert!(metric_keys.iter().any(|n| n == "component_id"));
         assert_eq!(SystemMetric::key_count(), 2);
+
+        // T-890: `Studio.NodePresence` — @key única `node_id` (instância por
+        // instalação do Studio; heartbeat sobrescreve a mesma instância).
+        let studio_keys: Vec<_> = StudioNodePresence::keys()
+            .into_iter()
+            .map(|k| k.name)
+            .collect();
+        assert!(
+            studio_keys.iter().any(|n| n == "node_id"),
+            "{studio_keys:?}"
+        );
+        assert_eq!(StudioNodePresence::key_count(), 1);
     }
 
     #[test]
@@ -706,5 +792,30 @@ mod dds_tests {
         let back: TaskOutput = CdrDeserializer::deserialize(&bytes, CdrEncoding::Xcdr1).unwrap();
         assert_eq!(back.seq_num, 0);
         assert_eq!(back.content, "tok");
+    }
+
+    // T-890: roundtrip XCDR do 19º tópico (REQ-005) — o heartbeat de
+    // presença do Studio vive neste wire format na malha real.
+    #[test]
+    fn roundtrip_studio_node_presence() {
+        let sample = StudioNodePresence {
+            node_id: "studio-lab-1".into(),
+            url: "http://127.0.0.1:4317".into(),
+            protocol_major: 1,
+            protocol_minor: 0,
+            token_required: true,
+            services_hint: "dds-agent,llm-local".into(),
+            last_seen_ns: 1_234_567_890,
+        };
+        let bytes = CdrSerializer::serialize(&sample, CdrEncoding::Xcdr1).unwrap();
+        let back: StudioNodePresence =
+            CdrDeserializer::deserialize(&bytes, CdrEncoding::Xcdr1).unwrap();
+        assert_eq!(back.node_id, "studio-lab-1");
+        assert_eq!(back.url, "http://127.0.0.1:4317");
+        assert_eq!(back.protocol_major, 1);
+        assert_eq!(back.protocol_minor, 0);
+        assert!(back.token_required);
+        assert_eq!(back.services_hint, "dds-agent,llm-local");
+        assert_eq!(back.last_seen_ns, 1_234_567_890);
     }
 }

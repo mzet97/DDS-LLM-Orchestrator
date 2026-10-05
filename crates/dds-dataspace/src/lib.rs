@@ -37,8 +37,8 @@ use cyclonedds::{DataReader, DataWriter, DomainParticipant, Publisher, Subscribe
 #[cfg(feature = "dds")]
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
-    Task, TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate,
+    StudioNodePresence, SystemMetric, Task, TaskOutput, ToolCallRequest,
 };
 #[cfg(feature = "dds")]
 use dds_contract::generated::orchestrator::{
@@ -119,6 +119,10 @@ pub struct DataSpace {
     qos_metric_topic: Arc<Topic<QoSMetric>>,
     qos_violation_topic: Arc<Topic<QoSViolation>>,
     discovery_event_topic: Arc<Topic<DiscoveryEvent>>,
+
+    // Tópico Studio.NodePresence (1 — T-890, 19º tópico)
+    studio_node_presence_writer: DataWriter<StudioNodePresence>,
+    studio_node_presence_topic: Arc<Topic<StudioNodePresence>>,
 
     // Infraestrutura compartilhada
     publisher: Arc<Publisher>,
@@ -364,6 +368,7 @@ impl DataSpace {
         let q_qos_metric = qos::profiles::qos_metric().map_err(err)?;
         let q_qos_viol = qos::profiles::qos_violation().map_err(err)?;
         let q_disc = qos::profiles::qos_discovery().map_err(err)?;
+        let q_studio = qos::profiles::studio_node_presence().map_err(err)?;
 
         // ── Topics ───────────────────────────────────────────────────────
         let tasks_topic =
@@ -454,6 +459,13 @@ impl DataSpace {
         let discovery_event_topic =
             Topic::<DiscoveryEvent>::with_qos(&participant, topics::QOS_DISCOVERY, Some(&q_disc))
                 .map_err(err)?;
+        // T-890: 19º tópico — presença das instalações do Studio.
+        let studio_node_presence_topic = Topic::<StudioNodePresence>::with_qos(
+            &participant,
+            topics::STUDIO_NODE_PRESENCE,
+            Some(&q_studio),
+        )
+        .map_err(err)?;
 
         // ── Writers ──────────────────────────────────────────────────────
         let tasks_writers = build_tasks_writer_pool(&publisher, &tasks_topic, ownership_strength)?;
@@ -519,6 +531,9 @@ impl DataSpace {
                 .map_err(err)?;
         let discovery_event_writer =
             DataWriter::with_qos(&publisher, &discovery_event_topic, Some(&q_disc)).map_err(err)?;
+        let studio_node_presence_writer =
+            DataWriter::with_qos(&publisher, &studio_node_presence_topic, Some(&q_studio))
+                .map_err(err)?;
 
         // ── Readers ──────────────────────────────────────────────────────
         // Só `tasks_reader` é mantido como campo (usado por
@@ -536,7 +551,7 @@ impl DataSpace {
         tracing::info!(
             domain_id,
             ownership_strength,
-            "DataSpace iniciado com 18 tópicos"
+            "DataSpace iniciado com 19 tópicos"
         );
         Ok(Self {
             tasks_writers,
@@ -583,6 +598,9 @@ impl DataSpace {
             qos_metric_topic: Arc::new(qos_metric_topic),
             qos_violation_topic: Arc::new(qos_violation_topic),
             discovery_event_topic: Arc::new(discovery_event_topic),
+
+            studio_node_presence_writer,
+            studio_node_presence_topic: Arc::new(studio_node_presence_topic),
 
             publisher: Arc::new(publisher),
             subscriber: Arc::new(subscriber),
@@ -690,6 +708,20 @@ impl DataSpace {
 
     pub fn take_tasks_sync(&self) -> Result<Vec<Task>, api::DataSpaceError> {
         self.tasks_reader.take().map_err(err)
+    }
+
+    /// Publica um heartbeat de `Studio.NodePresence` (T-890). Escrita
+    /// síncrona — o heartbeat de 5 s não justifica o custo de um pool async;
+    /// quem chama (studio-node) roda em task Tokio própria e o `write` do
+    /// runtime CycloneDDS é não-bloqueante na prática (mesmo caminho dos
+    /// demais writers do DataSpace).
+    pub fn write_studio_node_presence(
+        &self,
+        presence: &StudioNodePresence,
+    ) -> Result<(), api::DataSpaceError> {
+        self.studio_node_presence_writer
+            .write(presence)
+            .map_err(err)
     }
 }
 
@@ -1855,6 +1887,65 @@ impl DataSpace {
                                 %error,
                                 backoff_ms = backoff.as_millis(),
                                 "take_async(ServerStatus) failed; retrying with growing backoff"
+                            );
+                            tokio::time::sleep(backoff).await;
+                            backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);
+                            break;
+                        }
+                    }
+                }
+                if registration.is_shutdown() {
+                    return;
+                }
+                n.await;
+            }
+        }
+    }
+
+    /// Stream de `StudioNodePresence` acordada por amostra (T-890, 19º
+    /// tópico `Studio.NodePresence` — heartbeat das instalações do Studio).
+    /// Setup EAGER + QoS do tópico + filtro de admissão
+    /// (T-820-05/T-820-06).
+    pub fn stream_studio_node_presences(
+        &self,
+    ) -> impl Stream<Item = cache::ArcStudioNodePresence> + 'static {
+        let caches = self.caches();
+        let setup = setup_stream_reader(
+            "StudioNodePresence",
+            &self.subscriber,
+            &self.studio_node_presence_topic,
+            &self.shared_waitset,
+            qos::profiles::studio_node_presence(),
+        );
+        async_stream::stream! {
+            let Some((reader, registration)) = setup else {
+                return;
+            };
+            let mut backoff = STREAM_TAKE_BACKOFF_INITIAL;
+            loop {
+                if registration.is_shutdown() {
+                    return;
+                }
+                let n = registration.notified();
+                tokio::pin!(n);
+                n.as_mut().enable();
+                loop {
+                    match reader.take_async().await {
+                        Ok(presences) if !presences.is_empty() => {
+                            backoff = STREAM_TAKE_BACKOFF_INITIAL;
+                            for p in presences {
+                                let (presence, accepted) = caches.upsert_studio_node_presence(p);
+                                if accepted {
+                                    yield presence;
+                                }
+                            }
+                        }
+                        Ok(_) => break,
+                        Err(e) => {
+                            tracing::warn!(
+                                error = %e,
+                                backoff_ms = backoff.as_millis(),
+                                "take_async(StudioNodePresence) falhou; retry com backoff crescente"
                             );
                             tokio::time::sleep(backoff).await;
                             backoff = (backoff * 2).min(STREAM_TAKE_BACKOFF_MAX);

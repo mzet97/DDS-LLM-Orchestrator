@@ -93,8 +93,8 @@ cargo run -p cyclonedds-idlc -- --input /path/to/main/project/src/llama_cpp/dds/
 - Não resolver conflito com a Constituição no escuro — reporte ao líder.
 
 ## 9b. Contrato canônico (não reinventar)
-- 18 tópicos + 2 IDLs + claim com releitura: ver `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md` §§9–13 e raiz `AGENTS.md` §CANONICAL CONTRACT. Paridade inclui mesmos nomes de tópicos/perfis/métricas do Python/IDL.
-- **Aprovado (2026-10-05): 19º tópico `Studio.NodePresence`** (descoberta de instalações do Studio; padrão AgentRegistry; mDNS eliminado — DDS é requisito mínimo por máquina). Implementação na fase 890 (`PLANO_IMPLEMENTACAO_RESTANTE.md`) com lockstep REQ-003 completo ANTES de uso — o código vigente segue 18 tópicos até lá.
+- 19 tópicos (18 canônicos + `Studio.NodePresence`, T-890) + 2 IDLs + claim com releitura: ver `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md` §§9–13 e raiz `AGENTS.md` §CANONICAL CONTRACT. Paridade inclui mesmos nomes de tópicos/perfis/métricas do Python/IDL.
+- **Aprovado (2026-10-05): 19º tópico `Studio.NodePresence`** (descoberta de instalações do Studio; padrão AgentRegistry; mDNS eliminado — DDS é requisito mínimo por máquina). Implementação concluída na fase 890 (T-890-1..4: `dds-contract` mock+codegen+gates, `dds-dataspace` tópico/QoS/cache/stream, `studio-node` `presence.rs` heartbeat 5 s, lockstep Python 56 testes) — o código vigente segue os 19 tópicos.
 
 ## 9. Fluxo de uma sessão típica
 1. Ler Constitution + Context + Roadmap → achar a fase ativa.

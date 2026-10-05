@@ -21,7 +21,10 @@ async fn main() -> anyhow::Result<()> {
         let _ = ready_tx.send(());
         match tokio::time::timeout(std::time::Duration::from_secs(8), stream.next()).await {
             Ok(Some(task)) => {
-                eprintln!("[probe-worker] RECEBIDO {} status={}", task.task_id, task.status);
+                eprintln!(
+                    "[probe-worker] RECEBIDO {} status={}",
+                    task.task_id, task.status
+                );
                 // Réplica do worker do exp1a: write DENTRO do processamento
                 // do stream + confirmação por read_task em loop.
                 eprintln!("[probe-worker] claimando...");
@@ -39,7 +42,10 @@ async fn main() -> anyhow::Result<()> {
                         break;
                     }
                     if let Ok(Some(t)) = ds_worker.read_task(&task.task_id).await {
-                        eprintln!("[probe-worker] confirm lê status={} assigned={:?}", t.status, t.assigned_agent);
+                        eprintln!(
+                            "[probe-worker] confirm lê status={} assigned={:?}",
+                            t.status, t.assigned_agent
+                        );
                         if t.status == 1 && t.assigned_agent == "probe" {
                             eprintln!("[probe-worker] claim CONFIRMADO");
                             break;

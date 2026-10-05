@@ -1,5 +1,6 @@
 //! Observação DDS no Studio (P7/P9): leitura viva do domínio — agentes,
-//! tool calls e métricas de sistema — sem publicar nada (só `ownership 0`).
+//! tool calls, métricas de sistema e presença de nós Studio (`Studio.
+//! NodePresence`, T-890) — sem publicar nada (só `ownership 0`).
 //!
 //! Atrás da feature `dds`: sem ela, o Studio continua HTTP-only. Cada coleta
 //! abre um `DataSpace` efêmero, drena o stream pela janela e fecha — sem
@@ -14,7 +15,7 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use dds_contract::generated::dds_llm_orchestrator::{
-    AgentState, DiscoveryEvent, SystemMetric, ToolCallRequest,
+    AgentState, DiscoveryEvent, StudioNodePresence, SystemMetric, ToolCallRequest,
 };
 use dds_dataspace::DataSpace;
 use futures::StreamExt;
@@ -51,6 +52,15 @@ pub struct DiscoveryRow {
     pub event_type: String,
     pub topic_name: String,
     pub remote_entity: String,
+}
+
+/// Linha de nó Studio exibida na GUI (T-890 — 19º tópico
+/// `Studio.NodePresence`; instalação viva no domínio).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StudioNodeRow {
+    pub node_id: String,
+    pub url: String,
+    pub token_required: bool,
 }
 
 /// Erros da observação DDS.
@@ -144,14 +154,25 @@ pub fn discovery_row(event: &DiscoveryEvent) -> DiscoveryRow {
     }
 }
 
-/// Foto do domínio: agentes, tool calls, métricas e descoberta drenados na
-/// mesma janela.
+/// Mapeamento puro: `StudioNodePresence` do fio → linha da GUI (T-890).
+#[must_use]
+pub fn studio_node_row(presence: &StudioNodePresence) -> StudioNodeRow {
+    StudioNodeRow {
+        node_id: presence.node_id.clone(),
+        url: presence.url.clone(),
+        token_required: presence.token_required,
+    }
+}
+
+/// Foto do domínio: agentes, tool calls, métricas, descoberta e nós Studio
+/// drenados na mesma janela.
 #[derive(Debug, Clone, Default)]
 pub struct DdsSnapshot {
     pub agents: Vec<AgentRow>,
     pub tools: Vec<ToolRow>,
     pub metrics: Vec<MetricRow>,
     pub discoveries: Vec<DiscoveryRow>,
+    pub studio_nodes: Vec<StudioNodeRow>,
 }
 
 fn sorted<K: Ord, V>(rows: HashMap<K, V>) -> Vec<V> {
@@ -160,7 +181,7 @@ fn sorted<K: Ord, V>(rows: HashMap<K, V>) -> Vec<V> {
     rows.into_iter().map(|(_, value)| value).collect()
 }
 
-/// Observa o domínio uma janela: um `DataSpace`, três drenos concorrentes.
+/// Observa o domínio uma janela: um `DataSpace`, cinco drenos concorrentes.
 ///
 /// `DataSpace::new` exige contexto Tokio (WaitSet compartilhado) — por isso
 /// nasce dentro do `block_on`, nunca fora dele.
@@ -168,7 +189,7 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
     let rt = runtime(domain)?;
     rt.block_on(async {
         let space = dataspace(domain)?;
-        let (agents, tools, metrics, discoveries) = tokio::join!(
+        let (agents, tools, metrics, discoveries, studio_nodes) = tokio::join!(
             drain(space.stream_agent_states(), window, |state: &AgentState| {
                 state.agent_id.clone()
             }),
@@ -187,12 +208,19 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
                 window,
                 |event: &DiscoveryEvent| event.event_id.clone()
             ),
+            // T-890: presença das instalações do Studio (19º tópico).
+            drain(
+                space.stream_studio_node_presences(),
+                window,
+                |presence: &StudioNodePresence| presence.node_id.clone()
+            ),
         );
         Ok(DdsSnapshot {
             agents: sorted(agents).iter().map(agent_row).collect(),
             tools: sorted(tools).iter().map(tool_row).collect(),
             metrics: sorted(metrics).iter().map(metric_row).collect(),
             discoveries: sorted(discoveries).iter().map(discovery_row).collect(),
+            studio_nodes: sorted(studio_nodes).iter().map(studio_node_row).collect(),
         })
     })
 }
@@ -355,6 +383,26 @@ mod tests {
                 source: String::from("no-a"),
                 name: String::from("cpu (fração)"),
                 value: 0.5,
+            }
+        );
+    }
+
+    // T-890: a linha de nó Studio carrega identidade + modo de acesso.
+    #[test]
+    fn studio_node_row_maps_contract_fields() {
+        let presence = StudioNodePresence {
+            node_id: String::from("lab-1:4317"),
+            url: String::from("http://127.0.0.1:4317"),
+            token_required: true,
+            ..StudioNodePresence::default()
+        };
+
+        assert_eq!(
+            studio_node_row(&presence),
+            StudioNodeRow {
+                node_id: String::from("lab-1:4317"),
+                url: String::from("http://127.0.0.1:4317"),
+                token_required: true,
             }
         );
     }

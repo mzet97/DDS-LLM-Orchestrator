@@ -11,10 +11,16 @@
 //! operações (o journal do catálogo é derivado dele); sem a variável, o
 //! padrão é `$HOME/.local/share/studio-node/operations.json`, criado on
 //! demand — `HOME` ausente degrada para memória volátil com aviso no boot.
+//!
+//! Presença DDS (T-890): com a feature `dds` e `STUDIO_NODE_DDS_DOMAIN`
+//! definida, o nó publica heartbeat `Studio.NodePresence` (19º tópico
+//! canônico) — descoberta DDS-nativa das instalações do Studio; mDNS
+//! eliminado. Sem a env/feature, o nó segue HTTP-only.
 
 pub mod actuator;
 pub mod catalog_auth;
 pub mod operations;
+pub mod presence;
 pub mod probe;
 pub mod protocol;
 mod routes_catalog;

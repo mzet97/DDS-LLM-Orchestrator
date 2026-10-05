@@ -39,6 +39,14 @@ name = "security_echo"
 path = "src/bin/security_echo.rs"
 required-features = ["security"]
 
+# Sonda DDS-real (fase 880): só compila com a feature `dds` — sem o gate o
+# `cargo test -p dds-dataspace` (sem feature) tentava compilar
+# `DataSpace::new(..)?` contra o mock (que não devolve Result) e quebrava o
+# gate padrão do workspace.
+[[example]]
+name = "stream_probe"
+required-features = ["dds"]
+
 [[bench]]
 name = "write_loan"
 harness = false

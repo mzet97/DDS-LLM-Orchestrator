@@ -59,7 +59,9 @@ async fn main() -> anyhow::Result<()> {
 
     // Worker único: claim otimista + confirmação por leitura + execução.
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<()>();
-    let worker = {
+    // Spawn detached de propósito: o worker vive até o fim do `main` —
+    // abortar pelo JoinHandle encerraria o worker antes do fim do fluxo.
+    {
         let ds = std::sync::Arc::clone(&dataspace);
         let delay = delay_ms;
         tokio::spawn(async move {
@@ -67,7 +69,7 @@ async fn main() -> anyhow::Result<()> {
             let mut stream = Some(ds.subscribe_tasks());
             let _ = ready_tx.send(()); // inscrito: main pode escrever
             while let Some(task) = stream.as_mut().unwrap().next().await {
-                if task.status != 0 || task.assigned_agent != "" {
+                if task.status != 0 || !task.assigned_agent.is_empty() {
                     continue;
                 }
                 let mut claimed = (*task).clone();
@@ -87,30 +89,25 @@ async fn main() -> anyhow::Result<()> {
                 // real (`read_task_mesh` + `confirm_ownership`). A stream de
                 // Tasks tem filtro de conteúdo (só entrega o que interessa ao
                 // claim) e NÃO devolve o ASSIGNED — T-880/EXP1a.
-                let confirmed = tokio::time::timeout(
-                    std::time::Duration::from_secs(5),
-                    async {
-                        loop {
-                            #[cfg(feature = "dds")]
-                            let seen = ds.read_task_mesh(&task.task_id)
-                                .ok()
-                                .flatten();
-                            #[cfg(not(feature = "dds"))]
-                            let seen = ds
-                                .read_task(&task.task_id)
-                                .await
-                                .ok()
-                                .flatten()
-                                .map(|arc| (*arc).clone());
-                            if let Some(t) = seen {
-                                if t.status == 1 && t.assigned_agent == "worker-exp1a" {
-                                    return true;
-                                }
+                let confirmed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    loop {
+                        #[cfg(feature = "dds")]
+                        let seen = ds.read_task_mesh(&task.task_id).ok().flatten();
+                        #[cfg(not(feature = "dds"))]
+                        let seen = ds
+                            .read_task(&task.task_id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|arc| (*arc).clone());
+                        if let Some(t) = seen {
+                            if t.status == 1 && t.assigned_agent == "worker-exp1a" {
+                                return true;
                             }
-                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                         }
-                    },
-                )
+                        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                    }
+                })
                 .await
                 .unwrap_or(false);
                 if !confirmed {
@@ -150,8 +147,7 @@ async fn main() -> anyhow::Result<()> {
                 let _ = ds.write_task_without_ownership(done).await;
             }
         });
-    };
-
+    }
 
     // Fluxo A→B→C: 3 estágios sequenciais, cada um uma task no substrato.
     // Determinístico: worker inscreve primeiro; main inscreve a sua stream
@@ -180,9 +176,7 @@ async fn main() -> anyhow::Result<()> {
             // mesmo take/read split do confirm do worker).
             let done = loop {
                 #[cfg(feature = "dds")]
-                let seen = dataspace.read_task_mesh(&task_id)
-                    .ok()
-                    .flatten();
+                let seen = dataspace.read_task_mesh(&task_id).ok().flatten();
                 #[cfg(not(feature = "dds"))]
                 let seen = dataspace
                     .read_task(&task_id)
@@ -208,7 +202,8 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    let _ = worker; // JoinHandle<()> é Copy-irrelevante; abortar aqui encerraria o worker antes do fim.
+    // Worker detached (spawn acima): JoinHandle descartado de propósito —
+    // abortar aqui encerraria o worker antes do fim do fluxo.
     let times: Vec<u128> = records.iter().map(|r| r.t_total_ms).collect();
     let mut sorted = times.clone();
     sorted.sort_unstable();

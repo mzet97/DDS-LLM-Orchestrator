@@ -8,6 +8,11 @@
 //! agora é PERSISTENTE em `$HOME/.local/share/studio-node/operations.json`,
 //! criado on demand (T-830-05). `HOME` ausente cai para memória volátil com
 //! aviso explícito — nunca pânico.
+//!
+//! Presença DDS (T-890): com a feature `dds` e `STUDIO_NODE_DDS_DOMAIN`
+//! definida, o nó publica heartbeat `Studio.NodePresence` a cada 5 s
+//! (descoberta DDS-nativa das instalações do Studio; mDNS eliminado). Sem a
+//! env/feature, HTTP-only.
 
 use std::path::PathBuf;
 
@@ -65,6 +70,29 @@ async fn main() -> Result<()> {
         .await
         .with_context(|| format!("studio-noded: porta {port} indisponivel em {bind}"))?;
     let services = owned_services();
+    // T-890: token lido antes da construção do estado — a presença DDS
+    // anuncia se a instalação exige token (o mesmo valor valida as rotas
+    // abaixo).
+    let token = std::env::var("STUDIO_NODE_TOKEN")
+        .ok()
+        .filter(|token| !token.is_empty());
+    // T-890: presença DDS opcional (19º tópico `Studio.NodePresence`) —
+    // `STUDIO_NODE_DDS_DOMAIN` ativa; sem a env o nó segue HTTP-only. Falha
+    // de DDS NUNCA derruba o nó administrativo (spawn best-effort).
+    #[cfg(feature = "dds")]
+    studio_node::presence::spawn_from_env(bind, port, token.is_some(), &services);
+    #[cfg(not(feature = "dds"))]
+    if studio_node::presence::dds_domain_from_env(
+        std::env::var(studio_node::presence::ENV_DDS_DOMAIN).ok(),
+    )
+    .is_some()
+    {
+        eprintln!(
+            "studio-noded: aviso: {} definida, mas o binario foi compilado sem a \
+             feature `dds` — presenca DDS desativada",
+            studio_node::presence::ENV_DDS_DOMAIN
+        );
+    }
     let resolved = resolve_db(
         std::env::var("STUDIO_NODE_DB").ok(),
         std::env::var("HOME").ok(),
@@ -103,9 +131,7 @@ async fn main() -> Result<()> {
     };
     // T-840-01: token opcional; bind fora de 127.0.0.1 sem token é recusado
     // (expor operações administrativas na LAN sem auth nunca é aceitável).
-    let token = std::env::var("STUDIO_NODE_TOKEN")
-        .ok()
-        .filter(|token| !token.is_empty());
+    // (Leitura da env hoisted acima — a presença DDS anuncia token_required.)
     let state = match (&bind, token.as_deref()) {
         (std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), _)
         | (std::net::IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), _) => match token {

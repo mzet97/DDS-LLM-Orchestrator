@@ -288,7 +288,12 @@ impl DataSpaceApi for InMemoryDataSpace {
                 if cache::supersedes(arc.as_ref(), e.get().as_ref()) {
                     e.insert(Arc::clone(&arc));
                 } else {
-                    eprintln!("[mock] REGRESSAO {} new_status={} cur_status={}", arc.task_id, arc.status, e.get().status);
+                    eprintln!(
+                        "[mock] REGRESSAO {} new_status={} cur_status={}",
+                        arc.task_id,
+                        arc.status,
+                        e.get().status
+                    );
                     return Ok(()); // regressão rejeitada: sem broadcast
                 }
             }

@@ -3,7 +3,7 @@
 //! Os mocks `dds_contract::generated::*` (`#[cfg(not(feature = "dds"))]`)
 //! são cópias manuais dos tipos do IDL — o histórico já teve um bug M2 (mock
 //! sem `requester_id` quebrando os testes com a feature `dds` ligada). Este
-//! gate compara, para cada um dos 18 tipos canônicos, a lista de campos do
+//! gate compara, para cada um dos 19 tipos canônicos, a lista de campos do
 //! mock (via serde_json sobre `Default::default()`) contra a lista de campos
 //! extraída DIRETO dos `.idl` da crate (`idl/OrchestratorV4.idl` +
 //! `idl/OrchestratorDDS.idl`, a renderização mecânica do contrato — Entendimento
@@ -23,8 +23,8 @@
 
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
-    Task, TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate,
+    StudioNodePresence, SystemMetric, Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
     LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
@@ -99,9 +99,10 @@ fn assert_mock_fields_match_idl<T: serde::Serialize + Default>(
 }
 
 #[test]
-fn mocks_batem_com_os_18_tipos_do_idl() {
-    // Sanidade do inventário: 18 tópicos canônicos (Entendimento §11).
-    assert_eq!(topics::ALL.len(), 18);
+fn mocks_batem_com_os_19_tipos_do_idl() {
+    // Sanidade do inventário: 19 tópicos canônicos (Entendimento §11 + 19º
+    // `Studio.NodePresence` aprovado em 2026-10-05 — T-890).
+    assert_eq!(topics::ALL.len(), 19);
 
     let v4 = include_str!("../idl/OrchestratorV4.idl");
     let dds = include_str!("../idl/OrchestratorDDS.idl");
@@ -124,7 +125,7 @@ fn mocks_batem_com_os_18_tipos_do_idl() {
     );
     assert_mock_fields_match_idl::<ServerStatus>(dds, "ServerStatus", "orchestrator::ServerStatus");
 
-    // OrchestratorV4.idl → módulo `dds_llm_orchestrator` (14 tipos)
+    // OrchestratorV4.idl → módulo `dds_llm_orchestrator` (15 tipos)
     assert_mock_fields_match_idl::<Task>(v4, "Task", "dds_llm_orchestrator::Task");
     assert_mock_fields_match_idl::<AgentState>(
         v4,
@@ -181,6 +182,12 @@ fn mocks_batem_com_os_18_tipos_do_idl() {
         v4,
         "QoSViolation",
         "dds_llm_orchestrator::QoSViolation",
+    );
+    // T-890: 19º tópico (OrchestratorV4.idl → módulo `dds_llm_orchestrator`).
+    assert_mock_fields_match_idl::<StudioNodePresence>(
+        v4,
+        "StudioNodePresence",
+        "dds_llm_orchestrator::StudioNodePresence",
     );
     assert_mock_fields_match_idl::<DiscoveryEvent>(
         v4,

@@ -2,9 +2,21 @@
 //!
 //! Aceite: teste concorrente sem corrupção; disputa sem regressão.
 
-use dds_contract::generated::dds_llm_orchestrator::Task;
+use dds_contract::generated::dds_llm_orchestrator::{StudioNodePresence, Task};
 use dds_dataspace::cache::TopicCaches;
 use std::sync::Arc;
+
+fn make_presence(node_id: &str, last_seen_ns: u64) -> StudioNodePresence {
+    StudioNodePresence {
+        node_id: node_id.into(),
+        url: "http://127.0.0.1:4317".into(),
+        protocol_major: 1,
+        protocol_minor: 0,
+        token_required: false,
+        services_hint: "dds-agent".into(),
+        last_seen_ns,
+    }
+}
 
 fn make_task(id: &str, status: i32, ts: u64) -> Task {
     Task {
@@ -59,6 +71,71 @@ fn upsert_bloqueia_regressao_de_status() {
         t5.assigned_at_ns, 151,
         "last-write-wins: o incoming deve vencer"
     );
+}
+
+// T-890: presença de Studio é monotônica por `last_seen_ns` (heartbeat) —
+// heartbeat atrasado/reordenado NÃO rebaixa a última presença vista.
+#[test]
+fn studio_node_presence_vence_maior_last_seen_ns() {
+    let caches = TopicCaches::new();
+
+    let (p1, aceito1) = caches.upsert_studio_node_presence(make_presence("no-1", 100));
+    assert!(aceito1);
+    assert_eq!(p1.last_seen_ns, 100);
+
+    let (p2, aceito2) = caches.upsert_studio_node_presence(make_presence("no-1", 200));
+    assert!(aceito2);
+    assert_eq!(p2.last_seen_ns, 200);
+
+    let (p3, _aceito3) = caches.upsert_studio_node_presence(make_presence("no-1", 150));
+    assert_eq!(
+        p3.last_seen_ns, 200,
+        "heartbeat atrasado não deve rebaixar a presença vista"
+    );
+
+    // Instâncias (@key node_id) distintas coexistem.
+    let _ = caches.upsert_studio_node_presence(make_presence("no-2", 50));
+    let mut ids: Vec<String> = caches
+        .all_studio_node_presences()
+        .iter()
+        .map(|p| p.node_id.clone())
+        .collect();
+    ids.sort();
+    assert_eq!(ids, vec!["no-1".to_string(), "no-2".to_string()]);
+}
+
+// T-890: cap dedicado de presença (`MAX_STUDIO_PRESENCES = 256`, cache.rs) —
+// `node_id` forjado não pode inundar o cache; a instância EXISTENTE sempre
+// atualiza mesmo com o cap saturado (semântica "soft" dos demais caps).
+#[test]
+fn studio_node_presence_respeita_cap_de_256_instancias() {
+    let caches = TopicCaches::default();
+    for i in 0..256 {
+        let (p, aceito) =
+            caches.upsert_studio_node_presence(make_presence(&format!("no-{i}"), i as u64));
+        assert!(aceito, "instância {i} dentro do cap deve ser admitida");
+        assert_eq!(p.node_id, format!("no-{i}"));
+    }
+    // Cap saturado: instância NOVA é rejeitada...
+    let (fora, aceito) = caches.upsert_studio_node_presence(make_presence("no-fora-do-cap", 999));
+    assert!(!aceito, "instância além do cap 256 deve ser rejeitada");
+    assert_eq!(fora.node_id, "no-fora-do-cap");
+    let todas = caches.all_studio_node_presences();
+    assert_eq!(todas.len(), 256, "cache deve parar no cap");
+    assert!(
+        todas.iter().all(|p| p.node_id != "no-fora-do-cap"),
+        "rejeitada não pode ter entrado no cache"
+    );
+    // ...mas a EXISTENTE (heartbeat do nó já admitido) continua atualizando.
+    let (_, renova) = caches.upsert_studio_node_presence(make_presence("no-0", 10_000));
+    assert!(
+        renova,
+        "heartbeat de instância existente não pode ser barrado"
+    );
+    assert!(caches
+        .all_studio_node_presences()
+        .iter()
+        .any(|p| p.node_id == "no-0" && p.last_seen_ns == 10_000));
 }
 
 #[test]

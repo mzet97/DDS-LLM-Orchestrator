@@ -9,12 +9,14 @@ use futures::StreamExt;
 use std::time::Duration;
 
 #[test]
-fn canonical_topic_inventory_has_exactly_eighteen_unique_names() {
+fn canonical_topic_inventory_has_exactly_nineteen_unique_names() {
     let mut unique = topics::ALL.to_vec();
     unique.sort_unstable();
     unique.dedup();
-    assert_eq!(topics::ALL.len(), 18);
-    assert_eq!(unique.len(), 18);
+    // T-890: 19º tópico `Studio.NodePresence` aprovado em 2026-10-05.
+    assert_eq!(topics::ALL.len(), 19);
+    assert_eq!(unique.len(), 19);
+    assert!(topics::ALL.contains(&topics::STUDIO_NODE_PRESENCE));
 }
 
 #[tokio::test]

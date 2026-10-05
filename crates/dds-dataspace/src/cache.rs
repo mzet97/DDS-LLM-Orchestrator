@@ -21,8 +21,8 @@ use dashmap::mapref::entry::Entry;
 use dashmap::DashMap;
 use dds_contract::generated::dds_llm_orchestrator::{
     AgentState, ContextSnapshot, ContextUpdate, DiscoveryEvent, ExecutionTraceEvent, QoSMetric,
-    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate, SystemMetric,
-    Task, TaskOutput, ToolCallRequest,
+    QoSRoutingProfile, QoSViolation, SecurityPolicySnapshot, SecurityPolicyUpdate,
+    StudioNodePresence, SystemMetric, Task, TaskOutput, ToolCallRequest,
 };
 use dds_contract::generated::orchestrator::{
     LLMInferenceError, LLMInferenceRequest, LLMInferenceResult, ServerStatus,
@@ -45,6 +45,15 @@ pub(crate) const MAX_CHUNKS_PER_KEY: usize = 256;
 /// aceitável para um limite de proteção de memória.
 /// `pub(crate)`: fonte única para o cap espelhado no mock (T-820-07).
 pub(crate) const MAX_TASKS_IN_CACHE: usize = 2048;
+
+/// Máximo de instalações de Studio no cache de presença (T-890, 19º tópico
+/// `Studio.NodePresence`). Presença é um mapa pequeno por natureza (uma
+/// entrada por instalação, heartbeat sobrescreve a instância @key) — cap
+/// dedicado bem abaixo do cap de tasks protege contra `node_id` forjado
+/// inundando o cache sem sacrificar o inventário real de um laboratório.
+/// Mesma semântica "soft" de [`MAX_TASKS_IN_CACHE`]: checagem antes do
+/// `entry()`, corrida de primeiras inserções pode exceder por poucas.
+pub(crate) const MAX_STUDIO_PRESENCES: usize = 256;
 
 /// TTL de tasks terminais quando o cache está sob pressão (cap atingido):
 /// antes de rejeitar uma task nova, o upsert tenta aliviar terminais com
@@ -77,6 +86,8 @@ pub type ArcQoSViolation = Arc<QoSViolation>;
 pub type ArcDiscoveryEvent = Arc<DiscoveryEvent>;
 pub type ArcSystemMetric = Arc<SystemMetric>;
 pub type ArcServerStatus = Arc<ServerStatus>;
+/// T-890: presença de instalação do Studio (19º tópico).
+pub type ArcStudioNodePresence = Arc<StudioNodePresence>;
 
 /// Resultado explícito do upsert de task (RUST-CACHE-006).
 ///
@@ -118,7 +129,14 @@ impl Deref for TaskUpsert {
 }
 
 fn cache_accepts_key<V>(cache: &FastMap<String, V>, key: &str) -> bool {
-    cache.contains_key(key) || cache.len() < MAX_TASKS_IN_CACHE
+    cache_accepts_key_with_cap(cache, key, MAX_TASKS_IN_CACHE)
+}
+
+/// Variante com cap explícito (T-890): mapas pequenos por design (ex. presença
+/// de Studio) usam cap dedicado em vez do cap geral de tasks. Mesma semântica
+/// "soft" de [`cache_accepts_key`].
+fn cache_accepts_key_with_cap<V>(cache: &FastMap<String, V>, key: &str, cap: usize) -> bool {
+    cache.contains_key(key) || cache.len() < cap
 }
 
 /// Caches do DataSpace (um por processo).
@@ -157,6 +175,9 @@ pub struct TopicCaches {
     pub qos_metrics: FastMap<String, ArcQoSMetric>,
     pub qos_violations: FastMap<String, ArcQoSViolation>,
     pub discovery_events: FastMap<String, ArcDiscoveryEvent>,
+
+    // Tópico Studio.NodePresence (1 — T-890)
+    pub studio_node_presences: FastMap<String, ArcStudioNodePresence>,
 
     // Contadores de pressão do cache de tasks (RUST-CACHE-006).
     tasks_rejected: AtomicU64,
@@ -626,6 +647,48 @@ impl TopicCaches {
         self.server_status.get(server_id).map(|s| s.clone())
     }
 
+    /// Upsert de presença de instalação do Studio (T-890, 19º tópico
+    /// `Studio.NodePresence`): vence o maior `last_seen_ns` (heartbeat mais
+    /// recente — mesma semântica monotônica de [`Self::upsert_agent`]). O
+    /// DDS mantém uma instância por `node_id` (@key); o Liveliness
+    /// ManualByTopic do perfil cobre a morte silenciosa do publicador, e
+    /// consumidores que precisam de frescor comparam `last_seen_ns` com o
+    /// relógio local (aqui entra apenas o último valor visto).
+    /// Retorna `(Arc, accepted)` — ver nota de admissão em [`TopicCaches::upsert_agent`].
+    pub fn upsert_studio_node_presence(
+        &self,
+        presence: StudioNodePresence,
+    ) -> (ArcStudioNodePresence, bool) {
+        if !cache_accepts_key_with_cap(
+            &self.studio_node_presences,
+            &presence.node_id,
+            MAX_STUDIO_PRESENCES,
+        ) {
+            return (self.reject(Arc::new(presence)), false);
+        }
+        (
+            self.studio_node_presences
+                .entry(presence.node_id.clone())
+                .and_modify(|cur| {
+                    if presence.last_seen_ns >= cur.last_seen_ns {
+                        *cur = Arc::new(presence.clone());
+                    }
+                })
+                .or_insert_with(|| Arc::new(presence))
+                .clone(),
+            true,
+        )
+    }
+
+    /// Snapshot das presenças de Studio conhecidas (ordem indefinida —
+    /// consumidor ordena se precisar).
+    pub fn all_studio_node_presences(&self) -> Vec<ArcStudioNodePresence> {
+        self.studio_node_presences
+            .iter()
+            .map(|p| p.clone())
+            .collect()
+    }
+
     /// Remove dados associados a tasks em estado terminal (DONE/FAILED) completadas
     /// há mais de `max_age`. Evita crescimento indefinido dos caches Vec.
     pub fn evict_terminal_tasks(&self, max_age: std::time::Duration) {
@@ -731,6 +794,7 @@ impl TopicCaches {
         self.qos_metrics.clear();
         self.qos_violations.clear();
         self.discovery_events.clear();
+        self.studio_node_presences.clear();
     }
 }
 

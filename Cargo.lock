@@ -4342,6 +4342,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "cyclonedds",
+ "dds-contract",
+ "dds-dataspace",
+ "futures",
  "serde",
  "serde_json",
  "sha2",

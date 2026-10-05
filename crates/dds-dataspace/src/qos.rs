@@ -310,6 +310,29 @@ pub mod profiles {
             .transport_priority(9)
             .build()
     }
+
+    /// `Studio.NodePresence` (T-890, 19º tópico): perfil aprovado igual ao de
+    /// `AgentRegistry` — Reliable(10s), TransientLocal, KeepLast(1), Shared,
+    /// deadline 30 s, Liveliness **ManualByTopic** lease 10 s, latency 50 ms,
+    /// tprio 8.
+    ///
+    /// Presença de instalações do Studio (descoberta DDS-nativa — mDNS
+    /// eliminado): TransientLocal+KeepLast(1) entrega a ÚLTIMA presença a um
+    /// Studio/GUI que chega tarde; o heartbeat do publicador é de 5 s
+    /// (aplicação) contra lease 10 s ManualByTopic — uma instalação morta
+    /// sem `dispose` some da malha em ≤ 10 s (mesma mecânica de morte de
+    /// agente em `AgentRegistry`).
+    pub fn studio_node_presence() -> DdsResult<Qos> {
+        QosBuilder::new()
+            .reliability(Reliability::Reliable, TEN_S)
+            .durability(Durability::TransientLocal)
+            .history(History::KeepLast(1))
+            .deadline(THIRTY_S)
+            .liveliness(Liveliness::ManualByTopic, TEN_S)
+            .latency_budget(LATENCY_50MS)
+            .transport_priority(8)
+            .build()
+    }
 }
 
 #[cfg(all(test, feature = "dds"))]
@@ -419,6 +442,40 @@ mod tests {
         assert_eq!(
             qos.durability().expect("durability").expect("configured"),
             Durability::TransientLocal
+        );
+    }
+
+    // T-890: `Studio.NodePresence` usa o perfil aprovado, igual ao de
+    // `AgentRegistry` (Reliable+TransientLocal+KeepLast(1)+ManualByTopic) —
+    // late joiner recebe a última presença; morte silenciosa some em ≤ 10 s.
+    #[test]
+    fn studio_node_presence_is_agent_registry_like() {
+        use cyclonedds::Liveliness;
+
+        let studio = profiles::studio_node_presence().expect("Studio QoS should build");
+        let agents = profiles::agent_registry().expect("Agent QoS should build");
+
+        assert_eq!(
+            studio.reliability().expect("reliability").expect("cfg"),
+            (Reliability::Reliable, 10_000_000_000)
+        );
+        assert_eq!(
+            studio.durability().expect("durability").expect("cfg"),
+            Durability::TransientLocal
+        );
+        assert_eq!(
+            studio.history().expect("history").expect("cfg"),
+            History::KeepLast(1)
+        );
+        assert_eq!(
+            studio.liveliness().expect("liveliness").expect("cfg"),
+            (Liveliness::ManualByTopic, 10_000_000_000)
+        );
+        // Structural equality com AgentRegistry: mesmas políticas nos mesmos
+        // campos (o perfil aprovado é o do registro de agentes).
+        assert_eq!(
+            studio.deadline().expect("deadline").expect("cfg"),
+            agents.deadline().expect("deadline").expect("cfg")
         );
     }
 }

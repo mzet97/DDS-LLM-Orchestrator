@@ -1,8 +1,9 @@
 //! Gera tipos Rust a partir dos IDLs canônicos (REQ-001).
 //!
 //! Autoridade contratual: `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md`
-//! §§11–12 (18 tópicos, dicionário, divergências §12.8; o .md não traz a
-//! listagem IDL integral — os .idl abaixo são a renderização mecânica).
+//! §§11–12 (18 tópicos canônicos da Tab. 13 + o 19º, `Studio.NodePresence`,
+//! aprovado em 2026-10-05 — T-890; dicionário, divergências §12.8; o .md não
+//! traz a listagem IDL integral — os .idl abaixo são a renderização mecânica).
 //! Fonte de geração: `third_party/llama.cpp_dds/dds/{idl,v4/idl}/`.
 //! `src/llama_cpp/dds/` é espelho sincronizado (gate anti-drift em lib.rs).
 //!
@@ -84,6 +85,7 @@ fn main() {
                 "SecurityPolicyUpdate",
                 "QoSMetric",
                 "QoSViolation",
+                "StudioNodePresence",
                 "DiscoveryEvent",
             ][..],
             idl_v4.with_extension("c"),

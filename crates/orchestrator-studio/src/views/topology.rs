@@ -23,12 +23,25 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState) {
             ui.label(&dds.error);
         }
         ui.label(format!(
-            "{} agente(s) · {} tool call(s) · {} métrica(s) · {} descoberta(s)",
+            "{} agente(s) · {} tool call(s) · {} métrica(s) · {} descoberta(s) · {} nó(s) studio",
             dds.snapshot.agents.len(),
             dds.snapshot.tools.len(),
             dds.snapshot.metrics.len(),
-            dds.snapshot.discoveries.len()
+            dds.snapshot.discoveries.len(),
+            dds.snapshot.studio_nodes.len()
         ));
+        // T-890: instalações do Studio vivas no domínio (Studio.NodePresence).
+        if !dds.snapshot.studio_nodes.is_empty() {
+            ui.label(format!(
+                "Nós Studio: {}",
+                dds.snapshot
+                    .studio_nodes
+                    .iter()
+                    .map(|node| node.node_id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        }
         if !dds.snapshot.agents.is_empty() {
             egui::Grid::new("dds_agents_grid").show(ui, |ui| {
                 ui.label("agent_id");

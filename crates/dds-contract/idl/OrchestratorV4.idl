@@ -290,6 +290,17 @@ module dds_llm_orchestrator {
         boolean warmup;
     };
 
+    // @topic Studio.NodePresence
+    struct StudioNodePresence {
+        @key string node_id;
+        string url;
+        long   protocol_major;
+        long   protocol_minor;
+        boolean token_required;
+        string services_hint;
+        unsigned long long last_seen_ns;
+    };
+
     // @topic QoS.Discovery
     struct DiscoveryEvent {
         @key string event_id;

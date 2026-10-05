@@ -14,7 +14,7 @@ use std::time::Duration;
 const DOMAIN: u32 = 208;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn real_dds_discovers_eighteen_topics_and_observes_telemetry_samples() {
+async fn real_dds_discovers_nineteen_topics_and_observes_telemetry_samples() {
     let publisher = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
     let subscriber = DataSpace::new(DOMAIN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
     let observer = DomainParticipant::new(DOMAIN).unwrap();
@@ -81,6 +81,10 @@ async fn real_dds_discovers_eighteen_topics_and_observes_telemetry_samples() {
         ),
         (topics::QOS_METRIC, typenames::QOS_METRIC),
         (topics::QOS_VIOLATION, typenames::QOS_VIOLATION),
+        (
+            topics::STUDIO_NODE_PRESENCE,
+            typenames::STUDIO_NODE_PRESENCE,
+        ),
         (topics::QOS_DISCOVERY, typenames::DISCOVERY_EVENT),
     ]);
     let canonical_names = topics::ALL.into_iter().collect::<BTreeSet<_>>();
@@ -92,12 +96,12 @@ async fn real_dds_discovers_eighteen_topics_and_observes_telemetry_samples() {
                 discovered.insert(name, sample.type_name_value());
             }
         }
-        if discovered.len() == 18 {
+        if discovered.len() == 19 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    assert_eq!(discovered.len(), 18, "discovered={discovered:#?}");
+    assert_eq!(discovered.len(), 19, "discovered={discovered:#?}");
     assert_eq!(
         discovered,
         expected_types
