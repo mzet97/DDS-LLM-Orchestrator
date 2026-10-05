@@ -1194,8 +1194,10 @@ impl DataSpace {
     }
 
     /// Stream de `ContextUpdate` acordada por amostra. Setup EAGER
-    /// (T-820-05/P1-3: tópico Volatile — o setup preguiçoso perdia a janela
-    /// entre criar a stream e o primeiro poll) + filtro de admissão
+    /// (T-820-05/P1-3: o setup preguiçoso perdia a janela entre criar a
+    /// stream e o primeiro poll; o tópico é TransientLocal desde
+    /// T-850-03/D2 — paridade com o Python —, mas o stream de consumo
+    /// vivo não deve depender do histórico retido) + filtro de admissão
     /// (T-820-06).
     pub fn stream_context_updates(&self) -> impl Stream<Item = cache::ArcContextUpdate> + 'static {
         let caches = self.caches();

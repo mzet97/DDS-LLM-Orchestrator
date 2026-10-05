@@ -108,5 +108,12 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
 - **G-15 parcial:** atuação remota start/stop de `dds-agent` provada ao vivo
   na .61 (applied → active em 1 s; stop → inactive no host); criação de
   unidades NOVAS pela GUI segue pendente.
-- Painel "Máquinas" novo na GUI (10→11 seções). Seguem 🔒: G-41/42 (mDNS),
-  G-18..22 (ferramentas), G-25/26 (wf-run GUI), G-37/38/65, G-10/11.
+- Painel "Máquinas" novo na GUI (10→11 seções). Seguem 🔒: G-18..22 (ferramentas),
+  G-25/26 (wf-run GUI), G-37/38/65, G-10/11.
+- **G-41/42 (mDNS) → NÃO APLICÁVEL (2026-10-05, decisão do autor):** DDS é
+  requisito mínimo em toda máquina da implantação; a descoberta de instalações
+  do Studio será **nativa do DDS** pelo 19º tópico canônico
+  **`Studio.NodePresence`** (padrão AgentRegistry, fase 890 do
+  `PLANO_IMPLEMENTACAO_RESTANTE.md`). mDNS não será implementado — ver
+  `notes.md` §I.10 (retratação do SDD §34). Fallback manual/catálogo já
+  existe (T-840-03).
