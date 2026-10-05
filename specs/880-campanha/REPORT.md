@@ -13,6 +13,17 @@
 | EXP-C contenção k∈{2,4,8} | ✅ **MEDIDO** | 600 tasks, **0 duplicatas**; claims perdidos 3%→86,5% com k (sinal de contenção); skew de proximidade de rede (.61 96% em k=8) | `expc/RESULTS.md` |
 | EXP4 falha/recuperação | ◐ **piloto + 30 runs parciais** | Recuperação rápida 663-667 ms (3/5 piloto); **2 P1 novos**: (a) agente congelado = starvation (owner 100 sobrevive ao lease); (b) cauda >15 s — e a injeção em t+0,9 s errou a janela vulnerável nos 30 runs (matando após o estágio) | `exp4/PILOTO.md` + `definitivo/` |
 
+## Nota de método — papéis Rust × Python × C++ na campanha
+
+Pergunta do autor ("por que Python e para quê?"): os 4 papéis são distintos e nenhum contamin a tese:
+1. **Baselines MAF/LangGraph são Python de nascença** — o baseline é o framework exato; reimplementar em Rust invalidaria a comparação de orquestradores completos.
+2. **Harness + análise em Python ÚNICA para os 3 sistemas** (backend determinístico compartilhado, oráculo, sanity, TOST com scipy) — elimina viés de ferramenta de medição; o protocolo congelado especificou "análise estatística em Python" antes da coleta (`analise/tost_h1.py`, `bench.validation.*`).
+3. **Scripts inline de análise** (percentis, JSONL do EXP3/EXP-C) seguem a mesma stack dos artefatos.
+4. **`dds_types.py`** existe pelo runtime legado Python (referência funcional) — o 19º tópico entrou em lockstep lá também (guarda de consistência, 18 tipos).
+O sistema da tese **não é Python**: runtime/agentes/studio em Rust, ponte de inferência em C++. Defesa empírica: o EXP1a (ablação Rust-only, mesmo binário, Rust vs memória) mostra substrato DDS ≈ 0 (18×18 ms) — a camada Python de medição não contamina a conclusão. **Princípio: Rust = sistema; C++ = inferência; Python = baseline alheio + instrumento de comparação/análise.**
+
+## Respostas às questões (estado)
+
 ## Respostas às questões (estado)
 
 - **RQ2 (overhead, EXP1/1a/1b/2):** respondida com dados: T_extra decomposto — coordenação (3×250 ms confirmação) ≫ transporte (EXP1a: substrato ≈0; EXP1b: decisão ≈0); com LLM real a fração cai para ~14,5% (EXP2). **H1: fora da zona de equivalência** (DDS ≠ MAF em overhead, direção DDS>MAF) — TOST formal pendente no pacote final.
