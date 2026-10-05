@@ -38,6 +38,14 @@ pub struct HttpBackendError;
 #[async_trait]
 pub trait HttpBackend: Send + Sync {
     async fn publish_task(&self, task: Task) -> Result<(), HttpBackendError>;
+    /// EXP1b (dissertação §3.7.4): em modo despacho, o orquestrador escolhe o
+    /// agente (menor `slots_busy` entre os disponíveis) e fixa `target_agent`,
+    /// mantendo a task PENDING — o claim+readback do agente permanece
+    /// intacto; a variável isolada é QUEM DECIDE a atribuição.
+    /// Default: sem despacho (claim distribuído, caminho principal).
+    async fn dispatch_task(&self, _task: &mut Task) -> bool {
+        false
+    }
     fn read_task(&self, task_id: &str) -> Option<Task>;
     fn agents(&self) -> Vec<AgentState>;
 }
@@ -163,6 +171,9 @@ async fn submit_task(
     task.t_serialization_ns = t_serialization_ns;
     let task_id = task.task_id.clone();
 
+    // EXP1b: despacho central emulado (quando --dispatch-mode).
+    state.backend.dispatch_task(&mut task).await;
+
     // T-850-04/T2: mede o publish (write DDS; retorna após o dds_write).
     let transport_started = Instant::now();
     state.backend.publish_task(task).await.map_err(|error| {
@@ -192,6 +203,9 @@ async fn submit_task_sync(
     let t_serialization_ns = serialization_started.elapsed().as_nanos() as u64;
     task.t_serialization_ns = t_serialization_ns;
     let task_id = task.task_id.clone();
+
+    // EXP1b: despacho central emulado (quando --dispatch-mode).
+    state.backend.dispatch_task(&mut task).await;
 
     let transport_started = Instant::now();
     state.backend.publish_task(task).await.map_err(|error| {
@@ -408,6 +422,13 @@ impl HttpBackend for crate::dds::OrchestratorDds {
         crate::dds::OrchestratorDds::publish_task(self, task)
             .await
             .map_err(|_| HttpBackendError)
+    }
+
+    /// EXP1b: despacho central emulado — delega ao modo configurado no
+    /// orquestrador (`--dispatch-mode`): escolhe o agente menos ocupado e
+    /// fixa `target_agent` (task segue PENDING; claim do agente permanece).
+    async fn dispatch_task(&self, task: &mut Task) -> bool {
+        crate::dds::OrchestratorDds::dispatch_task(self, task)
     }
 
     fn read_task(&self, task_id: &str) -> Option<Task> {

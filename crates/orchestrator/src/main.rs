@@ -51,6 +51,9 @@ mod app {
         qos_profile: Option<String>,
         #[arg(long)]
         fuzzy_routing: bool,
+        /// EXP1b: despacho central emulado (orquestrador fixa target_agent).
+        #[arg(long)]
+        dispatch_mode: bool,
     }
 
     #[cfg(feature = "security")]
@@ -135,13 +138,15 @@ mod app {
                     args.qos_profile.as_deref(),
                     security,
                 )?
-                .with_fuzzy_routing(args.fuzzy_routing),
+                .with_fuzzy_routing(args.fuzzy_routing)
+                .with_dispatch_mode(args.dispatch_mode),
             )
         };
         #[cfg(not(feature = "security"))]
         let orchestrator = Arc::new(
             OrchestratorDds::new(args.dds_domain, decider, args.qos_profile.as_deref())?
-                .with_fuzzy_routing(args.fuzzy_routing),
+                .with_fuzzy_routing(args.fuzzy_routing)
+                .with_dispatch_mode(args.dispatch_mode),
         );
         let background = vec![
             orchestrator.spawn_cache_feeders(),

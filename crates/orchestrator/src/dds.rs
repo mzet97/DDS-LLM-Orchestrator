@@ -94,6 +94,10 @@ pub struct OrchestratorDds {
     /// real isso leva o lease do DDSI). O republisher re-publica a cada tick
     /// até o mesh refletir o PENDING (ver `republishe_reatribuicoes_pendentes`).
     pending_reassignment: dashmap::DashMap<String, (Task, std::time::Instant)>,
+    /// EXP1b (dissertação §3.7.4): `--dispatch-mode` — despacho central
+    /// emulado via `target_agent` (quem decide a atribuição passa a ser o
+    /// orquestrador; claim+readback do agente permanecem).
+    dispatch_mode: std::sync::atomic::AtomicBool,
 }
 
 impl OrchestratorDds {
@@ -149,6 +153,7 @@ impl OrchestratorDds {
             reported_deadlines: dashmap::DashSet::new(),
             qos_last_publish_ns: std::sync::atomic::AtomicU64::new(now_ns()),
             pending_reassignment: dashmap::DashMap::new(),
+            dispatch_mode: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -156,6 +161,34 @@ impl OrchestratorDds {
     pub fn with_fuzzy_routing(mut self, enabled: bool) -> Self {
         self.fuzzy_routing = enabled;
         self
+    }
+
+    /// EXP1b: ativa o despacho central emulado (`--dispatch-mode`).
+    pub fn with_dispatch_mode(self, enabled: bool) -> Self {
+        self.dispatch_mode
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+        self
+    }
+
+    /// EXP1b: despacho central emulado — escolhe o agente menos ocupado
+    /// entre os disponíveis e fixa `target_agent` (task segue PENDING; o
+    /// claim do agente permanece). Retorna `false` quando o modo está
+    /// desligado ou não há agente disponível.
+    pub fn dispatch_task(&self, task: &mut Task) -> bool {
+        if !self
+            .dispatch_mode
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return false;
+        }
+        let mut candidates = self.registry.available();
+        if candidates.is_empty() {
+            tracing::warn!(task_id = %task.task_id, "dispatch: sem agente disponível — task segue em claim aberto");
+            return false;
+        }
+        candidates.sort_by_key(|a| a.slots_busy);
+        task.target_agent = candidates.remove(0).agent_id;
+        true
     }
 
     pub fn dataspace(&self) -> &Arc<DataSpace> {

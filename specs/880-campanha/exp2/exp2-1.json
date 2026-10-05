@@ -1,0 +1,41 @@
+{
+  "entry": "EXP2 run 1: avalie rapidamente este servico.",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "",
+      "expects": [],
+      "finished_ms": 1791220813419,
+      "latency_ms": 1849,
+      "stage": "A",
+      "started_ms": 1791220811570,
+      "task_id": "8660224b-e366-4891-8870-dbd1c6a58579"
+    },
+    {
+      "content": "",
+      "expects": [
+        ""
+      ],
+      "finished_ms": 1791220815183,
+      "latency_ms": 1764,
+      "stage": "B",
+      "started_ms": 1791220813419,
+      "task_id": "9c15119b-f8d5-4d01-92a3-ec1691d0af39"
+    },
+    {
+      "content": "",
+      "expects": [
+        "",
+        ""
+      ],
+      "finished_ms": 1791220816928,
+      "latency_ms": 1744,
+      "stage": "C",
+      "started_ms": 1791220815183,
+      "task_id": "9c26c6d8-7fbd-434a-901a-93e4db1c5de3"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}
