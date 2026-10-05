@@ -1,3 +1,20 @@
+//! Fronteira HTTP do orquestrador.
+//!
+//! # T-850-04 — instrumentação T1–T6 (mapeamento da dissertação)
+//!
+//! | Medida | Campo | Dono | Onde é preenchida nesta fronteira |
+//! |---|---|---|---|
+//! | T1 serialização | `t_serialization_ns` | orquestrador (HTTP) | medido em volta da construção/validação do `Task` (inclui `messages_json`) e gravado **no Task publicado** (viaja pelo DDS); também ecoado na resposta HTTP |
+//! | T2 transporte (ida) | `t_transport_send_ns` | orquestrador (HTTP) | duração do `publish_task` (o write DDS; a chamada retorna após o `dds_write`). Só é conhecido **depois** do write — a cópia que trafega fica 0 (não fabricar zero), o valor medido vai na resposta HTTP |
+//! | T3 fila do agente | `t_agent_queue_ns` | agente | preenchido pelo agente no write terminal (`agent/src/dds.rs`); o `/sync` repassa o valor do task terminal |
+//! | T4 inferência | `t_inference_ns` | agente | idem T3 |
+//! | T5 transporte (volta) | `t_transport_return_ns` | cliente | no `/sync` o handler **é** o cliente: (instante da leitura terminal, relógio de parede) − `completed_at_ns` do task terminal = janela entre o agente publicar o estado terminal e o poll observá-lo (inclui a granularidade de 25 ms do poll); skew de relógio → `saturating_sub` → 0 |
+//! | T6 desserialização | `t_deserialization_ns` | cliente | no `/sync`: duração da leitura terminal (`read_task` no cache + clone) na iteração que fechou o estado |
+//!
+//! No handler assíncrono só T1/T2 existem (a resposta volta antes da
+//! execução); T3–T6 de tasks publicados assincronamente são coletados pelo
+//! driver de benchmarks lendo o `TaskOutput`/task terminal.
+
 use crate::http_config::{CallerIdentity, HttpConfig};
 use async_trait::async_trait;
 use axum::{
@@ -11,7 +28,7 @@ use axum::{
 use dds_contract::generated::dds_llm_orchestrator::{AgentState, Task};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::{sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration, time::Instant};
 use tokio::sync::Semaphore;
 
 #[derive(Debug, thiserror::Error)]
@@ -51,6 +68,12 @@ struct Message {
 struct ChatResponse {
     task_id: String,
     status: &'static str,
+    /// T-850-04/T1: serialização do Task (também vai no Task publicado).
+    t_serialization_ns: u64,
+    /// T-850-04/T2: duração do publish (DDS write). No Task que trafega o
+    /// campo é 0 por construção (o write termina depois que a cópia sai);
+    /// o valor medido é reportado aqui.
+    t_transport_send_ns: u64,
 }
 
 #[derive(Debug)]
@@ -132,16 +155,28 @@ async fn submit_task(
     Extension(identity): Extension<CallerIdentity>,
     request: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Json<ChatResponse>, HttpError> {
-    let task = validated_task(&state.config, identity, request?)?;
+    // T-850-04/T1: mede construção/validação do Task (ver mapa T1–T6 no
+    // topo do arquivo).
+    let serialization_started = Instant::now();
+    let mut task = validated_task(&state.config, identity, request?)?;
+    let t_serialization_ns = serialization_started.elapsed().as_nanos() as u64;
+    task.t_serialization_ns = t_serialization_ns;
     let task_id = task.task_id.clone();
+
+    // T-850-04/T2: mede o publish (write DDS; retorna após o dds_write).
+    let transport_started = Instant::now();
     state.backend.publish_task(task).await.map_err(|error| {
         tracing::error!(%error, "HTTP task publication failed");
         HttpError::Internal
     })?;
+    let t_transport_send_ns = transport_started.elapsed().as_nanos() as u64;
+
     tracing::info!(%task_id, "task published through HTTP boundary");
     Ok(Json(ChatResponse {
         task_id,
         status: "pending",
+        t_serialization_ns,
+        t_transport_send_ns,
     }))
 }
 
@@ -150,27 +185,64 @@ async fn submit_task_sync(
     Extension(identity): Extension<CallerIdentity>,
     request: Result<Json<ChatRequest>, JsonRejection>,
 ) -> Result<Json<serde_json::Value>, HttpError> {
-    let task = validated_task(&state.config, identity, request?)?;
+    // T-850-04/T1 e T2: mesmas medidas do handler assíncrono (ver mapa
+    // T1–T6 no topo do arquivo).
+    let serialization_started = Instant::now();
+    let mut task = validated_task(&state.config, identity, request?)?;
+    let t_serialization_ns = serialization_started.elapsed().as_nanos() as u64;
+    task.t_serialization_ns = t_serialization_ns;
     let task_id = task.task_id.clone();
+
+    let transport_started = Instant::now();
     state.backend.publish_task(task).await.map_err(|error| {
         tracing::error!(%error, "HTTP task publication failed");
         HttpError::Internal
     })?;
+    let timings = PublishTimings {
+        t_serialization_ns,
+        t_transport_send_ns: transport_started.elapsed().as_nanos() as u64,
+    };
 
     tokio::time::timeout(
         state.config.limits.dds_wait_timeout,
-        wait_for_task(&state, &task_id),
+        wait_for_task(&state, &task_id, timings),
     )
     .await
     .map_err(|_| HttpError::GatewayTimeout)?
 }
 
+/// T-850-04: medidas da fase de publicação (T1/T2) que o loop de espera
+/// precisa ecoar na resposta `/sync`.
+struct PublishTimings {
+    t_serialization_ns: u64,
+    t_transport_send_ns: u64,
+}
+
+/// Instante atual em ns desde a época UNIX (mesma base de
+/// `created_at_ns`/`completed_at_ns` das tasks).
+fn wall_now_ns() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64
+}
+
 async fn wait_for_task(
     state: &HttpState,
     task_id: &str,
+    timings: PublishTimings,
 ) -> Result<Json<serde_json::Value>, HttpError> {
     loop {
+        // T-850-04/T6: a duração da leitura que FECHAR o estado terminal é
+        // a desserialização vista pelo cliente do `/sync` (leitura do cache
+        // + clone do Task).
+        let read_started = Instant::now();
         if let Some(current) = state.backend.read_task(task_id) {
+            let t_deserialization_ns = read_started.elapsed().as_nanos() as u64;
+            // T-850-04/T5: janela entre o agente publicar o estado terminal
+            // (`completed_at_ns`, relógio de parede) e este poll observá-lo.
+            // Skew de relógio (leitura antes do carimbo) → 0 honesto.
+            let t_transport_return_ns = wall_now_ns().saturating_sub(current.completed_at_ns);
             match current.status {
                 3 => {
                     // T-820-10: `finish_reason` é passado CRU do wire — com o
@@ -189,6 +261,12 @@ async fn wait_for_task(
                         "assigned_agent": current.assigned_agent,
                         "tokens_prompt": 0,
                         "tokens_completion": 0,
+                        "t_serialization_ns": timings.t_serialization_ns,
+                        "t_transport_send_ns": timings.t_transport_send_ns,
+                        "t_agent_queue_ns": current.t_agent_queue_ns,
+                        "t_inference_ns": current.t_inference_ns,
+                        "t_transport_return_ns": t_transport_return_ns,
+                        "t_deserialization_ns": t_deserialization_ns,
                     })));
                 }
                 4 => {
@@ -196,6 +274,12 @@ async fn wait_for_task(
                         "task_id": task_id,
                         "status": "failed",
                         "error": current.finish_reason,
+                        "t_serialization_ns": timings.t_serialization_ns,
+                        "t_transport_send_ns": timings.t_transport_send_ns,
+                        "t_agent_queue_ns": current.t_agent_queue_ns,
+                        "t_inference_ns": current.t_inference_ns,
+                        "t_transport_return_ns": t_transport_return_ns,
+                        "t_deserialization_ns": t_deserialization_ns,
                     })));
                 }
                 _ => {}
@@ -238,11 +322,12 @@ fn validated_task(
     let messages_json =
         serde_json::to_string(&request.messages).map_err(|_| HttpError::Internal)?;
     let task_id = uuid::Uuid::new_v4().to_string();
-    let now_ns = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos() as u64;
+    let now_ns = wall_now_ns();
 
+    // T-850-04: os campos t_* saem 0 aqui; T1 (`t_serialization_ns`) é
+    // preenchido pelo handler ANTES do publish (viaja no Task), T2 é medido
+    // em volta do publish e reportado na resposta HTTP, T3/T4 são do agente
+    // e T5/T6 do cliente (ver mapa T1–T6 no topo do arquivo).
     Ok(Task {
         task_id,
         client_id: identity.0,

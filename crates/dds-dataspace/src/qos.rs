@@ -246,22 +246,37 @@ pub mod profiles {
             .build()
     }
 
-    /// `Context.Update`: Reliable(10s), Volatile, KeepLast(10), Exclusive.
+    /// `Context.Update`: Reliable(10s), TransientLocal, KeepLast(10), Exclusive.
+    ///
+    /// T-850-03/D2: Durability alinhada ao Python (`qos_context_update()` —
+    /// Reliable+**TransientLocal**+KeepLast(10)+Exclusive). O Rust usava
+    /// Volatile: Durability é Requested-Offered — um writer Volatile NÃO
+    /// satisfaz readers TransientLocal (quebra o context-store late-joiner,
+    /// que precisa receber a última atualização após (re)conectar), enquanto
+    /// um writer TransientLocal serve tanto readers TL quanto Volatile.
+    /// KeepLast(10) retém as 10 atualizações mais recentes por instância.
     pub fn context_update() -> DdsResult<Qos> {
         QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
-            .durability(Durability::Volatile)
+            .durability(Durability::TransientLocal)
             .history(History::KeepLast(10))
             .ownership(Ownership::Exclusive)
             .build()
     }
 
-    /// `ToolCall.Request`: Reliable(10s), TransientLocal, KeepLast(5), Exclusive.
+    /// `ToolCall.Request`: Reliable(10s), TransientLocal, KeepLast(10),
+    /// Exclusive.
+    ///
+    /// T-850-03/D3: histórico alinhado ao Python (`qos_tool_call()` —
+    /// KeepLast(10)); o Rust usava KeepLast(5), o que reduzia o backlog
+    /// disponível para consumidores tardios do gateway MCP (a instância é
+    /// atualizada in-place pelo contrato — sem tópico de resposta — e um
+    /// consumer lento depende do histórico retido).
     pub fn tool_call() -> DdsResult<Qos> {
         QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
             .durability(Durability::TransientLocal)
-            .history(History::KeepLast(5))
+            .history(History::KeepLast(10))
             .ownership(Ownership::Exclusive)
             .build()
     }
@@ -367,5 +382,43 @@ mod tests {
             .expect("configured");
         assert_eq!(limits.max_samples, result_depth);
         assert_eq!(limits.max_samples_per_instance, result_depth);
+    }
+
+    // T-850-03/D2: `Context.Update` no Rust usava Volatile enquanto o Python
+    // usava TransientLocal. Durability é RxO — writer Volatile não satisfaz
+    // readers TransientLocal (context-store late-joiner ficaria sem a última
+    // atualização); writer TL serve ambos. O Rust é que cedia, nunca o Python.
+    #[test]
+    fn context_update_is_transient_local_for_late_joiners() {
+        let qos = profiles::context_update().expect("Context.Update QoS should build");
+
+        assert_eq!(
+            qos.durability().expect("durability").expect("configured"),
+            Durability::TransientLocal
+        );
+        assert_eq!(
+            qos.history().expect("history").expect("configured"),
+            History::KeepLast(10)
+        );
+        assert_eq!(
+            qos.reliability().expect("reliability").expect("configured"),
+            (Reliability::Reliable, 10_000_000_000)
+        );
+    }
+
+    // T-850-03/D3: `ToolCall.Request` no Rust usava KeepLast(5) contra
+    // KeepLast(10) no Python — backlog maior para consumidores tardios.
+    #[test]
+    fn tool_call_matches_python_history_depth() {
+        let qos = profiles::tool_call().expect("ToolCall.Request QoS should build");
+
+        assert_eq!(
+            qos.history().expect("history").expect("configured"),
+            History::KeepLast(10)
+        );
+        assert_eq!(
+            qos.durability().expect("durability").expect("configured"),
+            Durability::TransientLocal
+        );
     }
 }

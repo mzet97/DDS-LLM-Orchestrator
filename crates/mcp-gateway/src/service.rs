@@ -233,8 +233,9 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
     /// A stream de tool calls é SEMPRE drenada (REQ/T-820-17): com a fila de
     /// jobs cheia, a request recebida não fica retida na mesh — recebe FAILED
     /// ("gateway sobrecarregado") na mesma instância. Desabilitar a branch de
-    /// leitura com a fila cheia parava de drenar o reader (KeepLast(5)) e
-    /// descartava requests silenciosamente, sem resposta nenhuma.
+    /// leitura com a fila cheia parava de drenar o reader (então
+    /// KeepLast(5); hoje KeepLast(10), T-850-03/D3) e descartava requests
+    /// silenciosamente, sem resposta nenhuma.
     ///
     /// Retorna quando a stream fecha (shutdown do DataSpace).
     pub async fn run(self: Arc<Self>) -> Result<(), ServiceError> {

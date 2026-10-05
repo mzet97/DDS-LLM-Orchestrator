@@ -79,12 +79,15 @@ impl TaskStatus {
     }
 }
 
-/// Prioridade de tarefa (`Task.priority`). **Os valores NÃO são a numeração
-/// sequencial 0/1/2 que `OrchestratorV4.idl`'s `enum TaskPriority` implicaria
-/// por ordem de declaração** — são 1/5/10, os valores realmente usados em
-/// todo o código (ver `benchmarks::driver::{PRIORITY_LOW,PRIORITY_NORMAL,
-/// PRIORITY_HIGH}` e o campo `priority` de `Task` em toda a base). O IDL
-/// declara o enum só como documentação; o campo do wire é `long` cru.
+/// Prioridade de tarefa (`Task.priority`). **Convenção de wire (D7,
+/// T-850-01): o campo `Task.priority` é um `long` cru que carrega a escala
+/// da aplicação 1/5/10 — NÃO os ordinais 0/1/2 do `enum TaskPriority` do
+/// `OrchestratorV4.idl`.** O IDL agora é a fonte da verdade dessa convenção
+/// via as consts documentais `TASK_PRIORITY_LOW/NORMAL/HIGH` (1/5/10)
+/// declaradas acima do enum; este espelho Rust e o `models.py::TaskPriority`
+/// Python replicam os mesmos valores. O enum IDL é apenas nominal; os
+/// consumidores comparam o `i32` cru (ver `benchmarks::driver::
+/// {PRIORITY_LOW,PRIORITY_NORMAL,PRIORITY_HIGH}`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
 pub enum TaskPriority {
