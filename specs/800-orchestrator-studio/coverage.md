@@ -91,3 +91,22 @@ A tabela acima cobria T-800-01…20; as tasks seguintes (todas `[x]`) e a fase
   journals antigos gravados quando `generation` era ignorada falham no replay
   com `Corrupt` (fail-fast, política "nunca máscara"). Mitigação: apagar o
   journal local (`operations.json` + `*.catalog.jsonl`) e republicar.
+
+## Complemento 2026-10-05 — fase 840 (multi-host, com os 4 hosts do lab)
+
+Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
+- **G-44 ◐→✅ (local/LAN):** `STUDIO_NODE_TOKEN` Bearer com comparação
+  constante; bind fora de 127.0.0.1 sem token ≥16 recusa o boot; `/version`
+  aberto para sonda. Eleição/replica seguem n/a.
+- **G-70 🔒→◐:** catálogo compartilhado cross-host ao vivo (.62 publica na
+  autoridade .64; máquina local lê snapshot+eventos). 2ª GUI **gráfica**
+  simultânea segue pendente.
+- **G-02 🔒→◐:** registro de máquinas no catálogo (`kind:"machine"`, token
+  fora por RNF-04) + deploy reproducível (`scripts/deploy-studio-node.sh`,
+  musl estático — glibc 2.43→2.39 resolvido). Fingerprint/host-key gerenciado
+  segue básico.
+- **G-15 parcial:** atuação remota start/stop de `dds-agent` provada ao vivo
+  na .61 (applied → active em 1 s; stop → inactive no host); criação de
+  unidades NOVAS pela GUI segue pendente.
+- Painel "Máquinas" novo na GUI (10→11 seções). Seguem 🔒: G-41/42 (mDNS),
+  G-18..22 (ferramentas), G-25/26 (wf-run GUI), G-37/38/65, G-10/11.
