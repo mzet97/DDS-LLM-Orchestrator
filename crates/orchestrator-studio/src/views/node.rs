@@ -1,6 +1,7 @@
 //! Painel da origem remota: conexão ao nó + tabela de operações.
 
 use eframe::egui;
+use orchestrator_studio::origin::optional_token;
 use orchestrator_studio::state::AppState;
 use studio_node::protocol::AdminOp;
 
@@ -14,16 +15,25 @@ fn op_summary(op: &AdminOp) -> String {
     }
 }
 
-/// Campo de URL, botão de conexão e resumo/tabela do nó.
-pub fn show(ui: &mut egui::Ui, state: &mut AppState, node_url: &mut String) {
+/// Campo de URL, token (T-840-03a; fica só na memória da GUI), botão de
+/// conexão e resumo/tabela do nó.
+pub fn show(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    node_url: &mut String,
+    node_token: &mut String,
+) {
     // Drena o worker de leitura do nó (thread + mpsc — REQ/T-820-19).
     state.poll();
     ui.horizontal(|ui| {
         ui.label("nó:");
         ui.text_edit_singleline(node_url);
+        ui.label("token:");
+        ui.add(egui::TextEdit::singleline(node_token).password(true));
         ui.add_enabled_ui(!state.busy(), |ui| {
             if ui.button("Conectar ao nó").clicked() {
-                state.refresh_from_node(&node_url.clone());
+                let url = node_url.clone();
+                state.refresh_from_node_with_token(&url, optional_token(node_token));
             }
         });
     });

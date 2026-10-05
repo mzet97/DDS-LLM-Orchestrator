@@ -11,6 +11,7 @@ use orchestrator_studio::agents::AgentsState;
 use orchestrator_studio::catalog_remote::SharedCatalog;
 use orchestrator_studio::inference::InferenceState;
 use orchestrator_studio::launch::LaunchState;
+use orchestrator_studio::machines::MachinesState;
 use orchestrator_studio::models::ModelsState;
 use orchestrator_studio::services::ServicesPanel;
 use orchestrator_studio::state::AppState;
@@ -19,6 +20,8 @@ use orchestrator_studio::workload::DispatchState;
 /// Seção exibida no painel central (navegação lateral exigida no §30).
 /// Sem "Catálogo" local (T-830-04): a leitura do catálogo vive em
 /// "Catálogo compartilhado" (autoridade no nó via `catalog_remote`).
+/// "Máquinas" (REQ/T-840-03) registra nós remotos no MESMO catálogo
+/// compartilhado e sonda cada um via `GET /version`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Overview,
@@ -30,6 +33,7 @@ enum Section {
     Models,
     Services,
     Shared,
+    Machines,
     Topology,
 }
 
@@ -45,6 +49,7 @@ impl Section {
             Self::Models => "Modelos GGUF",
             Self::Services => "Serviços",
             Self::Shared => "Catálogo compartilhado",
+            Self::Machines => "Máquinas",
             Self::Topology => "Topologia DDS",
         }
     }
@@ -60,6 +65,7 @@ impl Section {
             Self::Models,
             Self::Services,
             Self::Shared,
+            Self::Machines,
             Self::Topology,
         ]
     }
@@ -69,12 +75,15 @@ struct StudioApp {
     section: Section,
     state: AppState,
     node_url: String,
+    /// Token do nó do painel "Nó studio-node" (T-840-03a) — só memória.
+    node_token: String,
     inference: InferenceState,
     launch: LaunchState,
     agents: AgentsState,
     models: ModelsState,
     services: ServicesPanel,
     shared: SharedCatalog,
+    machines: MachinesState,
     dispatch: DispatchState,
     #[cfg(feature = "dds")]
     dds: orchestrator_studio::dds_observe::DdsState,
@@ -86,12 +95,14 @@ impl StudioApp {
             section: Section::Overview,
             state: AppState::new(),
             node_url: String::from("http://127.0.0.1:4317"),
+            node_token: String::new(),
             inference: InferenceState::new(),
             launch: LaunchState::new(),
             agents: AgentsState::new(),
             models: ModelsState::new(),
             services: ServicesPanel::new(),
             shared: SharedCatalog::with_url("http://127.0.0.1:4317"),
+            machines: MachinesState::with_url("http://127.0.0.1:4317"),
             dispatch: DispatchState::new(),
             #[cfg(feature = "dds")]
             dds: orchestrator_studio::dds_observe::DdsState::new(),
@@ -142,7 +153,14 @@ impl eframe::App for StudioApp {
                         proof,
                     );
                 }
-                Section::Node => views::node::show(ui, &mut self.state, &mut self.node_url),
+                Section::Node => {
+                    views::node::show(
+                        ui,
+                        &mut self.state,
+                        &mut self.node_url,
+                        &mut self.node_token,
+                    );
+                }
                 Section::Inference => views::inference::show(ui, &mut self.inference),
                 Section::Launch => {
                     let known: Vec<String> = self
@@ -157,6 +175,7 @@ impl eframe::App for StudioApp {
                 Section::Models => views::models::show(ui, &mut self.models),
                 Section::Services => views::services::show(ui, &mut self.services),
                 Section::Shared => views::shared_catalog::show(ui, &mut self.shared),
+                Section::Machines => views::machines::show(ui, &mut self.machines),
                 Section::Dispatch => views::dispatch::show(ui, &mut self.dispatch),
                 #[cfg(feature = "dds")]
                 Section::Topology => views::topology::show(ui, &mut self.dds),

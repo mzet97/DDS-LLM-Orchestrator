@@ -1,9 +1,11 @@
 //! Painel de catálogo compartilhado: publica no nó com base explícita.
+//! Token da autoridade (T-840-03a) fica só na memória da GUI.
 
 use eframe::egui;
 use orchestrator_studio::catalog_remote::SharedCatalog;
 
-/// URL, formulário (id/valor/base), publicar/excluir e tabela do snapshot.
+/// URL, token (password), formulário (id/valor/base), publicar/excluir e
+/// tabela do snapshot.
 pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     shared.poll();
@@ -11,6 +13,8 @@ pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
         ui.horizontal(|ui| {
             ui.label("nó:");
             ui.text_edit_singleline(&mut shared.url);
+            ui.label("token:");
+            ui.add(egui::TextEdit::singleline(&mut shared.token).password(true));
             ui.add_enabled_ui(!shared.busy, |ui| {
                 if ui.button("Ler snapshot").clicked() {
                     shared.refresh();

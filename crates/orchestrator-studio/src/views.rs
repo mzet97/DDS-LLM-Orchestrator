@@ -4,6 +4,7 @@ pub mod agents;
 pub mod dispatch;
 pub mod inference;
 pub mod launch;
+pub mod machines;
 pub mod models;
 pub mod node;
 pub mod overview;

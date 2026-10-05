@@ -12,7 +12,7 @@
 
 use std::sync::mpsc;
 
-use crate::origin::{fetch_node_summary, NodeSummary, OriginError};
+use crate::origin::{fetch_node_summary_with_token, NodeSummary, OriginError};
 
 /// Mensagem do worker de leitura do nó (url ecoada para o status).
 struct NodeMsg {
@@ -62,16 +62,25 @@ impl AppState {
     /// Busca o resumo no nó em THREAD de trabalho (REQ/T-820-19) e atualiza
     /// o status via `poll`; falha preserva o estado anterior e registra o
     /// motivo (nunca inventa linhas). Clique durante `busy` é ignorado.
+    /// Sem token — mantida para o modo localhost (T-840-03a).
     pub fn refresh_from_node(&mut self, base_url: &str) {
+        self.refresh_from_node_with_token(base_url, None);
+    }
+
+    /// Como [`refresh_from_node`](Self::refresh_from_node), com token
+    /// opcional (T-840-03a; nó conforme T-840-01). O token vive só na
+    /// memória da GUI: é passado ao worker por valor e nunca persistido.
+    pub fn refresh_from_node_with_token(&mut self, base_url: &str, token: Option<&str>) {
         if self.busy {
             return;
         }
         let url = base_url.trim_end_matches('/').to_string();
         let status_url = url.clone();
+        let token = token.map(String::from);
         let (tx, rx) = mpsc::channel();
         let worker_url = url.clone();
         std::thread::spawn(move || {
-            let result = fetch_node_summary(&worker_url);
+            let result = fetch_node_summary_with_token(&worker_url, token.as_deref());
             let _ = tx.send(NodeMsg { url, result });
         });
         self.receiver = Some(rx);
@@ -96,6 +105,10 @@ impl AppState {
                     }
                     Err(err @ OriginError::Incompatible { .. }) => {
                         self.status = format!("origem bloqueada: {err}");
+                        self.node = None;
+                    }
+                    Err(err @ OriginError::Unauthorized) => {
+                        self.status = format!("acesso ao nó negado: {err}");
                         self.node = None;
                     }
                     Err(err @ OriginError::Unreachable { .. }) => {
