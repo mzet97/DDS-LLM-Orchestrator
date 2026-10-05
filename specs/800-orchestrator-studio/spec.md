@@ -35,11 +35,19 @@ múltiplas GUIs com revisões condicionais (§34).
 | REQ-800 | Catálogo compartilhado com revisão condicional: publicar a partir de revisão obsoleta é rejeitado antes de qualquer efeito, sem last-writer-wins silencioso (prompt §§12–13, 34; RF-31/32; G-47/48/50). | Teste: accept avança revisão; stale é rejeitado sem mutação. |
 | REQ-801 | Gerações de intenção monotônicas por deployment: operação antiga nunca sobrescreve geração mais recente aceita (§13, §25). | Teste: geração menor é rejeitada; estado preservado. |
 | REQ-802 | Auditoria P0 registrada: mapa reutilizar × não-duplicar do runtime existente (§2.2, §32.3). | `specs/800-*/audit.md` com file:line. |
-| REQ-803 | (planejado, não deste incremento) GUI egui navegável read-only real. | G-01 parcial futuro. |
-| REQ-804 | (planejado) `studio-node` com protocolo administrativo versionado. | G-05/06 futuro. |
+| REQ-803 | ~~(planejado, não deste incremento)~~ **Entregue** na mesma fase: GUI egui com 10 painéis locais reais (T-800-04; atualizado 2026-10-04). | G-01 ✅; restante do produto em coverage.md. |
+| REQ-804 | ~~(planejado)~~ **Entregue**: `studio-node` com protocolo administrativo versionado (T-800-05; transporte HTTP localhost, não SSH). | G-05/06 ✅; SSH 🔒. |
 
 ## Fora deste incremento (honestidade, Const. Art. III)
 
 GUI, SSH, systemd, mDNS, SQLite, nós remotos, modelos e inferência real: **propostos
 neste SDD, não implementados**. Nada aqui afirma capacidade operacional além da
 guarda de revisão testada.
+
+> **Atualização 2026-10-04:** o parágrafo acima descreve o 1º incremento. As
+> tasks T-800-04…23 entregaram depois (na mesma fase): GUI egui local real,
+> systemd, inventário GGUF, inferência local real, atuação start/stop,
+> catálogo autoritativo com journal. **Seguem não implementados**: SSH
+> administrativo, mDNS/descoberta de instalações, SQLite/`studio-storage`,
+> nós remotos/2º host, auth do nó — 26 gates 🔒 em `coverage.md`. Ver
+> `REPORT.md`.

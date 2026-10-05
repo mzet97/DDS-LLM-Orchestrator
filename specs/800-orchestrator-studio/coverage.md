@@ -1,6 +1,6 @@
 # Cobertura final de gates SDD — fase 800 (Studio local)
 
-**Data:** 2026-09-11. **Evidência:** T-800-01…T-800-20 em `tasks.md` + testes
+**Data:** 2026-09-11 (**complemento 2026-10-04** ao fim). **Evidência:** T-800-01…T-800-23 em `tasks.md` + testes
 `--locked` verdes + provas vivas citadas. Legenda: ✅ entregue · ◐ parcial ·
 🔒 bloqueado por ambiente (sem 2º host/VM, sem SSH remoto, sem executor de
 tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
@@ -71,3 +71,23 @@ tools vivo no mesh. Desbloqueio = prover 2º host/VM + executor.
    (eventos só em join/leave), não bug provado.
 3. GPU: llama ROCm com 7.4GB VRAM + geração real OK; atribuição por
    requisição não medida.
+
+## Complemento 2026-10-04 — T-800-21/22/23 e fase 830
+
+A tabela acima cobria T-800-01…20; as tasks seguintes (todas `[x]`) e a fase
+830 (`specs/830-studio-residual-fixes/`) atualizam os vereditos:
+
+- **T-800-21/22/23** (hash GGUF, Visão geral com fonte/stale, assistente
+  "Subir inferência" com prova viva): cobrem G-09 (◐→◐: SHA-256 assíncrono
+  com progresso/cancelamento; veredito contra manifesto segue ausente) e
+  G-69 (◐: fonte/stale explícitos no agregado). Nenhum novo gate 🔒.
+- **Fase 830 (T-830-01…07):** G-48 ◐→**◐+**: a GUI agora acompanha eventos da
+  autoridade (`Acompanhar eventos`, convergência provada por fio, 410 →
+  re-snapshot); auto-diff na reconexão segue manual. G-40 ◐: `.desktop`
+  revalidado com `Exec=studio` via PATH. Painel "Catálogo" local residual
+  removido (duplicava o Compartilhado em leitura). `studio-noded` persiste
+  por padrão (`$HOME/.local/share/studio-node/operations.json`).
+- **Incompatibilidade deliberada (T-830-03):** REQ-801 agora é ENFORÇADO —
+  journals antigos gravados quando `generation` era ignorada falham no replay
+  com `Corrupt` (fail-fast, política "nunca máscara"). Mitigação: apagar o
+  journal local (`operations.json` + `*.catalog.jsonl`) e republicar.
