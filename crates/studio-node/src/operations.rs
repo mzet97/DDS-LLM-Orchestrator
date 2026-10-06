@@ -134,6 +134,34 @@ impl OperationLog {
         self.records.values()
     }
 
+    /// Ordem de inserção dos ids (T-890-05: persistência relacional preserva
+    /// a ordem — `wanted` depende dela).
+    #[must_use]
+    pub fn order(&self) -> &[OperationId] {
+        &self.order
+    }
+
+    /// Reconstrói o log a partir do estado persistido (T-890-05: backend
+    /// relacional). A ordem dada é a ordem de inserção original; registros
+    /// fora dela são rejeitados (nada é executado na carga — apenas estado).
+    #[must_use]
+    pub fn restore(owned_services: Vec<String>, records_in_order: Vec<OpRecord>) -> Self {
+        let mut log = Self::new(owned_services);
+        for record in records_in_order {
+            if log.records.contains_key(&record.id) {
+                continue; // id duplicado no meio persistido: mantém a 1ª ocorrência
+            }
+            let id = record.id.clone();
+            log.records.insert(id.clone(), record);
+            log.order.push(id);
+        }
+        while log.order.len() > MAX_RECORDS {
+            let oldest = log.order.remove(0);
+            log.records.remove(&oldest);
+        }
+        log
+    }
+
     /// Persiste o log em JSON no caminho dado (P2: operações persistidas).
     pub fn save(&self, path: &Path) -> Result<(), NodeError> {
         let json = serde_json::to_string_pretty(self)

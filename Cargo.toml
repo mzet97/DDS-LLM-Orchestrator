@@ -37,6 +37,9 @@ license = "MIT"
 cyclonedds = { version = "=3.0.1" }
 cyclonedds-rust-sys = { version = "=1.2.1" }
 cyclonedds-build = { version = "=3.0.1" }
+# T-890-05: persistência relacional do journal do nó (bundled = sqlite3 C
+# embutido, sem depender do sqlite do sistema — requer CC p/ cross musl).
+rusqlite = { version = "0.32", features = ["bundled"] }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)

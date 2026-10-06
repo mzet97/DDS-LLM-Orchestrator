@@ -26,3 +26,4 @@ pub mod protocol;
 mod routes_catalog;
 mod routes_services;
 pub mod server;
+pub mod storage;

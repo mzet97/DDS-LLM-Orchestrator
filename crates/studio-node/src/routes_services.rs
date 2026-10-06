@@ -126,10 +126,10 @@ pub(crate) async fn actuate_service(
         active = probe_active(&state.probe, &service).await?;
     }
     // 3. Persistência (lock curto de novo).
-    if let Some(path) = state.db_path.clone() {
+    if let Some(storage) = state.storage.clone() {
         let saved = {
             let log = state.log.lock().await;
-            log.save(&path)
+            storage.save(&log)
         };
         if let Err(err) = saved {
             return Err(domain_error(err));

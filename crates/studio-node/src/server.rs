@@ -36,7 +36,8 @@ pub use crate::routes_services::{ActuateOut, ServiceStatus};
 pub struct NodeState {
     pub(crate) version: ProtocolVersion,
     pub(crate) log: Arc<Mutex<OperationLog>>,
-    pub(crate) db_path: Option<PathBuf>,
+    /// T-890-05: persistência atrás de trait (JSON compat / SQLite default).
+    pub(crate) storage: Option<Arc<dyn crate::storage::Storage>>,
     pub(crate) probe: Arc<dyn Probe>,
     pub(crate) actuator: Arc<dyn Actuator>,
     pub(crate) catalog: Arc<Mutex<CatalogAuthority>>,
@@ -72,7 +73,7 @@ impl NodeState {
         Self {
             version: NODE_PROTOCOL_VERSION,
             log: Arc::new(Mutex::new(OperationLog::new(owned_services))),
-            db_path: None,
+            storage: None,
             probe,
             actuator,
             catalog: Arc::new(Mutex::new(CatalogAuthority::new())),
@@ -101,18 +102,36 @@ impl NodeState {
 
     /// Estado com persistência: carrega o log existente ou começa novo no
     /// primeiro boot; arquivo corrompido falha rápido em vez de mascarar.
+    /// Estado com persistência no caminho dado: extensão `.json` usa o
+    /// snapshot JSON (compat T-830-05); qualquer outro caminho usa o SQLite
+    /// relacional (default T-890-05, com migração não destrutiva do JSON).
     pub fn with_db(db_path: PathBuf, owned_services: Vec<String>) -> Result<Self, NodeError> {
-        let log = match OperationLog::load(&db_path) {
-            Ok(log) => log,
-            Err(NodeError::Storage(_)) if !db_path.exists() => OperationLog::new(owned_services),
-            Err(err) => return Err(err),
+        let storage: Arc<dyn crate::storage::Storage> =
+            if db_path.extension().is_some_and(|ext| ext == "json") {
+                Arc::new(crate::storage::JsonStorage::new(db_path))
+            } else {
+                Arc::new(crate::storage::SqliteStorage::new(db_path))
+            };
+        Self::with_storage(storage, owned_services)
+    }
+
+    /// T-890-05: estado com persistência atrás do trait `Storage` — carrega
+    /// o log existente (com migração JSON→SQLite quando couber) ou começa
+    /// novo no primeiro boot; persistência corrompida falha rápido.
+    pub fn with_storage(
+        storage: Arc<dyn crate::storage::Storage>,
+        owned_services: Vec<String>,
+    ) -> Result<Self, NodeError> {
+        let log = match storage.load()? {
+            Some(log) => log,
+            None => OperationLog::new(owned_services),
         };
-        let catalog = CatalogAuthority::with_journal(Self::journal_path(&db_path))
+        let catalog = CatalogAuthority::with_journal(Self::journal_path(storage.path()))
             .map_err(|err| NodeError::Storage(format!("catalogo: {err}")))?;
         Ok(Self {
             version: NODE_PROTOCOL_VERSION,
             log: Arc::new(Mutex::new(log)),
-            db_path: Some(db_path),
+            storage: Some(storage),
             probe: Arc::new(SystemdProbe),
             actuator: Arc::new(SystemdActuator),
             catalog: Arc::new(Mutex::new(catalog)),
@@ -216,8 +235,8 @@ async fn post_apply(
         Ok(OpOutcome::AlreadyApplied(record)) => ApplyResponse::AlreadyApplied { record },
         Err(err) => return Err(domain_error(err)),
     };
-    if let Some(path) = &state.db_path {
-        if let Err(err) = log.save(path) {
+    if let Some(storage) = &state.storage {
+        if let Err(err) = storage.save(&log) {
             return Err(domain_error(err));
         }
     }

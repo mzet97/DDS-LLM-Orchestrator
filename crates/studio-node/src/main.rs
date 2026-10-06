@@ -5,7 +5,7 @@
 //! protege todas as rotas exceto `GET /version` — T-840-01). Serviços
 //! próprios via `STUDIO_NODE_SERVICES` (lista separada por vírgula; padrão
 //! `dds-agent`). Persistência via `STUDIO_NODE_DB`; sem a variável, o padrão
-//! agora é PERSISTENTE em `$HOME/.local/share/studio-node/operations.json`,
+//! agora é PERSISTENTE em `$HOME/.local/share/studio-node/operations.db`,
 //! criado on demand (T-830-05). `HOME` ausente cai para memória volátil com
 //! aviso explícito — nunca pânico.
 //!
@@ -38,14 +38,15 @@ enum ResolvedDb {
 }
 
 /// Ordem de resolução: `STUDIO_NODE_DB` vence; sem env,
-/// `$HOME/.local/share/studio-node/operations.json`; sem `HOME`, volátil
-/// (função pura para teste direto — T-830-05).
+/// `$HOME/.local/share/studio-node/operations.db` (SQLite, T-890-05 — o
+/// `.db` novo importa o `operations.json` legado sem destruí-lo); sem
+/// `HOME`, volátil (função pura para teste direto — T-830-05).
 fn resolve_db(explicit: Option<String>, home: Option<String>) -> ResolvedDb {
     match explicit {
         Some(path) => ResolvedDb::Persistent(PathBuf::from(path)),
         None => match home {
             Some(home) => ResolvedDb::Persistent(
-                PathBuf::from(home).join(".local/share/studio-node/operations.json"),
+                PathBuf::from(home).join(".local/share/studio-node/operations.db"),
             ),
             None => ResolvedDb::Volatile {
                 reason: String::from("HOME ausente no ambiente"),
@@ -176,18 +177,19 @@ mod tests {
 
     #[test]
     fn home_derives_xdg_default_path() {
-        // HOME presente e sem env: $HOME/.local/share/studio-node/operations.json.
+        // HOME presente e sem env: $HOME/.local/share/studio-node/operations.db
+        // (T-890-05: SQLite; o operations.json legado é migrado sem destruição).
         let resolved = resolve_db(None, Some(String::from("/home/alguem")));
         assert_eq!(
             resolved,
             ResolvedDb::Persistent(PathBuf::from(
-                "/home/alguem/.local/share/studio-node/operations.json"
+                "/home/alguem/.local/share/studio-node/operations.db"
             ))
         );
         let ResolvedDb::Persistent(path) = resolved else {
             panic!("HOME presente deve resolver caminho persistente");
         };
-        assert!(path.ends_with(".local/share/studio-node/operations.json"));
+        assert!(path.ends_with(".local/share/studio-node/operations.db"));
     }
 
     #[test]
