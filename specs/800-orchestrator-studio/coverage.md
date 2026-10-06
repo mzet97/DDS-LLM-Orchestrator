@@ -246,3 +246,21 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   `.desktop` byte-idêntico e `desktop-file-validate` ✓ (sem warnings).
   Artefato: `dist/dds-orchestrator-studio_0.1.0_amd64.deb` (6,8 MB,
   fora do git).
+
+## T-890-08 (item G-09..11) — GGUF × manifesto congelado (2026-10-06)
+
+- **Entregue (commit `9a21dd6`):** cruzamento GGUF×SHA no painel de modelos —
+  `ModelsManifest` (formato canônico `{"models": {"arquivo.gguf": "<sha256>"}}`,
+  validação 64 hex case-insensitive), `ManifestStatus`
+  (Pendente/Ok/**Desviado**/SemRegistro) por artefato, coluna colorida na GUI
+  (OK verde, DESVIADO vermelho) e campo "Carregar manifesto" com default no
+  lock da campanha.
+- **Manifesto canônico versionado:** `benchmarks/orchestration/locks/models-
+  manifest.json` com o SHA congelado do `Qwen3.5-0.8B-Q4_K_M.gguf` (do
+  `manifest-freeze.md` da fase 860).
+- **PROVA AO VIVO:** o arquivo real (`models/Qwen3.5-0.8B-Q4_K_M.gguf`,
+  508 MB) hasheia **byte a byte** ao SHA congelado
+  `bd258782…1dc517` (4,6 s) — o artefato usado na campanha EXP2 é o
+  congelado. Classificação exercida por 5 testes (parse/validação, OK/
+  DESVIADO/SemRegistro e integração poll→status nas duas direções).
+- Cobertura: **467 passed / 0** no workspace.
