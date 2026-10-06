@@ -395,3 +395,15 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   servidores de inferência. `OverviewInput` estendido.
 - Confirmado visualmente pelo autor na estação (captura): status bar com
   descoberta 3 nós · 2 agentes · 1 inferência e alvo .61.
+
+## T-890-03 (v5) — redesenho visual da Visão geral (2026-10-06)
+
+- **Pedido do autor:** "o design está uma merda". Entregue (grid de cards com
+  estado visual): `OverviewTile.health` (Ok/Warn/Stale) mapeado por fonte;
+  grid 2 colunas com ícone ● (verde)/◐ (âmbar)/◌ (apagado) + filete colorido
+  à esquerda do card; rodapé com alvo 🛰 e resumo do domínio.
+- Semântica: Agentes com contagem da descoberta DDS = Ok (não mais "nunca
+  lidos" quando o domínio os viu); Inferência com ServerStatus no domínio =
+  Warn (presença confirmada, sem prova de geração ainda); Serviços = Warn
+  "carregando plano…" durante a auto-carga.
+- Validado por captura na estação do autor. 480 passed/0.
