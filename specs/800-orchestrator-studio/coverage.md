@@ -181,3 +181,34 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   catálogo (`*.catalog.jsonl`) permanece JSONL por design (stream de eventos
   com `events_since`); migração relacional dele é trabalho futuro se houver
   necessidade real.
+
+## T-890-06 — ferramentas ao vivo no mesh (2026-10-06)
+
+- **Entregue (commit `17a4892`):** `mcp-gateway` rodando na **.64** (17
+  ferramentas, sandbox `~/dds-llm-rust/sandbox`) e `policy-engine` na **.62**
+  (`policies.json` v2, republish 60 s) — domínio 170, peers unicast, binários
+  musl estáticos com CycloneDDS; painel **"Ferramentas"** na GUI com a
+  governança de cada chamada (`ToolRow` estendido: requester, nível, status
+  canônico `orch-common::ToolCallStatus`, prévia do resultado).
+- **Evidência ao vivo (sonda `examples/tool_call_probe`):** ALLOW —
+  `CodeReviewAgent`/`filesystem.read_file` → COMPLETED com o conteúdo do
+  arquivo do sandbox (.64), decisão `allow` auditable com `policy_version=2`
+  publicada pela .62; DENY — requester fora da allowlist → DENIED
+  fail-closed. Cadeia completa cruzando 3 máquinas (sonda local → .64 → .62).
+- **3 bugs de protocolo reais corrigidos no caminho:**
+  1. `ToolCall.Request` com `Ownership=Exclusive` e escrita comum: quem PÕE o
+     pedido virava dono e REJEITAVA a evolução do gateway (mesma classe do
+     P0-1/T-820 das Tasks) → strength por papel (cliente 10 publica sem
+     ownership; gateway 100 reivindica) + `write_tool_call_without_ownership`.
+  2. `policy-engine`: o dedupe de conteúdo matava o republish periódico — o
+     timestamp nunca se renovava e TODO late-joiner >300 s recebia snapshot
+     expirado → `republish()` força publicação no tick (guarda de regressão
+     de versão permanece).
+  3. `mcp-gateway`: tolerância ZERO de timestamp futuro — com relógios de
+     hosts defasados em ~0,2-0,8 s (medido), o snapshot fresco chegava "do
+     futuro" e era rejeitado → skew de 5 s no ingest e no evaluate.
+- **G-18..22:** os textos dos gates vivem no SDD mestre; o que esta entrega
+  prova ao vivo: ferramentas registradas e executáveis no mesh, governança
+  por política vigente com decisão auditável, e observação das chamadas na
+  GUI. Status atualizado para ✅-com-esta-evidência (validar contra o texto
+  do SDD mestre na revisão final).
