@@ -264,3 +264,22 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   congelado. Classificação exercida por 5 testes (parse/validação, OK/
   DESVIADO/SemRegistro e integração poll→status nas duas direções).
 - Cobertura: **467 passed / 0** no workspace.
+
+## T-890-08 (item G-37) — kittest: testes de UI automatizados (2026-10-06)
+
+- **Entregue (commit `1f29f27`):** `tests/kittest.rs` no Studio com
+  **egui_kittest 0.36.2** (par do egui 0.36) em `default-features = false` —
+  testes de INTERAÇÃO pela árvore accesskit (clicar/ler rótulos), 100%
+  headless, sem GPU e sem diffs de imagem.
+- **3 testes de fluxo real:** (1) painel de Modelos ponta a ponta pela UI
+  (clicar "Inventariar" → "Carregar manifesto" → status "OK" visível e
+  contagem "1 registro(s)"); (2) DETECÇÃO DE DESVIO pela UI (arquivo
+  adulterado → "DESVIADO"); (3) orientação honesta do Workflow sem `dds`
+  (cfg not-dds).
+- **Refatoração habilitante:** `views` promovido do bin para a lib
+  (`pub mod views;`) — os painéis passam a ser testáveis por integração;
+  caminhos `crate::` nas views.
+- **MSRV — exceção dev-only documentada:** o egui_kittest 0.36.2 exige
+  rustc ≥1.95; o código de PRODUÇÃO do workspace permanece 1.85 — só
+  `cargo test -p orchestrator-studio` (que compila o dev-dep) exige
+  toolchain ≥1.95. G-37 ✅.
