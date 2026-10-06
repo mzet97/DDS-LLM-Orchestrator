@@ -1,6 +1,7 @@
 //! Painel de visão geral: cartões honestos (§9.2).
 
 use crate::agents::AgentsState;
+use crate::discovery::DiscoveryState;
 use crate::models::ModelsState;
 use crate::overview::{summarize, OverviewInput};
 use crate::services::ServicesPanel;
@@ -14,6 +15,7 @@ pub fn show(
     agents: &AgentsState,
     models: &ModelsState,
     proof: &str,
+    discovery: &DiscoveryState,
 ) {
     ui.heading("Visão geral (somente leitura)");
     ui.label("Cada cartão mostra a fonte; apagado = ainda não lido, sem dado inventado.");
@@ -32,6 +34,10 @@ pub fn show(
         models_total: models.list.len(),
         models_hashed: hashed,
         inference_proof: proof,
+        discovery_nodes: discovery.nodes.len(),
+        discovery_agents: discovery.agents.len(),
+        discovery_servers: discovery.servers.len(),
+        discovery_target: discovery.selected_url().as_deref(),
     });
     for tile in tiles {
         ui.group(|ui| {

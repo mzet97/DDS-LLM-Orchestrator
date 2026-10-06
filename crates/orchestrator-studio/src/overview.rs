@@ -28,6 +28,11 @@ pub struct OverviewInput<'a> {
     pub models_total: usize,
     pub models_hashed: usize,
     pub inference_proof: &'a str,
+    /// T-890-03: descoberta automática (nós/agentes/inferência do domínio).
+    pub discovery_nodes: usize,
+    pub discovery_agents: usize,
+    pub discovery_servers: usize,
+    pub discovery_target: Option<&'a str>,
 }
 
 /// Resume os estados em cartões; vazio/falha vira cartão `stale`, nunca dado.
@@ -48,11 +53,15 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
         None => OverviewTile {
             title: String::from("Nó"),
             summary: if input.node_error.is_empty() {
-                String::from("não conectado — abra Nó studio-node e Conecte")
+                match input.discovery_target {
+                    // Auto-carga em andamento: alvo definido pela descoberta.
+                    Some(target) => format!("conectando ao alvo {target}…"),
+                    None => String::from("não conectado — abra Nó studio-node e Conecte"),
+                }
             } else {
                 format!("não conectado: {}", input.node_error)
             },
-            stale: true,
+            stale: input.discovery_target.is_none(),
         },
     });
     tiles.push(
@@ -160,6 +169,10 @@ mod tests {
             models_total: 0,
             models_hashed: 0,
             inference_proof: "",
+            discovery_nodes: 0,
+            discovery_agents: 0,
+            discovery_servers: 0,
+            discovery_target: None,
         }
     }
 

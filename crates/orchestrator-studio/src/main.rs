@@ -262,6 +262,7 @@ impl eframe::App for StudioApp {
                         &self.agents,
                         &self.models,
                         proof,
+                        &self.discovery,
                     );
                 }
                 Section::Node => {
