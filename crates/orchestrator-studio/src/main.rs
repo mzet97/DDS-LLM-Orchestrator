@@ -96,6 +96,7 @@ struct StudioApp {
     dds: orchestrator_studio::dds_observe::DdsState,
     workflow: orchestrator_studio::workflow::WorkflowState,
     protected: orchestrator_studio::protected::ProtectedGuard,
+    discovery: orchestrator_studio::discovery::DiscoveryState,
 }
 
 impl StudioApp {
@@ -117,6 +118,21 @@ impl StudioApp {
             dds: orchestrator_studio::dds_observe::DdsState::new(),
             workflow: orchestrator_studio::workflow::WorkflowState::new(),
             protected: orchestrator_studio::protected::ProtectedGuard::new(),
+            // T-890-03: descoberta automática no boot — escuta
+            // Studio.NodePresence em background (domínio: env
+            // STUDIO_DDS_DOMAIN, default 170 = laboratório).
+            discovery: {
+                let domain = std::env::var("STUDIO_DDS_DOMAIN")
+                    .ok()
+                    .and_then(|d| d.trim().parse().ok())
+                    .unwrap_or(170);
+                #[cfg(feature = "dds")]
+                {
+                    orchestrator_studio::discovery::DiscoveryState::start(domain)
+                }
+                #[cfg(not(feature = "dds"))]
+                orchestrator_studio::discovery::DiscoveryState::new_disabled(domain)
+            },
         }
     }
 }
@@ -204,9 +220,11 @@ impl eframe::App for StudioApp {
                 Section::Shared => {
                     orchestrator_studio::views::shared_catalog::show(ui, &mut self.shared)
                 }
-                Section::Machines => {
-                    orchestrator_studio::views::machines::show(ui, &mut self.machines)
-                }
+                Section::Machines => orchestrator_studio::views::machines::show(
+                    ui,
+                    &mut self.machines,
+                    &mut self.discovery,
+                ),
                 Section::Dispatch => {
                     orchestrator_studio::views::dispatch::show(ui, &mut self.dispatch)
                 }

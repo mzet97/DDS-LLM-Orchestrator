@@ -9,6 +9,7 @@ pub mod agents;
 pub mod catalog_remote;
 #[cfg(feature = "dds")]
 pub mod dds_observe;
+pub mod discovery;
 pub mod inference;
 pub mod launch;
 /// Máquinas (REQ/T-840-03): registro multi-host no catálogo compartilhado

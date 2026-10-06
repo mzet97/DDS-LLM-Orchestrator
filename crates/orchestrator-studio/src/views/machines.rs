@@ -6,6 +6,7 @@
 //! T-840-01) vira dica "token ausente" — o usuário (re)entra o token no
 //! formulário e clica "Guardar token em memória".
 
+use crate::discovery::DiscoveryState;
 use crate::machines::{MachinesState, ProbeState};
 use eframe::egui;
 
@@ -20,9 +21,59 @@ fn dot_style(state: ProbeState) -> (egui::Color32, &'static str) {
     }
 }
 
-/// Autoridade, formulário de registro (token = password), lista do snapshot
-/// compartilhado com ponto de status e botão "Probe" por máquina.
-pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState) {
+/// Autoridade, descoberta automática ao vivo (T-890-03), formulário de
+/// registro (token = password), lista do snapshot compartilhado com ponto
+/// de status e botão "Probe" por máquina.
+pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut DiscoveryState) {
+    discovery.poll();
+    ui.collapsing(
+        "Instalações descobertas automaticamente (Studio.NodePresence, ao vivo)",
+        |ui| {
+            if discovery.scanning {
+                ui.label("escutando o domínio…");
+            }
+            if !discovery.error.is_empty() {
+                ui.label(&discovery.error);
+            }
+            if discovery.nodes.is_empty() {
+                ui.label(format!(
+                    "Nenhuma instalação vista ainda no domínio {} (heartbeats a cada 5 s; \
+                     nós com canvas DDS aparecem sozinhos aqui).",
+                    discovery.domain
+                ));
+                return;
+            }
+            let now_ns = crate::machines::now_unix_ns();
+            egui::Grid::new("discovery_grid")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.label("node_id");
+                    ui.label("url");
+                    ui.label("estado");
+                    ui.label("idade");
+                    ui.end_row();
+                    for node in &discovery.nodes {
+                        let alive = node.is_alive(now_ns);
+                        ui.monospace(&node.node_id);
+                        ui.hyperlink_to(&node.url, &node.url);
+                        let (state, detail) = match (&node.probe, alive) {
+                            (Some(probe), true) => (probe.state, probe.detail.clone()),
+                            (Some(probe), false) => (
+                                ProbeState::Offline,
+                                format!("sem heartbeat ({})", probe.detail),
+                            ),
+                            (None, true) => (ProbeState::Unknown, String::from("sondando…")),
+                            (None, false) => (ProbeState::Offline, String::from("sem heartbeat")),
+                        };
+                        let (color, dot) = dot_style(state);
+                        ui.label(egui::RichText::new(format!("{dot} {detail}")).color(color));
+                        ui.label(format!("{} s", node.age_secs(now_ns)));
+                        ui.end_row();
+                    }
+                });
+        },
+    );
+    ui.separator();
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     machines.poll();
     ui.collapsing("Máquinas (catálogo compartilhado)", |ui| {
