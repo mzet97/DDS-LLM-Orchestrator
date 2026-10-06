@@ -9,12 +9,26 @@ use studio_node::server::ServiceStatus;
 use crate::agents::AgentInfo;
 use crate::origin::NodeSummary;
 
+/// Estado visual do cartão (define a cor da borda/ícone na GUI).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum TileHealth {
+    /// Fonte viva com dados.
+    Ok,
+    /// Aviso (parcial: ex. auto-carga em andamento).
+    Warn,
+    /// Fonte apagada/falha (honesto: nunca dado inventado).
+    #[default]
+    Stale,
+}
+
 /// Um cartão da visão geral: título, resumo e se a fonte está desatualizada.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OverviewTile {
     pub title: String,
     pub summary: String,
     pub stale: bool,
+    /// Estado semântico derivado (Default = Stale, compat com construtores antigos).
+    pub health: TileHealth,
 }
 
 /// Entradas observáveis para o agregado (emprestadas dos estados reais).
@@ -49,6 +63,7 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
                 summary.operations.len()
             ),
             stale: false,
+            health: TileHealth::Ok,
         },
         None => OverviewTile {
             title: String::from("Nó"),
@@ -62,6 +77,11 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
                 format!("não conectado: {}", input.node_error)
             },
             stale: input.discovery_target.is_none(),
+            health: if input.discovery_target.is_none() {
+                TileHealth::Stale
+            } else {
+                TileHealth::Warn
+            },
         },
     });
     tiles.push(
@@ -81,18 +101,29 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
                     divergent
                 ),
                 stale: false,
+                health: TileHealth::Ok,
             }
         } else if !input.services_error.is_empty() {
             OverviewTile {
                 title: String::from("Serviços"),
                 summary: format!("não lidos: {}", input.services_error),
                 stale: true,
+                health: TileHealth::Stale,
             }
         } else {
             OverviewTile {
                 title: String::from("Serviços"),
-                summary: String::from("nunca lidos — abra Serviços e clique Ler plano"),
+                summary: if input.discovery_target.is_some() {
+                    String::from("carregando plano do nó alvo…")
+                } else {
+                    String::from("nunca lidos — abra Serviços e clique Ler plano")
+                },
                 stale: true,
+                health: if input.discovery_target.is_some() {
+                    TileHealth::Warn
+                } else {
+                    TileHealth::Stale
+                },
             }
         },
     );
@@ -109,18 +140,43 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
                     slots_total
                 ),
                 stale: false,
+                health: TileHealth::Ok,
             }
         } else if !input.agents_error.is_empty() {
             OverviewTile {
                 title: String::from("Agentes"),
-                summary: format!("não lidos: {}", input.agents_error),
-                stale: true,
+                summary: if input.discovery_agents > 0 {
+                    format!(
+                        "{} agente(s) no domínio via descoberta DDS",
+                        input.discovery_agents
+                    )
+                } else {
+                    format!("não lidos: {}", input.agents_error)
+                },
+                stale: input.discovery_agents == 0,
+                health: if input.discovery_agents > 0 {
+                    TileHealth::Ok
+                } else {
+                    TileHealth::Stale
+                },
             }
         } else {
             OverviewTile {
                 title: String::from("Agentes"),
-                summary: String::from("nunca lidos — abra Agentes e atualize"),
-                stale: true,
+                summary: if input.discovery_agents > 0 {
+                    format!(
+                        "{} agente(s) no domínio via descoberta DDS",
+                        input.discovery_agents
+                    )
+                } else {
+                    String::from("nenhum agente no domínio nem no orquestrador")
+                },
+                stale: input.discovery_agents == 0,
+                health: if input.discovery_agents > 0 {
+                    TileHealth::Ok
+                } else {
+                    TileHealth::Stale
+                },
             }
         },
     );
@@ -135,6 +191,11 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
             )
         },
         stale: input.models_total == 0,
+        health: if input.models_total == 0 {
+            TileHealth::Stale
+        } else {
+            TileHealth::Ok
+        },
     });
     tiles.push(OverviewTile {
         title: String::from("Inferência"),
@@ -143,7 +204,14 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
         } else {
             format!("última prova: {}", input.inference_proof)
         },
-        stale: input.inference_proof.is_empty(),
+        stale: input.inference_proof.is_empty() && input.discovery_servers == 0,
+        health: if !input.inference_proof.is_empty() {
+            TileHealth::Ok
+        } else if input.discovery_servers > 0 {
+            TileHealth::Warn
+        } else {
+            TileHealth::Stale
+        },
     });
     tiles
 }
