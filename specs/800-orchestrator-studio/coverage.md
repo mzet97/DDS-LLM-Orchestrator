@@ -381,3 +381,17 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   estação; ouvir 0.0.0.0 (com token) ou usar os painéis DDS. A descoberta de
   ORQUESTRADOR não existe no contrato (sem tópico de presença dele) — os
   painéis DDS (Agentes ao vivo/Topologia/Ferramentas) cobrem a visualização.
+
+## T-890-03 (v4) — Visão geral consciente da descoberta + binário instalado corrigido (2026-10-06)
+
+- **Causa-raiz do relato "não usa descoberta" (2ª rodada):** o
+  `~/.local/bin/studio` executado pelo menu/.desktop era um **binário velho**
+  (411 MB, dinâmico, da era 800/840 — zero strings de NodePresence). Substituído
+  pelo build atual (23 MB, estático, `--features dds`); validado por strings e
+  por captura de tela na estação do autor.
+- **Visão geral agora mostra o sistema vivo:** tile Nó = "conectando ao alvo
+  X…" durante a auto-carga; tile Agentes = "N agentes no domínio via descoberta
+  DDS"; **novo tile** "Descoberta (domínio, ao vivo)" com instalações/agentes/
+  servidores de inferência. `OverviewInput` estendido.
+- Confirmado visualmente pelo autor na estação (captura): status bar com
+  descoberta 3 nós · 2 agentes · 1 inferência e alvo .61.
