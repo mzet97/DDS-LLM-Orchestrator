@@ -544,6 +544,7 @@ mod tests {
             specialization: Specialization::Text,
             slots: 0,
             dds_domain: 0,
+            target_agent_prefix: String::new(),
         });
 
         assert!(result.is_err());

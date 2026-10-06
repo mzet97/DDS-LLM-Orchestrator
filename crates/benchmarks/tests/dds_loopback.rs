@@ -25,6 +25,7 @@ async fn spawn_agent(id: &str) -> Arc<AgentDds> {
         specialization: Specialization::Text,
         slots: 8,
         dds_domain: DOMAIN,
+        target_agent_prefix: String::new(),
     };
     let runtime = Arc::new(AgentDds::new(config).unwrap());
     let engine = Arc::new(MockEngine::new("chunk", 2, 5));

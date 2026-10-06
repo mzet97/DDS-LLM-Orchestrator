@@ -36,6 +36,10 @@ pub struct AgentConfig {
     pub specialization: Specialization,
     pub slots: u32,
     pub dds_domain: u32,
+    /// Restrição de claim: só aceita tasks cujo `target_agent` comece com este
+    /// prefixo. Vazio (padrão) = aceita qualquer target; tasks sem target
+    /// (`target_agent` vazio) são sempre elegíveis (claim aberto).
+    pub target_agent_prefix: String,
 }
 
 /// Agente principal — orquestra claim, inferência e heartbeat.
@@ -71,7 +75,7 @@ impl Agent {
         ClaimConfig {
             agent_id: self.config.agent_id.clone(),
             specialization: self.config.specialization,
-            target_agent_prefix: String::new(),
+            target_agent_prefix: self.config.target_agent_prefix.clone(),
         }
     }
 

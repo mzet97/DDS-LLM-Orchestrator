@@ -118,6 +118,9 @@ pub fn fail(task: &mut Task, reason: &str) -> Result<(), TransitionError> {
 /// original nasceria "velha" e ficaria permanentemente in-claimável.
 /// Zera também `assigned_at_ns`/`started_at_ns` para que o reaper de
 /// progresso (T-820-03) não re-coleta a task recém-reatribuída.
+/// EXP4: limpa `target_agent` — reatribuição é claim aberto; a decisão de
+/// roteamento pertencia ao assignee que morreu, e mantê-la impediria um
+/// agente com prefixo restritivo de herdar a task.
 pub fn reassign(task: &mut Task, max_retries: u32) -> Result<bool, TransitionError> {
     if task.retry_count >= max_retries {
         fail(task, "MAX_RETRIES_EXCEEDED")?;
@@ -126,6 +129,7 @@ pub fn reassign(task: &mut Task, max_retries: u32) -> Result<bool, TransitionErr
     transition(task, TaskStatus::Pending)?;
     task.retry_count += 1;
     task.assigned_agent.clear();
+    task.target_agent.clear();
     task.assigned_at_ns = 0;
     task.started_at_ns = 0;
     task.created_at_ns = now_ns(); // T-820-03: renascimento — ver doc acima
@@ -263,5 +267,24 @@ mod tests {
         // RESÍDUO DOCUMENTADO (§25.2 do entendimento): `TaskOutput` não carrega
         // tentativa/retry — outputs da tentativa 1 com mesmo (task_id, seq_num)
         // são indistinguíveis dos da tentativa 2 (sem fencing fim-a-fim).
+    }
+
+    /// EXP4 (injeção forçada): reatribuição limpa `target_agent` — a decisão
+    /// de roteamento morre com o assignee; sem isso, um agente sobrevivente
+    /// com `target_agent_prefix` restritivo jamais herdaria a task
+    /// direcionada à vítima (starvation da recuperação).
+    #[test]
+    fn test_reassign_limpa_target_agent() {
+        let mut t = make_task(1); // ASSIGNED
+        t.assigned_agent = "agent-vitima".into();
+        t.target_agent = "agent-vitima".into();
+        assert!(reassign(&mut t, 3).unwrap());
+        assert_eq!(t.status, 0); // PENDING
+        assert!(t.assigned_agent.is_empty());
+        assert!(
+            t.target_agent.is_empty(),
+            "target_agent deveria ter sido limpo na reatribuição, veio {:?}",
+            t.target_agent
+        );
     }
 }

@@ -75,6 +75,7 @@ async fn agent_claim_process_complete_e2e() {
         specialization: Specialization::Text,
         slots: 4,
         dds_domain: DOMAIN,
+        target_agent_prefix: String::new(),
     };
     let runtime = Arc::new(AgentDds::new(config).unwrap());
     let _hb = runtime.clone().spawn_heartbeat();

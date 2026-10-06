@@ -35,6 +35,7 @@ async fn spawn_agent(id: &str) -> Arc<AgentDds> {
         specialization: Specialization::Text,
         slots: 8,
         dds_domain: DOMAIN,
+        target_agent_prefix: String::new(),
     };
     let runtime = Arc::new(AgentDds::new(config).unwrap());
     let engine = Arc::new(MockEngine::new("chunk", 2, 5));
@@ -142,6 +143,7 @@ async fn r2_shared_waitset_sob_client_submit_concorrente() {
         specialization: Specialization::Text,
         slots: 4,
         dds_domain: R2_DOMAIN,
+        target_agent_prefix: String::new(),
     };
     let runtime = Arc::new(AgentDds::new(config).unwrap());
     let engine = Arc::new(MockEngine::new("chunk", 10, 20)); // ~200ms/task

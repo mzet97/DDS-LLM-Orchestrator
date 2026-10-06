@@ -61,6 +61,11 @@ struct Args {
     #[arg(long, default_value = "http://localhost:8082")]
     llama_url: String,
 
+    /// Restrição de claim: só aceita tasks cujo `target_agent` comece com este
+    /// prefixo (vazio = aceita qualquer target; EXP4 injeção forçada).
+    #[arg(long, default_value = "")]
+    target_agent_prefix: String,
+
     /// Restrição de provedor publicada em `LLM.InferenceRequest`.
     #[arg(long, value_enum, default_value = "local-only")]
     provider_constraint: ProviderConstraint,
@@ -122,6 +127,7 @@ async fn main() -> Result<()> {
         specialization: spec,
         slots: args.slots,
         dds_domain: args.dds_domain,
+        target_agent_prefix: args.target_agent_prefix.clone(),
     };
 
     tracing::info!(
@@ -203,6 +209,7 @@ async fn main() -> Result<()> {
         specialization: spec,
         slots: args.slots,
         dds_domain: args.dds_domain,
+        target_agent_prefix: args.target_agent_prefix.clone(),
     };
 
     tracing::info!(agent_id = %config.agent_id, "agent SEM feature dds — caminho mock");

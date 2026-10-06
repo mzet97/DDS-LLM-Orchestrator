@@ -35,6 +35,10 @@ struct Cfg {
     prompts_dir: String,
     model: String,
     timeout_ms: u64,
+    /// EXP4 (injeção forçada): fixa `target_agent` em todas as tasks —
+    /// combinado com `--target-agent-prefix` nos agentes, direciona o fluxo
+    /// a um agente específico (vítima do kill).
+    target_agent: String,
     meta: RunMeta,
 }
 
@@ -54,6 +58,7 @@ fn parse_args() -> Result<Cfg, String> {
         prompts_dir: String::from("benchmarks/orchestration/prompts"),
         model: meta.model.clone(),
         timeout_ms: 120_000,
+        target_agent: String::new(),
         meta,
     };
     // Preenche Cfg e espelha os campos do registro.
@@ -75,6 +80,7 @@ fn parse_args() -> Result<Cfg, String> {
             "--timeout-ms" => {
                 c.timeout_ms = val(i)?.parse().map_err(|e| format!("timeout: {e}"))?
             }
+            "--target-agent" => c.target_agent = val(i)?,
             other => return Err(format!("argumento desconhecido: {other}")),
         }
         i += 2;
@@ -101,8 +107,12 @@ async fn submit_stage(
     helper: &DdsClient,
     model: &str,
     messages_json: &str,
+    target_agent: &str,
 ) -> Result<(String, String, u64), Box<dyn std::error::Error>> {
-    let task = helper.create_task(model, messages_json, 5, false);
+    let mut task = helper.create_task(model, messages_json, 5, false);
+    if !target_agent.is_empty() {
+        task.target_agent = target_agent.to_string();
+    }
     let r = client.submit(task).await?;
     if !r.success {
         return Err(format!("task {} sem sucesso", r.task_id).into());
@@ -117,9 +127,11 @@ async fn run_stage(
     stage: &'static str,
     messages_json: &str,
     expects: Vec<String>,
+    target_agent: &str,
 ) -> Result<StageRec, Box<dyn std::error::Error>> {
     let started_ms = ms_now();
-    let (task_id, content, latency_ms) = submit_stage(client, helper, model, messages_json).await?;
+    let (task_id, content, latency_ms) =
+        submit_stage(client, helper, model, messages_json, target_agent).await?;
     Ok(StageRec {
         stage,
         task_id,
@@ -145,6 +157,7 @@ async fn run_seq(cfg: &Cfg) -> Result<(), Box<dyn std::error::Error>> {
         "A",
         &assembly::build_messages(&pa, &cfg.entry, &[]),
         vec![],
+        &cfg.target_agent,
     )
     .await?;
     let b = run_stage(
@@ -154,6 +167,7 @@ async fn run_seq(cfg: &Cfg) -> Result<(), Box<dyn std::error::Error>> {
         "B",
         &assembly::build_messages(&pb, &cfg.entry, &[(ANALYSIS, a.content.clone())]),
         vec![a.content.clone()],
+        &cfg.target_agent,
     )
     .await?;
     let c = run_stage(
@@ -167,6 +181,7 @@ async fn run_seq(cfg: &Cfg) -> Result<(), Box<dyn std::error::Error>> {
             &[(ANALYSIS, a.content.clone()), (REVIEW, b.content.clone())],
         ),
         vec![a.content.clone(), b.content.clone()],
+        &cfg.target_agent,
     )
     .await?;
     println!("WF_RECORD {}", emit(&cfg.meta, &[a, b, c]).await?);
@@ -192,21 +207,22 @@ async fn run_fork(cfg: &Cfg, serial: bool) -> Result<(), Box<dyn std::error::Err
     let model = cfg.model.clone();
     let (a, b) = if serial {
         let h = &helper;
-        let a = run_stage(&client, h, &model, "A", &ma, vec![]).await?;
-        let b = run_stage(&client, h, &model, "B", &mb, vec![]).await?;
+        let a = run_stage(&client, h, &model, "A", &ma, vec![], &cfg.target_agent).await?;
+        let b = run_stage(&client, h, &model, "B", &mb, vec![], &cfg.target_agent).await?;
         (a, b)
     } else {
         let (ca, cb) = (Arc::clone(&client), Arc::clone(&client));
         let (mb2, model2) = (mb.clone(), model.clone());
+        let (ta, tb) = (cfg.target_agent.clone(), cfg.target_agent.clone());
         let ha_h = DdsClient::new(client_config("fork-a".to_string(), cfg));
         let hb_h = DdsClient::new(client_config("fork-b".to_string(), cfg));
         let ha = tokio::spawn(async move {
-            run_stage(&ca, &ha_h, &model, "A", &ma, vec![])
+            run_stage(&ca, &ha_h, &model, "A", &ma, vec![], &ta)
                 .await
                 .map_err(|e| e.to_string())
         });
         let hb = tokio::spawn(async move {
-            run_stage(&cb, &hb_h, &model2, "B", &mb2, vec![])
+            run_stage(&cb, &hb_h, &model2, "B", &mb2, vec![], &tb)
                 .await
                 .map_err(|e| e.to_string())
         });
@@ -232,6 +248,7 @@ async fn run_fork(cfg: &Cfg, serial: bool) -> Result<(), Box<dyn std::error::Err
             ],
         ),
         vec![a.content.clone(), b.content.clone()],
+        &cfg.target_agent,
     )
     .await?;
     let meta = RunMeta {
