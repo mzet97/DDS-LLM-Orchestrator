@@ -117,3 +117,24 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   `PLANO_IMPLEMENTACAO_RESTANTE.md`). mDNS não será implementado — ver
   `notes.md` §I.10 (retratação do SDD §34). Fallback manual/catálogo já
   existe (T-840-03).
+
+## T-890 — presença DDS multi-host AO VIVO (2026-10-06)
+
+- **T-890-02 (nó anuncia a si) ✅ com evidência em 3 hosts reais:** `studio-noded`
+  musl-estático **com CycloneDDS C estático** (cross-build via musl.cc 11.2.1;
+  snapshot ABI `abi-snapshots/x86_64-unknown-linux-musl.rs` — layouts glibc≡musl
+  verificados por diff do probe; reinstalação automática pelo deploy script).
+  Descoberta **unicast com peers** do lab (XML sem xmlns — o vendored ignora
+  xmlns; lição 870), `STUDIO_NODE_DDS_DOMAIN=170`,
+  `CYCLONEDDS_URI` com path ABSOLUTO no env (systemd EnvironmentFile não
+  expande `$HOME`) e URL `file://` com três barras.
+- **T-890-03 (auto-descoberta) ◐→eixo de dados ✅:** leitor headless
+  (`examples/list_node_presence.rs`) vê **3 instalações vivas** (.61/.62/.64,
+  heartbeat 5 s/lease 10 s) com `node_id` único por host — o `node_id` default
+  deriva da autoridade da URL pública (`STUDIO_NODE_PUBLIC_URL`): sem override,
+  os 3 hosts colidiam na chave `0.0.0.0:4317` e o KL1 mantinha 1 instância só.
+  O mapeamento GUI (`dds_observe::studio_node_row`) é testado; a captura visual
+  do painel Máquinas exige display — queda para checagem do autor.
+- Fix embutido: `STUDIO_NODE_PUBLIC_URL` (bind 0.0.0.0 atrás de NAT não é
+  conectável); `advertised_url`/`default_node_id` puros com testes (44/0 com
+  feature dds no studio-node; workspace 449/0 sem dds).

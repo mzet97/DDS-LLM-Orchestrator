@@ -46,6 +46,14 @@ echo "== [1/5] build musl estático (feature dds — presença Studio.NodePresen
 # musl-gcc NA MESMA invocação (o cmake só honra CC na 1ª configuração).
 MUSL_CC="${MUSL_CC:-$HOME/.local/musl-cross/x86_64-linux-musl-cross/bin/x86_64-linux-musl-gcc}"
 [[ -x "$MUSL_CC" ]] || { echo "toolchain musl ausente: $MUSL_CC"; exit 1; }
+# Snapshot ABI do sys crate (FFI-ABI-008): se o registry foi re-extraído, o
+# snapshot versionado em abi-snapshots/ é reinstalado automaticamente.
+SYS_ABI=$(ls -d "$HOME"/.cargo/registry/src/index.crates.io-*/cyclonedds-rust-sys-1.2.1/abi 2>/dev/null | head -1)
+if [[ -n "$SYS_ABI" && ! -s "$SYS_ABI/x86_64-unknown-linux-musl.rs" ]]; then
+  cp "$ROOT/abi-snapshots/x86_64-unknown-linux-musl.rs" "$SYS_ABI/" \
+    || { echo "falha ao instalar snapshot ABI em $SYS_ABI"; exit 1; }
+  echo "snapshot ABI musl instalado em $SYS_ABI"
+fi
 MUSL_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/tese-rust-target-musl-dds}"
 MUSL_BIN_DIR="$(dirname "$MUSL_CC")"
 CARGO_TARGET_DIR="$MUSL_DIR" PATH="$MUSL_BIN_DIR:$PATH" \
