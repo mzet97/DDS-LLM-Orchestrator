@@ -19,6 +19,11 @@ pub const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(5);
 /// Variável de ambiente que ativa a presença (nº do domínio DDS).
 pub const ENV_DDS_DOMAIN: &str = "STUDIO_NODE_DDS_DOMAIN";
 
+/// URL pública anunciada na presença — override do `http://{bind}:{port}`
+/// quando o nó faz bind 0.0.0.0 atrás de NAT/overlay (a GUI consome a URL
+/// para "adicionar ao catálogo"; 0.0.0.0 não é conectável).
+pub const ENV_PUBLIC_URL: &str = "STUDIO_NODE_PUBLIC_URL";
+
 /// `now` em ns UNIX — `last_seen_ns` é comparado ENTRE máquinas (wall clock;
 /// skew de NTP aparece no campo, não na entrega: quem ordena a entrega é o
 /// DDS).
@@ -46,6 +51,16 @@ pub fn dds_domain_from_env(raw: Option<String>) -> Option<u32> {
     trimmed.parse::<u32>().ok()
 }
 
+/// URL anunciada na presença: override público quando fornecido (bind
+/// 0.0.0.0 atrás de NAT/overlay não é conectável), senão `http://{bind}:{port}`.
+#[must_use]
+pub fn advertised_url(bind: std::net::IpAddr, port: u16, public: Option<String>) -> String {
+    public
+        .map(|u| u.trim().to_owned())
+        .filter(|u| !u.is_empty())
+        .unwrap_or_else(|| format!("http://{bind}:{port}"))
+}
+
 #[cfg(feature = "dds")]
 pub use dds_impl::{presence_sample, spawn_from_env, PresencePublisher};
 
@@ -53,7 +68,7 @@ pub use dds_impl::{presence_sample, spawn_from_env, PresencePublisher};
 mod dds_impl {
     //! Publicador de presença (requer a feature `dds`).
 
-    use super::{dds_domain_from_env, now_unix_ns, ENV_DDS_DOMAIN, HEARTBEAT};
+    use super::{advertised_url, dds_domain_from_env, now_unix_ns, ENV_DDS_DOMAIN, HEARTBEAT};
     use dds_contract::generated::dds_llm_orchestrator::StudioNodePresence;
     use dds_dataspace::DataSpace;
 
@@ -167,11 +182,11 @@ mod dds_impl {
             );
             return;
         };
-        let url = format!("http://{bind}:{port}");
+        let url = advertised_url(bind, port, std::env::var(super::ENV_PUBLIC_URL).ok());
         let node_id = std::env::var("STUDIO_NODE_ID")
             .ok()
             .filter(|id| !id.trim().is_empty())
-            .unwrap_or_else(|| format!("{}:{port}", hostname_or_bind(bind)));
+            .unwrap_or_else(|| default_node_id(&url, bind, port));
         let publisher =
             match PresencePublisher::new(domain, node_id, url, token_present, services.join(",")) {
                 Ok(publisher) => publisher,
@@ -189,17 +204,73 @@ mod dds_impl {
 
     /// Identidade padrão do nó: hostname do ambiente quando existe (a porta
     /// desambigua múltiplos nós na mesma máquina), `bind` caso contrário.
-    fn hostname_or_bind(bind: std::net::IpAddr) -> String {
+    pub(super) fn hostname_or_bind(bind: std::net::IpAddr) -> String {
         std::env::var("HOSTNAME")
             .ok()
             .filter(|h| !h.trim().is_empty())
             .unwrap_or_else(|| bind.to_string())
     }
+
+    /// `node_id` default (chave do tópico — PRECISA ser única por instalação):
+    /// autoridade da URL anunciada quando endereçável (override público/LAN);
+    /// `0.0.0.0` não identifica nada — cai para hostname/bind. Sem o override,
+    /// units systemd (sem `HOSTNAME` no user manager) colidiam 3 hosts na
+    /// mesma chave `0.0.0.0:4317` e o KL1 ficava com uma instância só.
+    pub(super) fn default_node_id(url: &str, bind: std::net::IpAddr, port: u16) -> String {
+        let authority = url
+            .trim_start_matches("https://")
+            .trim_start_matches("http://");
+        let host = authority.split(':').next().unwrap_or("");
+        if !host.is_empty() && host != "0.0.0.0" && host != "[::]" {
+            return authority.to_owned();
+        }
+        format!("{}:{port}", hostname_or_bind(bind))
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{dds_domain_from_env, ENV_DDS_DOMAIN, HEARTBEAT};
+    use super::{advertised_url, dds_domain_from_env, ENV_DDS_DOMAIN, HEARTBEAT};
+
+    // T-890: bind 0.0.0.0 atrás de NAT/overlay não é conectável — o override
+    // público vence; branco/vazio cai no derivado do bind.
+    #[test]
+    fn advertised_url_prefers_public_override() {
+        use std::net::IpAddr;
+        let any: IpAddr = "0.0.0.0".parse().unwrap();
+        let lo: IpAddr = "127.0.0.1".parse().unwrap();
+        assert_eq!(
+            advertised_url(any, 4317, Some(String::from("http://192.168.1.62:4317"))),
+            "http://192.168.1.62:4317"
+        );
+        assert_eq!(
+            advertised_url(any, 4317, Some(String::from("   "))),
+            "http://0.0.0.0:4317",
+            "override vazio ignora"
+        );
+        assert_eq!(advertised_url(lo, 4317, None), "http://127.0.0.1:4317");
+    }
+
+    // T-890: node_id default é a autoridade da URL endereçável (única por
+    // instalação); 0.0.0.0 cai para hostname/bind — 3 hosts NUNCA colidem
+    // na mesma chave do tópico keyed (KL1 guardaria uma instância só).
+    #[cfg(feature = "dds")]
+    #[test]
+    fn default_node_id_derives_from_public_url() {
+        use std::net::IpAddr;
+        let any: IpAddr = "0.0.0.0".parse().unwrap();
+        assert_eq!(
+            super::dds_impl::default_node_id("http://192.168.1.62:4317", any, 4317),
+            "192.168.1.62:4317"
+        );
+        assert_eq!(
+            super::dds_impl::default_node_id("http://0.0.0.0:4317", any, 4317),
+            format!(
+                "{}:4317",
+                std::env::var("HOSTNAME").unwrap_or_else(|_| "0.0.0.0".into())
+            )
+        );
+    }
 
     // T-890: a env decide a presença — ausente/vazia/lixo desativam (nó
     // segue HTTP-only), inteiro válido ativa. Função pura: sem DDS.
