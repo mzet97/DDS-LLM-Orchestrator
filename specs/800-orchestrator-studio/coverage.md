@@ -58,7 +58,7 @@ tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
 
 G-02, G-04, G-08 (colisão entre nós), G-10, G-11 (verificação cruzada),
 G-15 (criação), G-18, G-19, G-20, G-21, G-22, G-25, G-26, G-31, G-32,
-G-33, G-38, G-41, G-53, G-60, G-61, G-64, G-65,
+G-33, G-41, G-53, G-60, G-61, G-64,
 G-66, G-70. Causa única: um host só, sem SSH remoto, sem executor de
 tools vivo no mesh. Desbloqueio = prover 2º host/VM + executor.
 
@@ -109,7 +109,7 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   na .61 (applied → active em 1 s; stop → inactive no host); criação de
   unidades NOVAS pela GUI segue pendente.
 - Painel "Máquinas" novo na GUI (10→11 seções). Seguem 🔒: G-18..22 (ferramentas),
-  G-25/26 (wf-run GUI ✅ 890-07), G-38/65, G-10/11 (GGUF×manifesto ✅ 890-08).
+  G-25/26 (wf-run GUI ✅ 890-07), G-10/11 (GGUF×manifesto ✅ 890-08); G-38/65 implementados com nota de validação (2026-10-06).
 - **G-41/42 (mDNS) → NÃO APLICÁVEL (2026-10-05, decisão do autor):** DDS é
   requisito mínimo em toda máquina da implantação; a descoberta de instalações
   do Studio será **nativa do DDS** pelo 19º tópico canônico
@@ -283,3 +283,22 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   rustc ≥1.95; o código de PRODUÇÃO do workspace permanece 1.85 — só
   `cargo test -p orchestrator-studio` (que compila o dev-dep) exige
   toolchain ≥1.95. G-37 ✅.
+
+## T-890-08 (item G-38/65) — modo protegido (2026-10-06)
+
+- **Entregue (commit `a354ad0`):** `protected.rs` — `ProtectedGuard` com
+  default **DESARMADO** (abrir a GUI nunca habilita efeitos). Ações com
+  efeito real em máquinas remotas (actuação de unidades systemd no painel
+  de Serviços) só disparam com o modo ARMADO no toggle 🛡 da barra
+  lateral — e, mesmo armado, exigem **confirmação explícita por ação**
+  ("CONFIRMAR: …" → ✔ Confirmar / ✘ Cancelar). Desarmado, a recusa é
+  tipada, registrada e NADA trafega.
+- **Testes:** 3 unit do guard (recusa/pedido/confirmar/cancelar/desarmar)
+  + 2 kittest pela UI real — desarmado recusa sem aceitar payload; armado
+  exige "✔ Confirmar" e SÓ dispara a actuação depois (provado com erro de
+  rede em URL inalcançável: a chamada FOI feita, e só após o clique).
+- **G-38/65:** textos dos gates vivem no SDD mestre — implementação segue
+  a evidência do repositório ("modo protegido/benchmark" no REPORT 800);
+  **marcada para validação contra o SDD mestre na revisão final**.
+- Cobertura: **475 passed / 0** no workspace (5 testes novos); studio
+  73/0 sem dds, 79/0 com dds.
