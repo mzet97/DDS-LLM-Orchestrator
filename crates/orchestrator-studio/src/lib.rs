@@ -17,6 +17,7 @@ pub mod machines;
 pub mod models;
 pub mod origin;
 pub mod overview;
+pub mod protected;
 pub mod services;
 pub mod state;
 pub mod views;

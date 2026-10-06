@@ -1,10 +1,13 @@
-//! Painel de serviços: plano legível pretendido × efetivo (só lê).
+//! Painel de serviços: plano legível pretendido × efetivo, com ACTUAÇÃO de
+//! unidades remotas protegida pelo modo protegido (T-890-08, G-38/65).
 
+use crate::protected::ProtectedGuard;
+use crate::protected::ProtectedOutcome;
 use crate::services::ServicesPanel;
 use eframe::egui;
 
 /// URL, botão de leitura, erro e tabela com a divergência em destaque.
-pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
+pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedGuard) {
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     panel.poll();
     ui.collapsing("Serviços do nó (plano: pretendido × efetivo)", |ui| {
@@ -59,7 +62,39 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
                     ui.end_row();
                 }
                 if let Some((service, start)) = pending {
-                    panel.actuate_row(&service, start);
+                    let description = format!(
+                        "{} serviço '{}' no nó",
+                        if start { "INICIAR" } else { "PARAR" },
+                        service
+                    );
+                    // G-38/65: desarmado RECUSA (nada trafega); armado pede
+                    // confirmação explícita antes de tocar a máquina remota.
+                    match guard.request(&description) {
+                        ProtectedOutcome::NeedsConfirmation(_) => {
+                            panel.pending_action = Some((service.clone(), start));
+                        }
+                        ProtectedOutcome::Refused(_) => {}
+                    }
+                }
+            });
+        }
+        // Confirmação da ação pendente (visível até resolvida).
+        if let Some(pending) = &guard.pending {
+            ui.separator();
+            ui.colored_label(
+                egui::Color32::YELLOW,
+                format!("CONFIRMAR: {}", pending.description),
+            );
+            ui.horizontal(|ui| {
+                if ui.button("✔ Confirmar").clicked() {
+                    guard.confirm_pending();
+                    if let Some((service, start)) = panel.pending_action.take() {
+                        panel.actuate_row(&service, start);
+                    }
+                }
+                if ui.button("✘ Cancelar").clicked() {
+                    guard.cancel_pending();
+                    panel.pending_action = None;
                 }
             });
         }

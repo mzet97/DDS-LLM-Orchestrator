@@ -95,6 +95,7 @@ struct StudioApp {
     #[cfg(feature = "dds")]
     dds: orchestrator_studio::dds_observe::DdsState,
     workflow: orchestrator_studio::workflow::WorkflowState,
+    protected: orchestrator_studio::protected::ProtectedGuard,
 }
 
 impl StudioApp {
@@ -115,6 +116,7 @@ impl StudioApp {
             #[cfg(feature = "dds")]
             dds: orchestrator_studio::dds_observe::DdsState::new(),
             workflow: orchestrator_studio::workflow::WorkflowState::new(),
+            protected: orchestrator_studio::protected::ProtectedGuard::new(),
         }
     }
 }
@@ -139,6 +141,16 @@ impl eframe::App for StudioApp {
                 {
                     self.section = *section;
                 }
+            }
+            ui.separator();
+            // T-890-08 (G-38/65): modo protegido — ações com efeito real.
+            let armed = self.protected.armed;
+            let guard_label = self.protected.label();
+            if ui.selectable_label(armed, guard_label).clicked() {
+                self.protected.set_armed(!armed);
+            }
+            if let Some(refusal) = &self.protected.last_refusal {
+                ui.colored_label(egui::Color32::RED, refusal);
             }
         });
         egui::CentralPanel::default().show(ui, |ui| {
@@ -184,9 +196,11 @@ impl eframe::App for StudioApp {
                 }
                 Section::Agents => orchestrator_studio::views::agents::show(ui, &mut self.agents),
                 Section::Models => orchestrator_studio::views::models::show(ui, &mut self.models),
-                Section::Services => {
-                    orchestrator_studio::views::services::show(ui, &mut self.services)
-                }
+                Section::Services => orchestrator_studio::views::services::show(
+                    ui,
+                    &mut self.services,
+                    &mut self.protected,
+                ),
                 Section::Shared => {
                     orchestrator_studio::views::shared_catalog::show(ui, &mut self.shared)
                 }

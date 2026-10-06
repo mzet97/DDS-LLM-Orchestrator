@@ -111,6 +111,8 @@ enum ServicesMsg {
 /// Estado do painel de serviços.
 #[derive(Debug)]
 pub struct ServicesPanel {
+    /// Ação aceita pelo modo protegido e aguardando confirmação (T-890-08).
+    pub pending_action: Option<(String, bool)>,
     pub url: String,
     pub list: Vec<ServiceStatus>,
     pub error: String,
@@ -124,12 +126,19 @@ impl ServicesPanel {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            pending_action: None,
             url: String::from("http://127.0.0.1:4317"),
             list: Vec::new(),
             error: String::new(),
             busy: false,
             receiver: None,
         }
+    }
+
+    /// Painel apontando para um nó específico (testes de UI — T-890-08).
+    #[must_use]
+    pub fn with_url(url: String) -> Self {
+        Self { url, ..Self::new() }
     }
 
     /// Recarrega o plano em background; erro preserva a lista e registra o
