@@ -10,7 +10,7 @@
 
 #[cfg(feature = "dds")]
 use crate::machines::ProbeState;
-use crate::machines::ProbeStatus;
+use crate::machines::{now_unix_ns, ProbeStatus};
 
 /// Uma instalação descoberta via `Studio.NodePresence`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,6 +53,9 @@ pub struct DiscoveryState {
     /// `true` até o primeiro snapshot chegar (worker ainda escaneando).
     pub scanning: bool,
     pub error: String,
+    /// Índice do nó selecionado como ALVO ÚNICO da GUI (T-890-03): todos os
+    /// painéis com URL de nó apontam para ele; trocar aqui troca em todo lugar.
+    pub selected: Option<usize>,
     #[cfg(feature = "dds")]
     receiver: Option<std::sync::mpsc::Receiver<DiscoverySnapshot>>,
 }
@@ -88,6 +91,44 @@ impl DiscoveryState {
     pub fn observe(&mut self, nodes: Vec<DiscoveredNode>) {
         self.nodes = nodes;
         self.scanning = false;
+    }
+
+    /// URL do nó selecionado (`None` sem seleção ou seleção fora da lista).
+    #[must_use]
+    pub fn selected_url(&self) -> Option<String> {
+        let index = self.selected?;
+        self.nodes
+            .get(index)
+            .map(|node| node.url.clone())
+            .filter(|url| !url.trim().is_empty())
+    }
+
+    /// Seleciona pelo índice (clamp implícito em `selected_url`).
+    pub fn select(&mut self, index: usize) {
+        self.selected = Some(index);
+    }
+
+    /// Auto-seleção do primeiro nó ONLINE (chamado quando a lista muda e
+    /// ainda não há seleção): abre o Studio, o primeiro nó vivo vira o
+    /// alvo — os painéis conectam sem nenhum clique.
+    pub fn autoselect_first_online(&mut self) -> bool {
+        if self.selected.is_some() {
+            return false;
+        }
+        let now = now_unix_ns();
+        let index = self.nodes.iter().position(|node| {
+            node.is_alive(now)
+                && matches!(
+                    node.probe.as_ref().map(|p| p.state),
+                    Some(crate::machines::ProbeState::Online)
+                )
+        });
+        if let Some(index) = index {
+            self.selected = Some(index);
+            true
+        } else {
+            false
+        }
     }
 }
 

@@ -139,8 +139,28 @@ impl StudioApp {
 
 impl eframe::App for StudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // T-890-03: descoberta → alvo único. O nó selecionado (auto: primeiro
+        // online; manual: combobox no painel Máquinas) propaga para TODOS os
+        // painéis que falam com um studio-node — trocar uma vez, muda tudo.
+        self.discovery.poll();
+        if self.discovery.autoselect_first_online() {
+            eprintln!(
+                "studio: alvo automático: {}",
+                self.discovery.selected_url().unwrap_or_default()
+            );
+        }
+        if let Some(target) = self.discovery.selected_url() {
+            self.node_url = target.clone();
+            self.services.url = target.clone();
+            self.shared.url = target.clone();
+            self.machines.url = target;
+        }
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.label(self.state.status());
+            if let Some(target) = self.discovery.selected_url() {
+                ui.separator();
+                ui.label(format!("🛰 alvo: {target}"));
+            }
         });
         egui::Panel::left("nav").show(ui, |ui| {
             ui.heading("Studio");

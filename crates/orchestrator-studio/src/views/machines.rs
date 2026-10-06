@@ -44,6 +44,33 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                 return;
             }
             let now_ns = crate::machines::now_unix_ns();
+
+            // ALVO ÚNICO (T-890-03): o nó escolhido aqui é usado por TODOS os
+            // painéis da GUI (Nó, Serviços, Catálogo, Máquinas, Despacho).
+            egui::ComboBox::from_id_salt("discovery-selected-node")
+                .selected_text(
+                    discovery
+                        .selected_url()
+                        .unwrap_or_else(|| String::from("— selecionar nó alvo —")),
+                )
+                .show_ui(ui, |ui| {
+                    for (index, node) in discovery.nodes.iter().enumerate() {
+                        let alive = if node.is_alive(now_ns) { "●" } else { "○" };
+                        ui.selectable_value(
+                            &mut discovery.selected,
+                            Some(index),
+                            format!("{alive} {} ({})", node.node_id, node.url),
+                        );
+                    }
+                });
+            match discovery.selected_url() {
+                Some(url) => {
+                    ui.label(format!("alvo de todos os painéis: {url}"));
+                }
+                None => {
+                    ui.label("sem seleção — painéis seguem com a URL manual");
+                }
+            }
             egui::Grid::new("discovery_grid")
                 .striped(true)
                 .show(ui, |ui| {
