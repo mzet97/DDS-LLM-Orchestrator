@@ -332,3 +332,25 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   :8080/.62, não um studio-node) e os painéis DDS (Topologia/Ferramentas/
   Workflow usam domínio, não URL) ficaram fora por design — alvo de nó só
   faz sentido onde o par é um studio-node.
+
+## T-890-03 (v2) — inventário vivo COMPLETO + painéis que carregam sozinhos (2026-10-06)
+
+- **Pedido do autor:** "não identificou o serviço de inferência… a única
+  aba certa é Máquinas". Entregue (commit `74285ac`): o worker de descoberta
+  agora drena **3 streams** no mesmo domínio — `Studio.NodePresence`
+  (instalações), `AgentRegistry` (agentes; poda >30 s sem heartbeat) e
+  `ServerStatus` (**servidores de inferência**) — num snapshot único.
+- **AUTO-CARGA real:** trocar o alvo dispara as leituras sozinhas — Nó
+  conecta (token do deploy), Serviços lê o plano, Catálogo tira o snapshot.
+  Sem clicar em "Conectar"/"Ler plano".
+- **Agentes**: seção DDS ao vivo sempre populada (independe do orquestrador
+  HTTP). **Inferência**: seção `ServerStatus` (llama-server com `LLAMA_DDS=ON`
+  aparece sozinho; nota honesta: o contrato não carrega URL HTTP).
+- **Topologia/Ferramentas**: domínio default 170 (`STUDIO_DDS_DOMAIN`) +
+  observação automática ao abrir a aba. **Workflow**: default 170. Barra de
+  status: "🛰 descoberta: N nó(s) · N agente(s) · N inferência(s)".
+- **Evidência ao vivo:** boot do binário → log `studio: alvo automático:
+  http://192.168.1.61:4317` (auto-seleção + auto-carga disparadas).
+- **Achado operacional:** instâncias do studio RODANDO interferem no teste
+  `llm_result_backlog` (timing; 1 amostra duplicada) — fechá-las antes de
+  `cargo test --workspace`; serial (`--test-threads=1`) sempre verde.
