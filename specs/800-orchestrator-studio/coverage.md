@@ -139,6 +139,26 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   conectável); `advertised_url`/`default_node_id` puros com testes (44/0 com
   feature dds no studio-node; workspace 449/0 sem dds).
 
+## T-890-07 — wf-run pela GUI (2026-10-06)
+
+- **Entregue (commit `e17416c`):** painel "Workflow (A→B→C)" no Studio — a
+  cadeia sequencial canônica executada pelo data space via **lib `client`**
+  (caminho sancionado do plano: "via nó ou lib client"), não por subprocesso.
+- **Montagem única:** `wf_assembly` promovido do binário `wf-run` para a
+  biblioteca; prompts congelados embutidos (`SEQ_PROMPTS`, cópias
+  byte-idênticas dos `seq_*_v1.txt` do baseline) — `wf-run` e GUI não podem
+  divergir.
+- **Padrão de threads da GUI:** worker em thread + mpsc + `poll` por frame
+  (T-820-19); runtime tokio `current_thread` criado DENTRO da thread de
+  trabalho; worker que morre sem `Done` libera a UI com erro explícito.
+- **G-25/26:** a GUI agora também dispara workflows reais (estágios com
+  task/latência/prévia e total); o despacho unitário já existia (T-800-11) —
+  o gate fica ✅ com o encadeado. Máquina de estado com 6 testes (corridas
+  de thread inclusas) compilando com e sem `dds`; 461 passed / 0 workspace.
+- **Evidência ao vivo do caminho de execução:** o mesmo caminho
+  (`DdsClientDds::submit` → claim → DONE) é o medido nas EXP0–EXP4; smoke
+  visual do painel exige display (checagem do autor, como o painel Máquinas).
+
 ## T-890-05 — studio-storage: journal SQLite atrás de trait (2026-10-06)
 
 - **Entregue (commit `527ded6`):** `studio-node/src/storage.rs` — trait
