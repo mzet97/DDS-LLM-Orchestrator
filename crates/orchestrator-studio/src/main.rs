@@ -36,6 +36,7 @@ enum Section {
     Workflow,
     #[cfg(feature = "dds")]
     Tools,
+    Logs,
 }
 
 impl Section {
@@ -55,6 +56,7 @@ impl Section {
             Self::Workflow => "Workflow (A→B→C)",
             #[cfg(feature = "dds")]
             Self::Tools => "Ferramentas",
+            Self::Logs => "Logs",
         }
     }
 
@@ -74,6 +76,7 @@ impl Section {
             Self::Workflow,
             #[cfg(feature = "dds")]
             Self::Tools,
+            Self::Logs,
         ]
     }
 }
@@ -152,10 +155,10 @@ impl eframe::App for StudioApp {
         // painéis que falam com um studio-node — trocar uma vez, muda tudo.
         self.discovery.poll();
         if self.discovery.autoselect_first_online() {
-            eprintln!(
-                "studio: alvo automático: {}",
+            orchestrator_studio::studio_log::info(format!(
+                "alvo automático: {}",
                 self.discovery.selected_url().unwrap_or_default()
-            );
+            ));
         }
         if let Some(target) = self.discovery.selected_url() {
             self.node_url = target.clone();
@@ -174,6 +177,10 @@ impl eframe::App for StudioApp {
                 if let Some(token) = &token {
                     self.node_token = token.clone();
                 }
+                orchestrator_studio::studio_log::info(format!(
+                    "auto-carga do alvo {target}: Nó (token={}) + Serviços + Catálogo",
+                    if token.is_some() { "sim" } else { "não" }
+                ));
                 self.state
                     .refresh_from_node_with_token(&target, token.as_deref());
                 self.services.refresh();
@@ -189,6 +196,10 @@ impl eframe::App for StudioApp {
             && !self.dds.busy
         {
             self.dds_observed = true;
+            orchestrator_studio::studio_log::info(format!(
+                "topologia: observação automática do domínio {}",
+                self.dds.domain
+            ));
             self.dds.refresh();
         }
         egui::Panel::bottom("status").show(ui, |ui| {
@@ -302,6 +313,7 @@ impl eframe::App for StudioApp {
                 }
                 #[cfg(feature = "dds")]
                 Section::Tools => orchestrator_studio::views::tools::show(ui, &mut self.dds),
+                Section::Logs => orchestrator_studio::views::logs::show(ui),
                 #[cfg(not(feature = "dds"))]
                 Section::Topology => {
                     ui.heading("Topologia DDS");

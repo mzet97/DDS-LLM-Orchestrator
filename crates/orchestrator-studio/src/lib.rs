@@ -21,6 +21,7 @@ pub mod overview;
 pub mod protected;
 pub mod services;
 pub mod state;
+pub mod studio_log;
 pub mod views;
 pub mod workflow;
 pub mod workload;
