@@ -212,3 +212,19 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   por política vigente com decisão auditável, e observação das chamadas na
   GUI. Status atualizado para ✅-com-esta-evidência (validar contra o texto
   do SDD mestre na revisão final).
+
+## T-890-04 — 2ª GUI simultânea (2026-10-06, parte executável)
+
+- **Provado nesta sessão:** DUAS instâncias gráficas do `studio` (eframe/egui,
+  `--features dds`) rodando SIMULTANEAMENTE na mesma estação — PIDs distintos,
+  60+ s estáveis, zero saída de erro, **sem guard de instância única** (nada
+  impede N GUIs). Compilação release com dds: binário 22,2 MB.
+- **Semântica de concorrência do catálogo** (o risco real de 2 GUIs) já está
+  ✅ pela G-47 (revisão condicional: uma GUI vence, outra recebe 409 — provado
+  vivo+fio na fase 840) e G-50 (mesmo id, payload distinto recusado).
+- **Resta para o autor (1 min, requer interação visual):** com as duas
+  janelas abertas na estação (binário
+  `~/.cache/tese-rust-target-fd/release/studio`), apontar ambas para o mesmo
+  nó (ex.: .64 com token) e editar o catálogo pelas DUAS — a revisão
+  condicional deve deixar uma vencer e a outra receber 409 na UI. Com esse
+  passo, G-70 ✅.
