@@ -81,6 +81,21 @@ async fn publica_snapshot_na_mudanca_de_versao() {
     assert!(service.load_and_publish().await.expect("mudou conteúdo"));
     let snap2 = snaps.next().await.expect("2º snapshot");
     assert!(snap2.policy_json.contains("AgenteB"));
+
+    // T-890-06: o tick periódico (republish) republica MESMO sem mudança —
+    // renovar o timestamp é a razão de ser do intervalo (late-joiners
+    // recusam snapshot com mais de DEFAULT_POLICY_MAX_AGE; sem isso o
+    // gateway ficava permanentemente sem política).
+    assert!(
+        service
+            .republish()
+            .await
+            .expect("republish força publicação"),
+        "republish com conteúdo idêntico DEVE publicar (renova timestamp)"
+    );
+    let snap3 = snaps.next().await.expect("3º snapshot");
+    assert_eq!(snap3.version, 1);
+    assert!(snap3.policy_json.contains("AgenteB"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

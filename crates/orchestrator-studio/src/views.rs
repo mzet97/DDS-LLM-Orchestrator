@@ -11,5 +11,7 @@ pub mod overview;
 pub mod services;
 pub mod shared_catalog;
 #[cfg(feature = "dds")]
+pub mod tools;
+#[cfg(feature = "dds")]
 pub mod topology;
 pub mod workflow;

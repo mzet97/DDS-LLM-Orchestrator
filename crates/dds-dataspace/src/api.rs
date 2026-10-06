@@ -161,8 +161,22 @@ pub trait DataSpaceApi: Send + Sync {
 
     // === ToolCall ===
 
-    /// Publica um request de tool call.
+    /// Publica um request de tool call (writer do papel GATEWAY/agente —
+    /// reivindica e evolui a instância).
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), DataSpaceError>;
+
+    /// Publica o pedido SEM ser dono (strength CLIENTE) — orquestrador/sonda
+    /// que só põe o `ToolCall.Request` inicial (T-890-06, espelho do protocolo
+    /// de Tasks com `Ownership=Exclusive`).
+    async fn write_tool_call_without_ownership(
+        &self,
+        call: ToolCallRequest,
+    ) -> Result<(), DataSpaceError> {
+        let _ = call;
+        Err(DataSpaceError::WriteFailed(
+            "write_tool_call_without_ownership não implementado por este backend".to_owned(),
+        ))
+    }
 
     /// Lê um tool call por ID. Sem default: `Ok(None)` silencioso escondia
     /// implementador incompleto (M2) — todo backend declara o seu.

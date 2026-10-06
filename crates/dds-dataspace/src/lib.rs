@@ -97,6 +97,10 @@ pub struct DataSpace {
 
     // Tópicos ToolCall (1)
     tool_call_writer: DataWriter<ToolCallRequest>,
+    /// T-890-06: writer de strength CLIENTE — quem PÕE o pedido (orquestrador/
+    /// sonda) publica sem ser dono; o gateway evolui a instância com força de
+    /// agente (espelho do `tasks_writer_client`).
+    tool_call_writer_client: DataWriter<ToolCallRequest>,
     tool_call_topic: Arc<Topic<ToolCallRequest>>,
     tool_call_reader: DataReader<ToolCallRequest>,
 
@@ -360,7 +364,11 @@ impl DataSpace {
         let q_llm_result = qos::profiles::llm_result().map_err(err)?;
         let q_ctx_snap = qos::profiles::context_snapshot().map_err(err)?;
         let q_ctx_upd = qos::profiles::context_update().map_err(err)?;
-        let q_tool = qos::profiles::tool_call().map_err(err)?;
+        let q_tool =
+            qos::profiles::tool_call_with_strength(Some(DataSpace::STRENGTH_AGENT)).map_err(err)?;
+        let q_tool_client =
+            qos::profiles::tool_call_with_strength(Some(DataSpace::STRENGTH_CLIENT))
+                .map_err(err)?;
         let q_trace = qos::profiles::execution_trace().map_err(err)?;
         let q_sec_snap = qos::profiles::security_snapshot().map_err(err)?;
         let q_sec_upd = qos::profiles::security_update().map_err(err)?;
@@ -509,6 +517,9 @@ impl DataSpace {
 
         let tool_call_writer =
             DataWriter::with_qos(&publisher, &tool_call_topic, Some(&q_tool)).map_err(err)?;
+        let tool_call_writer_client =
+            DataWriter::with_qos(&publisher, &tool_call_topic, Some(&q_tool_client))
+                .map_err(err)?;
         let execution_trace_writer =
             DataWriter::with_qos(&publisher, &execution_trace_topic, Some(&q_trace))
                 .map_err(err)?;
@@ -580,6 +591,7 @@ impl DataSpace {
             context_update_topic: Arc::new(context_update_topic),
 
             tool_call_writer,
+            tool_call_writer_client,
             tool_call_topic: Arc::new(tool_call_topic),
             tool_call_reader,
             execution_trace_writer,
@@ -2293,6 +2305,16 @@ impl api::DataSpaceApi for DataSpace {
 
     async fn write_tool_call(&self, call: ToolCallRequest) -> Result<(), api::DataSpaceError> {
         self.tool_call_writer.write(&call).map_err(err)
+    }
+
+    /// T-890-06: publica o pedido SEM ser dono da instância (strength
+    /// CLIENTE) — quem põe `ToolCall.Request` não pode bloquear a evolução
+    /// do gateway (mesma razão de `write_task_without_ownership`).
+    async fn write_tool_call_without_ownership(
+        &self,
+        call: ToolCallRequest,
+    ) -> Result<(), api::DataSpaceError> {
+        self.tool_call_writer_client.write(&call).map_err(err)
     }
 
     async fn read_tool_call(

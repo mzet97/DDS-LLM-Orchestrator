@@ -273,12 +273,26 @@ pub mod profiles {
     /// atualizada in-place pelo contrato — sem tópico de resposta — e um
     /// consumer lento depende do histórico retido).
     pub fn tool_call() -> DdsResult<Qos> {
-        QosBuilder::new()
+        tool_call_with_strength(None)
+    }
+
+    /// `ToolCall.Request` com strength por papel (T-890-06, espelho do
+    /// protocolo de Tasks): quem PUBLICA o pedido escreve sem querer ser
+    /// dono (`Some(STRENGTH_CLIENT)`), e o GATEWAY reivindica/evoluí a
+    /// MESMA instância com força de agente (`Some(STRENGTH_AGENT)`) — com
+    /// `Ownership=Exclusive`, escritas de strength menor/igual de outro
+    /// writer são rejeitadas pelo RHC enquanto o primeiro writer vive
+    /// (mesma semântica do P0-1 do T-820 nas Tasks).
+    pub fn tool_call_with_strength(strength: Option<i32>) -> DdsResult<Qos> {
+        let mut b = QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
             .durability(Durability::TransientLocal)
             .history(History::KeepLast(10))
-            .ownership(Ownership::Exclusive)
-            .build()
+            .ownership(Ownership::Exclusive);
+        if let Some(s) = strength {
+            b = b.ownership_strength(s);
+        }
+        b.build()
     }
 
     /// `Security.PolicySnapshot`/`Security.PolicyUpdate`: no Python ambos usam

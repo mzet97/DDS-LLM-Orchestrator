@@ -36,6 +36,8 @@ enum Section {
     Machines,
     Topology,
     Workflow,
+    #[cfg(feature = "dds")]
+    Tools,
 }
 
 impl Section {
@@ -53,6 +55,8 @@ impl Section {
             Self::Machines => "Máquinas",
             Self::Topology => "Topologia DDS",
             Self::Workflow => "Workflow (A→B→C)",
+            #[cfg(feature = "dds")]
+            Self::Tools => "Ferramentas",
         }
     }
 
@@ -70,6 +74,8 @@ impl Section {
             Self::Machines,
             Self::Topology,
             Self::Workflow,
+            #[cfg(feature = "dds")]
+            Self::Tools,
         ]
     }
 }
@@ -185,6 +191,8 @@ impl eframe::App for StudioApp {
                 #[cfg(feature = "dds")]
                 Section::Topology => views::topology::show(ui, &mut self.dds),
                 Section::Workflow => views::workflow::show(ui, &mut self.workflow),
+                #[cfg(feature = "dds")]
+                Section::Tools => views::tools::show(ui, &mut self.dds),
                 #[cfg(not(feature = "dds"))]
                 Section::Topology => {
                     ui.heading("Topologia DDS");

@@ -36,6 +36,12 @@ pub struct ToolRow {
     pub call_id: String,
     pub tool_name: String,
     pub status: i32,
+    /// T-890-06: quem pediu a ferramenta (governança por requester).
+    pub requester_id: String,
+    /// Nível de segurança pedido (o policy-engine decide por ele).
+    pub security_level: i32,
+    /// Prévia do resultado truncada (a íntegra fica no fio).
+    pub result_preview: String,
 }
 
 /// Métrica de sistema exibida na GUI.
@@ -131,6 +137,21 @@ pub fn tool_row(call: &ToolCallRequest) -> ToolRow {
         call_id: call.call_id.clone(),
         tool_name: call.tool_name.clone(),
         status: call.status,
+        requester_id: call.requester_id.clone(),
+        security_level: call.security_level,
+        result_preview: preview(&call.result_json, 80),
+    }
+}
+
+/// Trunca para exibição preservando caracteres (não bytes) e achatando linha.
+#[must_use]
+fn preview(text: &str, max_chars: usize) -> String {
+    let flat = text.replace(['\n', '\r'], " ");
+    if flat.chars().count() <= max_chars {
+        flat
+    } else {
+        let cut: String = flat.chars().take(max_chars).collect();
+        format!("{cut}…")
     }
 }
 
@@ -344,8 +365,33 @@ mod tests {
                 call_id: String::from("c-1"),
                 tool_name: String::from("ler_arquivo"),
                 status: 3,
+                requester_id: String::new(),
+                security_level: 0,
+                result_preview: String::new(),
             }
         );
+    }
+
+    /// T-890-06: requester/nível/result previa atravessam o mapeamento,
+    /// com resultado truncado para exibição.
+    #[test]
+    fn tool_row_maps_governance_and_truncates_result() {
+        let long = "x".repeat(200);
+        let call = ToolCallRequest {
+            call_id: String::from("c-2"),
+            tool_name: String::from("filesystem.read_file"),
+            requester_id: String::from("agent-1"),
+            security_level: 2,
+            result_json: format!("{{\"conteudo\":\"{long}\"}}"),
+            status: 3,
+            ..ToolCallRequest::default()
+        };
+
+        let row = tool_row(&call);
+        assert_eq!(row.requester_id, "agent-1");
+        assert_eq!(row.security_level, 2);
+        assert!(row.result_preview.ends_with('…'));
+        assert!(row.result_preview.chars().count() <= 81);
     }
 
     #[test]

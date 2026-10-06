@@ -104,6 +104,20 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
     /// Falha de leitura/parse só loga e retorna `Ok(false)` — como o Python,
     /// o serviço mantém a versão anterior em vez de cair.
     pub async fn load_and_publish(&self) -> Result<bool, PolicyError> {
+        self.load_and_publish_inner(false).await
+    }
+
+    /// Re-publicação periódica: republica MESMO com conteúdo idêntico — o
+    /// objetivo do tick é RENOVAR o timestamp do snapshot para late-joiners
+    /// (o gateway recusa snapshot com mais de `DEFAULT_POLICY_MAX_AGE`).
+    /// Sem o force, o dedupe de conteúdo (abaixo) mantinha o timestamp
+    /// eterno e todo late-joiner expirado seria rejeitado (bug do T-890-06
+    /// ao vivo na .62/.64). Guarda de regressão de versão permanece.
+    pub async fn republish(&self) -> Result<bool, PolicyError> {
+        self.load_and_publish_inner(true).await
+    }
+
+    async fn load_and_publish_inner(&self, force: bool) -> Result<bool, PolicyError> {
         let content = match std::fs::read_to_string(&self.policy_file) {
             Ok(c) => c,
             Err(e) => {
@@ -141,7 +155,7 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
                 );
                 return Ok(false);
             }
-            if cur.version == new_version && cur.document.as_value() == doc.as_value() {
+            if !force && cur.version == new_version && cur.document.as_value() == doc.as_value() {
                 return Ok(false);
             }
         }
@@ -255,7 +269,7 @@ impl<D: DataSpaceApi> PolicyEngineService<D> {
                     // Re-publicação periódica: erro transitório de DDS NÃO
                     // derruba o serviço (REQ/T-820-16) — loga e tenta de novo
                     // no próximo tick (o próprio ticker é o backoff).
-                    if let Err(e) = self.load_and_publish().await {
+                    if let Err(e) = self.republish().await {
                         tracing::warn!(
                             error = %e,
                             "re-publicação periódica falhou; nova tentativa no próximo intervalo"
