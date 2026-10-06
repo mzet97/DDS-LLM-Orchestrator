@@ -319,3 +319,16 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
 - 4 testes novos (merge/ordenação, janela de vida, token por host, snapshot)
   + 2 kittest do modo protegido; **479 passed / 0** workspace (studio 77/0
   sem dds).
+
+## T-890-03 (complemento 2) — alvo ÚNICO compartilhado por todos os painéis (2026-10-06)
+
+- **Pedido do autor:** "nem toda aba do studio está usando a descoberta
+  automática". Entregue: o nó selecionado na descoberta (auto = primeiro ●
+  online; manual = combobox no painel Máquinas) **propaga a cada frame**
+  para TODOS os painéis que falam com um studio-node — Nó (node_url),
+  Serviços, Catálogo compartilhado e Máquinas. A barra de status mostra
+  "🛰 alvo: URL". Trocar o alvo uma vez muda a GUI inteira.
+- Painéis de ORQUESTRADOR (Agentes/Despacho apontam o orquestrador HTTP
+  :8080/.62, não um studio-node) e os painéis DDS (Topologia/Ferramentas/
+  Workflow usam domínio, não URL) ficaram fora por design — alvo de nó só
+  faz sentido onde o par é um studio-node.
