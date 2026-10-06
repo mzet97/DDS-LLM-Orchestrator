@@ -354,3 +354,30 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
 - **Achado operacional:** instâncias do studio RODANDO interferem no teste
   `llm_result_backlog` (timing; 1 amostra duplicada) — fechá-las antes de
   `cargo test --workspace`; serial (`--test-threads=1`) sempre verde.
+
+## T-890-03 (v3) — logs do Studio + validação contra as VMs (2026-10-06)
+
+- **Pedido do autor:** "verifique nas VMs se realmente tem coisa rodando para
+  validar o discovery e adicione logs no studio". Entregue (commit `5513486`).
+- **Validação contra as VMs (real):** .61 = llama-server (8082) + studio-noded;
+  .62 = **orquestrador (domínio 170, :8080 localhost)** + policy-engine +
+  studio-noded; .64 = studio-noded + mcp-gateway. **Causa-raiz da inferência
+  invisível:** o llama-server da .61 rodava **sem `--enable-dds`** — o bridge
+  nunca subia e `ServerStatus` não era publicado (a descoberta estava CORRETA;
+  o serviço é que não anunciava). Reiniciado com `--enable-dds --dds-domain
+  170` → no ar. Agente `agent-lab-01` iniciado na .64 (engine dds, domínio
+  170). Sonda `examples/domain_probe` (nova): **3 nós + 1 agente + 1
+  inferência** — ground truth e GUI passam a bater.
+- **Logs:** `studio_log` (ring buffer 500, INFO/WARN/ERRO → stderr E painel
+  "Logs" na navegação). Instrumentado: worker (início/escuta/erro DataSpace),
+  NOVO nó + resultado do probe, agente novo, inferência nova, poda por
+  heartbeat >30 s, alvo automático, auto-carga (token sim/não), observação
+  automática da Topologia.
+- **Log do boot real (`/tmp/studio-v4.log`):** worker → 3 NOVOS nós (probe
+  "protocolo 1.0") → alvo automático .61 → auto-carga com token → agente →
+  inferência (~5 s, late-joiner TransientLocal).
+- **Observação para o autor:** o orquestrador da .62 só escuta em
+  `127.0.0.1:8080` — os painéis Agentes/Despacho (HTTP) não o alcançam da
+  estação; ouvir 0.0.0.0 (com token) ou usar os painéis DDS. A descoberta de
+  ORQUESTRADOR não existe no contrato (sem tópico de presença dele) — os
+  painéis DDS (Agentes ao vivo/Topologia/Ferramentas) cobrem a visualização.
