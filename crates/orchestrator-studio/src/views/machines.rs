@@ -6,8 +6,8 @@
 //! T-840-01) vira dica "token ausente" — o usuário (re)entra o token no
 //! formulário e clica "Guardar token em memória".
 
+use crate::machines::{MachinesState, ProbeState};
 use eframe::egui;
-use orchestrator_studio::machines::{MachinesState, ProbeState};
 
 /// Cor/símbolo do ponto de status por estado da sonda.
 fn dot_style(state: ProbeState) -> (egui::Color32, &'static str) {

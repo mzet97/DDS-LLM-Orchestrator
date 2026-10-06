@@ -1,8 +1,8 @@
 //! Painel da origem remota: conexão ao nó + tabela de operações.
 
+use crate::origin::optional_token;
+use crate::state::AppState;
 use eframe::egui;
-use orchestrator_studio::origin::optional_token;
-use orchestrator_studio::state::AppState;
 use studio_node::protocol::AdminOp;
 
 /// Resumo de uma linha para a tabela de operações do nó.

@@ -6,10 +6,10 @@
 //! GUI: a thread de UI nunca bloqueia). Sem `dds`, o painel informa como
 //! habilitar.
 
-use eframe::egui;
-use orchestrator_studio::workflow::WorkflowState;
+use crate::workflow::WorkflowState;
 #[cfg(feature = "dds")]
-use orchestrator_studio::workflow::{StageOut, WorkflowConfig, WorkflowEvent};
+use crate::workflow::{StageOut, WorkflowConfig, WorkflowEvent};
+use eframe::egui;
 
 /// Ponto de entrada do painel (feature `dds` — corredor DDS real).
 #[cfg(feature = "dds")]

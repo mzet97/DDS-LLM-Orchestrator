@@ -1,8 +1,8 @@
 //! Painel de catálogo compartilhado: publica no nó com base explícita.
 //! Token da autoridade (T-840-03a) fica só na memória da GUI.
 
+use crate::catalog_remote::SharedCatalog;
 use eframe::egui;
-use orchestrator_studio::catalog_remote::SharedCatalog;
 
 /// URL, token (password), formulário (id/valor/base), publicar/excluir e
 /// tabela do snapshot.

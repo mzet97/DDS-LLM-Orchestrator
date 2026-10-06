@@ -5,8 +5,8 @@
 //! de segurança pedido (decidido pelo policy-engine), status e prévia do
 //! resultado escrito pelo `mcp-gateway` na MESMA instância `ToolCall.Request`.
 
+use crate::dds_observe::DdsState;
 use eframe::egui;
-use orchestrator_studio::dds_observe::DdsState;
 
 pub fn show(ui: &mut egui::Ui, dds: &mut DdsState) {
     dds.poll();

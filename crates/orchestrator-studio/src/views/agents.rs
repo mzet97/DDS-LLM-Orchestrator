@@ -1,7 +1,7 @@
 //! Painel de agentes: tabela viva do orquestrador.
 
+use crate::agents::AgentsState;
 use eframe::egui;
-use orchestrator_studio::agents::AgentsState;
 
 /// URL, botão de leitura, erro e tabela de agentes.
 pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState) {

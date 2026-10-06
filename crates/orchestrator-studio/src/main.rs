@@ -3,8 +3,6 @@
 //! Sem lógica de domínio aqui — cada painel lê capacidade real e o estado
 //! testável vive nos módulos da lib.
 
-mod views;
-
 use anyhow::Result;
 use eframe::egui;
 use orchestrator_studio::agents::AgentsState;
@@ -155,7 +153,7 @@ impl eframe::App for StudioApp {
                     } else {
                         ""
                     };
-                    views::overview::show(
+                    orchestrator_studio::views::overview::show(
                         ui,
                         &self.state,
                         &self.services,
@@ -165,14 +163,16 @@ impl eframe::App for StudioApp {
                     );
                 }
                 Section::Node => {
-                    views::node::show(
+                    orchestrator_studio::views::node::show(
                         ui,
                         &mut self.state,
                         &mut self.node_url,
                         &mut self.node_token,
                     );
                 }
-                Section::Inference => views::inference::show(ui, &mut self.inference),
+                Section::Inference => {
+                    orchestrator_studio::views::inference::show(ui, &mut self.inference)
+                }
                 Section::Launch => {
                     let known: Vec<String> = self
                         .services
@@ -180,19 +180,29 @@ impl eframe::App for StudioApp {
                         .iter()
                         .map(|item| item.service.clone())
                         .collect();
-                    views::launch::show(ui, &mut self.launch, &known);
+                    orchestrator_studio::views::launch::show(ui, &mut self.launch, &known);
                 }
-                Section::Agents => views::agents::show(ui, &mut self.agents),
-                Section::Models => views::models::show(ui, &mut self.models),
-                Section::Services => views::services::show(ui, &mut self.services),
-                Section::Shared => views::shared_catalog::show(ui, &mut self.shared),
-                Section::Machines => views::machines::show(ui, &mut self.machines),
-                Section::Dispatch => views::dispatch::show(ui, &mut self.dispatch),
+                Section::Agents => orchestrator_studio::views::agents::show(ui, &mut self.agents),
+                Section::Models => orchestrator_studio::views::models::show(ui, &mut self.models),
+                Section::Services => {
+                    orchestrator_studio::views::services::show(ui, &mut self.services)
+                }
+                Section::Shared => {
+                    orchestrator_studio::views::shared_catalog::show(ui, &mut self.shared)
+                }
+                Section::Machines => {
+                    orchestrator_studio::views::machines::show(ui, &mut self.machines)
+                }
+                Section::Dispatch => {
+                    orchestrator_studio::views::dispatch::show(ui, &mut self.dispatch)
+                }
                 #[cfg(feature = "dds")]
-                Section::Topology => views::topology::show(ui, &mut self.dds),
-                Section::Workflow => views::workflow::show(ui, &mut self.workflow),
+                Section::Topology => orchestrator_studio::views::topology::show(ui, &mut self.dds),
+                Section::Workflow => {
+                    orchestrator_studio::views::workflow::show(ui, &mut self.workflow)
+                }
                 #[cfg(feature = "dds")]
-                Section::Tools => views::tools::show(ui, &mut self.dds),
+                Section::Tools => orchestrator_studio::views::tools::show(ui, &mut self.dds),
                 #[cfg(not(feature = "dds"))]
                 Section::Topology => {
                     ui.heading("Topologia DDS");

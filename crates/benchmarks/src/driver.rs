@@ -580,7 +580,6 @@ impl BenchmarkDriver {
         for w in 0..workers {
             let shared = Arc::clone(&self.shared);
             let seed = shared.cfg.seed.wrapping_add(u64::from(w) + 1);
-            let phase_end = phase_end;
             handles.push(tokio::spawn(async move {
                 let mut gen = crate::generator::WorkloadGenerator::new(crate::regimes::LEVE, seed);
                 let mut status_stream = Box::pin(shared.client.dataspace().stream_tasks());

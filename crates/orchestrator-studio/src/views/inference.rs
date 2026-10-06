@@ -1,7 +1,7 @@
 //! Painel de inferência: sessão multi-turn contra o llama ao vivo.
 
+use crate::inference::{InferenceState, Role};
 use eframe::egui;
-use orchestrator_studio::inference::{InferenceState, Role};
 
 /// Servidor, modelos, parâmetros, prompt e transcript da sessão.
 pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState) {

@@ -1,7 +1,7 @@
 //! Painel subir inferência: plano legível → aplicar → prova real (§9.3, P2).
 
+use crate::launch::{Device, LaunchState};
 use eframe::egui;
-use orchestrator_studio::launch::{Device, LaunchState};
 
 pub fn show(ui: &mut egui::Ui, launch: &mut LaunchState, known_services: &[String]) {
     launch.poll();

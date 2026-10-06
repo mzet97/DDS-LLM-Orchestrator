@@ -30,6 +30,13 @@ dds = ["dep:dds-dataspace", "dep:dds-contract", "dep:futures", "dep:client", "cl
 [dev-dependencies]
 axum = { workspace = true }
 serde_json = { workspace = true }
+# T-890-08 (G-37): testes de UI automatizados (egui_kittest). EXCEÇÃO
+# dev-only de MSRV: o egui_kittest 0.36.2 (par do egui 0.36) exige rustc
+# 1.95 — o código DE PRODUÇÃO do workspace permanece 1.85; apenas
+# `cargo test -p orchestrator-studio` exige toolchain ≥1.95.
+# default-features = false: SEM wgpu/snapshot — os testes são de interação
+# (árvore accesskit), 100% headless, sem GPU nem diffs de imagem.
+egui_kittest = { version = "=0.36.2", default-features = false }
 
 [[bin]]
 name = "studio"

@@ -1,7 +1,7 @@
 //! Painel de despacho: tarefa real via orquestrador.
 
+use crate::workload::DispatchState;
 use eframe::egui;
-use orchestrator_studio::workload::DispatchState;
 
 /// URL, modelo, prompt, botão de despacho e desfecho em texto.
 pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {

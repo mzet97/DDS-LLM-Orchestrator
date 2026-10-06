@@ -1,7 +1,7 @@
 //! Painel de topologia DDS: foto viva do domínio (só com feature `dds`).
 
+use crate::dds_observe::DdsState;
 use eframe::egui;
-use orchestrator_studio::dds_observe::DdsState;
 
 /// Domínio, janela, botão de observação e grades de agentes/tools/métricas.
 pub fn show(ui: &mut egui::Ui, dds: &mut DdsState) {

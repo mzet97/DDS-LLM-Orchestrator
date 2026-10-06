@@ -1,7 +1,7 @@
 //! Painel de modelos: inventário assíncrono (P4 local).
 
+use crate::models::{ManifestStatus, ModelsState};
 use eframe::egui;
-use orchestrator_studio::models::{ManifestStatus, ModelsState};
 
 pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
     state.poll();

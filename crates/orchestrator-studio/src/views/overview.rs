@@ -1,11 +1,11 @@
 //! Painel de visão geral: cartões honestos (§9.2).
 
+use crate::agents::AgentsState;
+use crate::models::ModelsState;
+use crate::overview::{summarize, OverviewInput};
+use crate::services::ServicesPanel;
+use crate::state::AppState;
 use eframe::egui;
-use orchestrator_studio::agents::AgentsState;
-use orchestrator_studio::models::ModelsState;
-use orchestrator_studio::overview::{summarize, OverviewInput};
-use orchestrator_studio::services::ServicesPanel;
-use orchestrator_studio::state::AppState;
 
 pub fn show(
     ui: &mut egui::Ui,

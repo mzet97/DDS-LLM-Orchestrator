@@ -1,7 +1,7 @@
 //! Painel de serviços: plano legível pretendido × efetivo (só lê).
 
+use crate::services::ServicesPanel;
 use eframe::egui;
-use orchestrator_studio::services::ServicesPanel;
 
 /// URL, botão de leitura, erro e tabela com a divergência em destaque.
 pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel) {
