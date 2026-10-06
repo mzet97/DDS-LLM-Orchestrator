@@ -58,7 +58,7 @@ tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
 
 G-02, G-04, G-08 (colisão entre nós), G-10, G-11 (verificação cruzada),
 G-15 (criação), G-18, G-19, G-20, G-21, G-22, G-25, G-26, G-31, G-32,
-G-33, G-37 (egui_kittest), G-38, G-41, G-53, G-60, G-61, G-64, G-65,
+G-33, G-38, G-41, G-53, G-60, G-61, G-64, G-65,
 G-66, G-70. Causa única: um host só, sem SSH remoto, sem executor de
 tools vivo no mesh. Desbloqueio = prover 2º host/VM + executor.
 
@@ -109,7 +109,7 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   na .61 (applied → active em 1 s; stop → inactive no host); criação de
   unidades NOVAS pela GUI segue pendente.
 - Painel "Máquinas" novo na GUI (10→11 seções). Seguem 🔒: G-18..22 (ferramentas),
-  G-25/26 (wf-run GUI), G-37/38/65, G-10/11.
+  G-25/26 (wf-run GUI ✅ 890-07), G-38/65, G-10/11 (GGUF×manifesto ✅ 890-08).
 - **G-41/42 (mDNS) → NÃO APLICÁVEL (2026-10-05, decisão do autor):** DDS é
   requisito mínimo em toda máquina da implantação; a descoberta de instalações
   do Studio será **nativa do DDS** pelo 19º tópico canônico
