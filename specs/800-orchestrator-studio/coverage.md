@@ -26,9 +26,9 @@ tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
 | G-28 | ✅ | systemd `active`, 1 listener, sem duplicata |
 | G-29 | ◐ | ownership 0, nada publicado; writers criados pelo `DataSpace` (desvio registrado) |
 | G-30 | ✅ | reconcile por id; erro em vez de saúde falsa |
-| G-34 | ◐ | restart adota sem migração destrutiva (local) |
+| G-34 | ✅ | journal em SQLite (T-890-05): restart adota do `operations.db` — provado ao vivo na .62 (apply → restart → reconcile); JSON legado migrado sem destruição (`.imported`) |
 | G-35 | ✅ | sem rollback prometido; tombstone explícito |
-| G-36 | ◐ | journal/DB sem segredos; import não executa |
+| G-36 | ✅ | DB guarda só op_id/op/meta (token é env-only, `AdminOp` não carrega segredo); importação hidrata estado sem executar (teste `migration_imports_state_without_executing`) |
 | G-39 | ◐ | só aditivo; suite completa do workspace não rodada |
 | G-40 | ◐ | `studio-noded` CLI + `.desktop` validado + unit |
 | G-42 | ◐ | domínio/janela explícitos; seed n/a |
@@ -46,7 +46,7 @@ tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
 | G-55 | ✅ | sem escrita de incorporação |
 | G-56 | ◐ | janela viva; retido aparece como está |
 | G-57 | ✅ | tombstone + 410 testados ao vivo |
-| G-58 | ◐ | journal persiste; sem eleição silenciosa |
+| G-58 | ✅ | journal persiste em SQLite atômico (transação única, WAL) atrás de `Storage`; sem eleição silenciosa |
 | G-59 | ✅ | replay no restart provado ao vivo |
 | G-62 | ◐ | serde ignora desconhecidos; sem escrita parcial |
 | G-63 | ◐ | painéis locais funcionam sem internet |
@@ -138,3 +138,26 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
 - Fix embutido: `STUDIO_NODE_PUBLIC_URL` (bind 0.0.0.0 atrás de NAT não é
   conectável); `advertised_url`/`default_node_id` puros com testes (44/0 com
   feature dds no studio-node; workspace 449/0 sem dds).
+
+## T-890-05 — studio-storage: journal SQLite atrás de trait (2026-10-06)
+
+- **Entregue (commit `527ded6`):** `studio-node/src/storage.rs` — trait
+  `Storage` (`save`/`load`/`path`) com dois backends: `JsonStorage` (snapshot
+  histórico, compat) e `SqliteStorage` (rusqlite **bundled**, transação
+  atômica DELETE+INSERT + WAL). `NodeState` carrega `Arc<dyn Storage>`;
+  `with_db` despacha por extensão (`.json` → JSON; resto → SQLite). Default do
+  nó: `~/.local/share/studio-node/operations.db`.
+- **Migração não destrutiva (G-34):** banco virgem + `operations.json` irmão →
+  importa (hidrata estado) e renomeia o JSON para `operations.json.imported`;
+  qualquer falha interrompe ANTES de tocar o JSON; 2ª carga vem do banco.
+- **Import não executa (G-36):** carga só reconstrói estado (`restore`);
+  idempotência e conflito de `operation_id` preservados pós-migração.
+- **Musl:** sqlite3 bundled cross-compila com o musl-gcc (deploy dos 3 hosts
+  validado; binário `static-pie`).
+- **Evidência ao vivo (.62):** `POST /apply` → linha em `operations.db`
+  (`strings` confirma); `systemctl --user restart` → `/operations/:id` devolve
+  o registro adotado do banco.
+- **Fora do escopo desta iteração (documentado):** o journal de eventos do
+  catálogo (`*.catalog.jsonl`) permanece JSONL por design (stream de eventos
+  com `events_since`); migração relacional dele é trabalho futuro se houver
+  necessidade real.
