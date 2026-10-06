@@ -25,6 +25,8 @@ pub struct ModelArtifact {
     pub file_name: String,
     pub size_bytes: u64,
     pub sha256_hex: String,
+    /// Cruzamento com o manifesto congelado (T-890-08, G-09..11).
+    pub manifest_status: ManifestStatus,
 }
 
 /// Erros do inventário (fronteira GUI ↔ sistema de arquivos).
@@ -33,6 +35,88 @@ pub enum ModelsError {
     /// Diretório inacessível ou ilegível.
     #[error("diretorio de modelos inacessivel {dir}: {detail}")]
     Unreadable { dir: String, detail: String },
+    /// Falha de leitura/parse do manifesto GGUF×SHA (T-890-08, G-09..11).
+    #[error("manifesto invalido: {0}")]
+    Manifest(String),
+}
+
+/// Status do artefato frente ao manifesto (T-890-08, G-09..11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ManifestStatus {
+    /// Sem hash calculado ainda.
+    #[default]
+    Pendente,
+    /// SHA confere com o manifesto.
+    Ok,
+    /// SHA DIFERE do manifesto — artefato não é o congelado.
+    Desviado,
+    /// Arquivo não está no manifesto (fora do escopo congelado).
+    SemRegistro,
+}
+
+impl ManifestStatus {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Pendente => "pendente",
+            Self::Ok => "OK",
+            Self::Desviado => "DESVIADO",
+            Self::SemRegistro => "sem registro",
+        }
+    }
+}
+
+/// Manifesto congelado: nome do arquivo → SHA-256 (hex minúsculo, 64 chars).
+/// Formato canônico: `{"models": {"<arquivo>.gguf": "<sha256>"}}`.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelsManifest {
+    entries: std::collections::BTreeMap<String, String>,
+}
+
+impl ModelsManifest {
+    /// Parse + validação (64 hex por entrada; aceita maiúsculas, normaliza).
+    pub fn from_json(json: &str) -> Result<Self, ModelsError> {
+        let parsed: serde_json::Value = serde_json::from_str(json)
+            .map_err(|err| ModelsError::Manifest(format!("json: {err}")))?;
+        let models = parsed
+            .get("models")
+            .and_then(|v| v.as_object())
+            .ok_or_else(|| {
+                ModelsError::Manifest(String::from(
+                    "esperado objeto \"models\" mapeando arquivo → sha256",
+                ))
+            })?;
+        let mut entries = std::collections::BTreeMap::new();
+        for (name, sha) in models {
+            let sha = sha
+                .as_str()
+                .ok_or_else(|| ModelsError::Manifest(format!("{name}: sha não é string")))?;
+            let lowered = sha.trim().to_ascii_lowercase();
+            if lowered.len() != 64 || !lowered.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(ModelsError::Manifest(format!(
+                    "{name}: sha256 deve ter 64 hex, veio \"{sha}\""
+                )));
+            }
+            entries.insert(name.clone(), lowered);
+        }
+        Ok(Self { entries })
+    }
+
+    /// SHA esperado de um arquivo (`None` = sem registro).
+    #[must_use]
+    pub fn expected(&self, file_name: &str) -> Option<&str> {
+        self.entries.get(file_name).map(String::as_str)
+    }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
 }
 
 /// Lista os `.gguf` com tamanho, sem hash (instantâneo, thread de UI).
@@ -66,10 +150,30 @@ pub fn quick_inventory(dir: &Path) -> Result<Vec<ModelArtifact>, ModelsError> {
                 .to_string(),
             size_bytes,
             sha256_hex: String::new(),
+            manifest_status: ManifestStatus::Pendente,
         });
     }
     artifacts.sort_by(|a, b| a.file_name.cmp(&b.file_name));
     Ok(artifacts)
+}
+
+/// Cruzamento arquivo+SHA frente ao manifesto (T-890-08, G-09..11):
+/// `Pendente` sem hash; `Ok` confere; `Desviado` difere (o artefato NÃO é o
+/// congelado); `SemRegistro` fora do manifesto.
+#[must_use]
+pub fn manifest_status(
+    manifest: &ModelsManifest,
+    file_name: &str,
+    sha256_hex: &str,
+) -> ManifestStatus {
+    if sha256_hex.is_empty() {
+        return ManifestStatus::Pendente;
+    }
+    match manifest.expected(file_name) {
+        Some(expected) if expected == sha256_hex.to_ascii_lowercase() => ManifestStatus::Ok,
+        Some(_) => ManifestStatus::Desviado,
+        None => ManifestStatus::SemRegistro,
+    }
 }
 
 /// SHA-256 de um arquivo em blocos (chamado na thread de hash).
@@ -112,6 +216,11 @@ pub struct ModelsState {
     pub list: Vec<ModelArtifact>,
     pub hashing: Option<HashProgress>,
     pub error: String,
+    /// T-890-08 (G-09..11): manifesto congelado carregado (cruzamento
+    /// GGUF×SHA); `None` = nenhum manifesto carregado.
+    pub manifest: Option<ModelsManifest>,
+    pub manifest_path: String,
+    pub manifest_error: String,
     receiver: Option<mpsc::Receiver<HashMsg>>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -132,6 +241,21 @@ fn resolve_models_dir(env_dir: Option<&str>, home: Option<&str>) -> String {
     }
 }
 
+/// Caminho padrão do manifesto: o lock da campanha (`benchmarks/orchestration
+/// /locks/models-manifest.json`) quando existir; senão vazio (a UI pede).
+#[must_use]
+pub fn default_manifest_path() -> String {
+    let candidates = [
+        "benchmarks/orchestration/locks/models-manifest.json",
+        "../benchmarks/orchestration/locks/models-manifest.json",
+    ];
+    candidates
+        .iter()
+        .find(|c| Path::new(c).is_file())
+        .map(|c| c.to_string())
+        .unwrap_or_default()
+}
+
 /// Diretório padrão do primeiro render (T-830-06); ver [`resolve_models_dir`].
 #[must_use]
 pub fn default_models_dir() -> String {
@@ -150,6 +274,9 @@ impl ModelsState {
             list: Vec::new(),
             hashing: None,
             error: String::new(),
+            manifest: None,
+            manifest_path: default_manifest_path(),
+            manifest_error: String::new(),
             receiver: None,
             cancel: None,
         }
@@ -176,6 +303,40 @@ impl ModelsState {
         }
     }
 
+    /// Carrega o manifesto do caminho dado e RECUCOMPÕE os status da lista
+    /// (T-890-08, G-09..11). Erro não descarta o manifesto anterior.
+    pub fn load_manifest(&mut self) {
+        let path = self.manifest_path.trim();
+        if path.is_empty() {
+            self.manifest_error = String::from("caminho do manifesto vazio");
+            return;
+        }
+        match std::fs::read_to_string(path) {
+            Ok(json) => match ModelsManifest::from_json(&json) {
+                Ok(manifest) => {
+                    self.manifest_error.clear();
+                    for artifact in &mut self.list {
+                        artifact.manifest_status =
+                            manifest_status(&manifest, &artifact.file_name, &artifact.sha256_hex);
+                    }
+                    self.manifest = Some(manifest);
+                }
+                Err(err) => self.manifest_error = err.to_string(),
+            },
+            Err(err) => {
+                self.manifest_error = format!("{}: {err}", path);
+            }
+        }
+    }
+
+    /// Status do arquivo na posição `index` frente ao manifesto carregado.
+    fn manifest_status_for_index(&self, index: usize, sha: &str) -> ManifestStatus {
+        match (&self.manifest, self.list.get(index)) {
+            (Some(manifest), Some(artifact)) => manifest_status(manifest, &artifact.file_name, sha),
+            _ => ManifestStatus::Pendente,
+        }
+    }
+
     /// Cancela o hash em curso; lista parcial é mantida com SHAs pendentes.
     pub fn cancel(&mut self) {
         if let Some(flag) = self.cancel.take() {
@@ -194,8 +355,10 @@ impl ModelsState {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     HashMsg::FileDone { index, sha } => {
+                        let status = self.manifest_status_for_index(index, &sha);
                         if let Some(artifact) = self.list.get_mut(index) {
                             artifact.sha256_hex = sha;
+                            artifact.manifest_status = status;
                         }
                         if let Some(progress) = self.hashing.as_mut() {
                             progress.done = progress.done.saturating_add(1);
@@ -265,6 +428,142 @@ impl Default for ModelsState {
 
 #[cfg(test)]
 mod tests {
+    use super::{manifest_status, ManifestStatus, ModelsError, ModelsManifest, ModelsState};
+
+    const SHA_A: &str = "bd258782e35f7f458f8aced1adc053e6e92e89bc735ba3be89d38a06121dc517";
+
+    // T-890-08 (G-09..11): parse do manifesto com validação de 64 hex.
+    #[test]
+    fn manifest_parse_validates_sha_and_normalizes_case() {
+        let manifest =
+            ModelsManifest::from_json(&format!("{{\"models\": {{\"qwen.gguf\": \"{SHA_A}\"}}}}"))
+                .expect("manifesto válido");
+        assert_eq!(manifest.expected("qwen.gguf"), Some(SHA_A));
+        assert_eq!(manifest.len(), 1);
+
+        // MAIÚSCULAS normalizadas para minúsculas.
+        let upper = ModelsManifest::from_json(&format!(
+            "{{\"models\": {{\"qwen.gguf\": \"{}\"}}}}",
+            SHA_A.to_ascii_uppercase()
+        ))
+        .expect("sha em maiúsculas é aceito");
+        assert_eq!(upper.expected("qwen.gguf"), Some(SHA_A));
+    }
+
+    #[test]
+    fn manifest_parse_rejects_malformed_inputs() {
+        assert!(matches!(
+            ModelsManifest::from_json("não é json"),
+            Err(ModelsError::Manifest(_))
+        ));
+        // sem a chave "models"
+        assert!(matches!(
+            ModelsManifest::from_json("{\"outro\": 1}"),
+            Err(ModelsError::Manifest(_))
+        ));
+        // sha curto
+        assert!(matches!(
+            ModelsManifest::from_json("{\"models\": {\"a.gguf\": \"abcd\"}}"),
+            Err(ModelsError::Manifest(_))
+        ));
+    }
+
+    // Cruzamento: pendente sem hash, OK confere, DESVIADO difere,
+    // SemRegistro fora do manifesto (o coração do G-09..11).
+    #[test]
+    fn manifest_status_classifies_ok_deviant_unregistered() {
+        let manifest =
+            ModelsManifest::from_json(&format!("{{\"models\": {{\"qwen.gguf\": \"{SHA_A}\"}}}}"))
+                .expect("manifesto");
+        assert_eq!(
+            manifest_status(&manifest, "qwen.gguf", ""),
+            ManifestStatus::Pendente
+        );
+        assert_eq!(
+            manifest_status(&manifest, "qwen.gguf", SHA_A),
+            ManifestStatus::Ok
+        );
+        assert_eq!(
+            manifest_status(&manifest, "qwen.gguf", &"0".repeat(64)),
+            ManifestStatus::Desviado
+        );
+        assert_eq!(
+            manifest_status(&manifest, "desconhecido.gguf", SHA_A),
+            ManifestStatus::SemRegistro
+        );
+    }
+
+    /// Integração: FileDone via poll aplica o status do manifesto carregado.
+    #[test]
+    fn poll_applies_manifest_status_after_hash() {
+        let dir = std::env::temp_dir().join(format!(
+            "studio-manifest-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("qwen.gguf"), b"conteudo do gguf de teste").expect("escreve");
+        let expected_sha = {
+            use sha2::Digest;
+            let mut h = sha2::Sha256::new();
+            h.update(b"conteudo do gguf de teste");
+            format!("{:x}", h.finalize())
+        };
+        let mut state = ModelsState::new();
+        state.dir = dir.clone();
+        state.refresh();
+        state.manifest = Some(
+            ModelsManifest::from_json(&format!(
+                "{{\"models\": {{\"qwen.gguf\": \"{expected_sha}\"}}}}"
+            ))
+            .expect("manifesto"),
+        );
+        for _ in 0..400 {
+            state.poll();
+            if !state.is_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!state.is_busy(), "hash não concluiu");
+        let artifact = &state.list[0];
+        assert_eq!(artifact.sha256_hex, expected_sha);
+        assert_eq!(artifact.manifest_status, ManifestStatus::Ok);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// DESVIADO: sha real difere do congelado (cópia corrompida/trocada).
+    #[test]
+    fn poll_marks_deviant_when_sha_differs_from_manifest() {
+        let dir = std::env::temp_dir().join(format!(
+            "studio-deviant-test-{}",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock")
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).expect("mkdir");
+        std::fs::write(dir.join("qwen.gguf"), b"arquivo adulterado").expect("escreve");
+        let mut state = ModelsState::new();
+        state.dir = dir.clone();
+        state.refresh();
+        state.manifest = Some(
+            ModelsManifest::from_json(&format!("{{\"models\": {{\"qwen.gguf\": \"{SHA_A}\"}}}}"))
+                .expect("manifesto"),
+        );
+        for _ in 0..400 {
+            state.poll();
+            if !state.is_busy() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(state.list[0].manifest_status, ManifestStatus::Desviado);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     use super::*;
 
     fn fixture_dir(name: &str) -> PathBuf {
