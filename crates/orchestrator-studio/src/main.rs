@@ -35,6 +35,7 @@ enum Section {
     Shared,
     Machines,
     Topology,
+    Workflow,
 }
 
 impl Section {
@@ -51,6 +52,7 @@ impl Section {
             Self::Shared => "Catálogo compartilhado",
             Self::Machines => "Máquinas",
             Self::Topology => "Topologia DDS",
+            Self::Workflow => "Workflow (A→B→C)",
         }
     }
 
@@ -67,6 +69,7 @@ impl Section {
             Self::Shared,
             Self::Machines,
             Self::Topology,
+            Self::Workflow,
         ]
     }
 }
@@ -87,6 +90,7 @@ struct StudioApp {
     dispatch: DispatchState,
     #[cfg(feature = "dds")]
     dds: orchestrator_studio::dds_observe::DdsState,
+    workflow: orchestrator_studio::workflow::WorkflowState,
 }
 
 impl StudioApp {
@@ -106,6 +110,7 @@ impl StudioApp {
             dispatch: DispatchState::new(),
             #[cfg(feature = "dds")]
             dds: orchestrator_studio::dds_observe::DdsState::new(),
+            workflow: orchestrator_studio::workflow::WorkflowState::new(),
         }
     }
 }
@@ -179,6 +184,7 @@ impl eframe::App for StudioApp {
                 Section::Dispatch => views::dispatch::show(ui, &mut self.dispatch),
                 #[cfg(feature = "dds")]
                 Section::Topology => views::topology::show(ui, &mut self.dds),
+                Section::Workflow => views::workflow::show(ui, &mut self.workflow),
                 #[cfg(not(feature = "dds"))]
                 Section::Topology => {
                     ui.heading("Topologia DDS");

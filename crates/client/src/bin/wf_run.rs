@@ -9,8 +9,7 @@
 //!   --prompts-dir benchmarks/orchestration/prompts --model qwen3.5-0.8b
 //!   --workflow-id dds-w1 --out record.json`
 
-#[path = "wf/assembly.rs"]
-mod assembly;
+use client::wf_assembly as assembly;
 #[path = "wf/record.rs"]
 mod record;
 

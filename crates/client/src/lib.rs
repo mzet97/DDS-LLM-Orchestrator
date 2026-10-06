@@ -7,6 +7,8 @@
 //! - `submit(task) -> Future<Result>` + stream de chunks
 //! - ≥ 50 clientes concorrentes sem deadlock
 
+pub mod wf_assembly;
+
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -19,4 +19,5 @@ pub mod origin;
 pub mod overview;
 pub mod services;
 pub mod state;
+pub mod workflow;
 pub mod workload;
