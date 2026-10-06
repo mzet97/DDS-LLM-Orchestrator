@@ -3,9 +3,10 @@ Version=1.0
 Type=Application
 Name=DDS Orchestrator Studio
 Comment=Administração do enxame DDS-LLM (nó, catálogo, inferência, agentes, topologia)
-# Instalação: cp target/release/studio ~/.local/bin/ (PATH deve incluir ~/.local/bin).
+# Instalação: .deb via scripts/build-studio-deb.sh (instala /usr/bin/studio);
+# alternativa manual: cp target/release/studio ~/.local/bin/.
 Exec=studio
 Icon=computer
 Terminal=false
-Categories=Development;System;
+Categories=Development;
 StartupWMClass=studio

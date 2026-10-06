@@ -30,7 +30,7 @@ tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
 | G-35 | ✅ | sem rollback prometido; tombstone explícito |
 | G-36 | ✅ | DB guarda só op_id/op/meta (token é env-only, `AdminOp` não carrega segredo); importação hidrata estado sem executar (teste `migration_imports_state_without_executing`) |
 | G-39 | ◐ | só aditivo; suite completa do workspace não rodada |
-| G-40 | ◐ | `studio-noded` CLI + `.desktop` validado + unit |
+| G-40 | ✅ | `.desktop` + unit + **.deb montado e validado por extração** (`scripts/build-studio-deb.sh`, 2026-10-06); instalação system-wide é decisão do autor |
 | G-42 | ◐ | domínio/janela explícitos; seed n/a |
 | G-43 | ◐ | built-ins observados; vazio em malha estável |
 | G-44 | ◐ | autoridade compartilhada local; sem auth |
@@ -228,3 +228,21 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   nó (ex.: .64 com token) e editar o catálogo pelas DUAS — a revisão
   condicional deve deixar uma vencer e a outra receber 409 na UI. Com esse
   passo, G-70 ✅.
+
+## T-890-08 (item G-40) — pacote .deb do Studio (2026-10-06)
+
+- **Entregue:** `scripts/build-studio-deb.sh` — compila o `studio` release
+  (feature dds, CycloneDDS estático, target fora da árvore SMB), monta o
+  payload (`/usr/bin/studio` + `.desktop` + copyright) e monta o .deb.
+- **Formato sem dpkg-dev (Fedora):** o .deb é montado NA MÃO — `ar` com
+  `debian-binary` (2.0) + `control.tar.gz` (control+md5sums) +
+  `data.tar.xz` (usr/) — exatamente o que o `dpkg-deb --build` produz; se
+  o `dpkg-deb` existir, ele é usado.
+- **Depende honesta:** extraída do binário (`objdump -T` → maior símbolo
+  GLIBC): `libc6 (>= 2.43)`.
+- **Validação por EXTRAÇÃO** (não instala no sistema — instalar é decisão
+  do autor: `sudo dpkg -i dist/dds-orchestrator-studio_0.1.0_amd64.deb`):
+  `ar t` na ordem canônica, payload extraído, binário executável,
+  `.desktop` byte-idêntico e `desktop-file-validate` ✓ (sem warnings).
+  Artefato: `dist/dds-orchestrator-studio_0.1.0_amd64.deb` (6,8 MB,
+  fora do git).
