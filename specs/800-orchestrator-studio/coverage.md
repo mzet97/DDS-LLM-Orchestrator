@@ -302,3 +302,20 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   **marcada para validação contra o SDD mestre na revisão final**.
 - Cobertura: **475 passed / 0** no workspace (5 testes novos); studio
   73/0 sem dds, 79/0 com dds.
+
+## T-890-03 (complemento) — descoberta AUTOMÁTICA no boot da GUI (2026-10-06)
+
+- **Pedido do autor:** "assim que abrir o studio ele deveria já identificar os
+  nodes e conectar". Entregue (commit `46a7f91`): worker em background escuta
+  `Studio.NodePresence` continuamente no domínio (env `STUDIO_DDS_DOMAIN`,
+  **default 170** = laboratório) desde o boot; painel Máquinas ganhou a
+  seção "Instalações descobertas automaticamente" no topo — node_id, url,
+  probe automático de `/version` (● online com protocolo / 401 token /
+  offline) e idade do heartbeat; morto = sem heartbeat >20 s (lease 10 s +
+  tolerância de relógio entre hosts).
+- **Auto-conexão:** o probe usa o token de `~/.config/studio/hosts/<host>.token`
+  (o mesmo arquivo do deploy) — nós conhecidos aparecem **● online com
+  protocolo** sem nenhum clique.
+- 4 testes novos (merge/ordenação, janela de vida, token por host, snapshot)
+  + 2 kittest do modo protegido; **479 passed / 0** workspace (studio 77/0
+  sem dds).
