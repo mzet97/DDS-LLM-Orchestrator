@@ -266,7 +266,13 @@ impl DdsState {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            domain: 42,
+            // Domínio default = domínio da descoberta (env STUDIO_DDS_DOMAIN,
+            // default 170 = laboratório) — abrir Topologia/Ferramentas já
+            // observa o domínio certo (T-890-03).
+            domain: std::env::var("STUDIO_DDS_DOMAIN")
+                .ok()
+                .and_then(|d| d.trim().parse().ok())
+                .unwrap_or(170),
             window_secs: 3,
             snapshot: DdsSnapshot::default(),
             error: String::new(),

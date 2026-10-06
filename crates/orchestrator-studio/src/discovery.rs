@@ -11,6 +11,10 @@
 #[cfg(feature = "dds")]
 use crate::machines::ProbeState;
 use crate::machines::{now_unix_ns, ProbeStatus};
+#[cfg(feature = "dds")]
+use dds_contract::generated::dds_llm_orchestrator::AgentState;
+#[cfg(feature = "dds")]
+use dds_contract::generated::orchestrator::ServerStatus;
 
 /// Uma instalação descoberta via `Studio.NodePresence`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -39,10 +43,61 @@ impl DiscoveredNode {
     }
 }
 
-/// Evento do worker para a UI: foto completa das instalações conhecidas.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Agente vivo visto no `AgentRegistry` (linha da GUI — o tipo do fio fica
+/// no worker; sem dependência da crate de contrato sem a feature `dds`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRow {
+    pub agent_id: String,
+    pub model: String,
+    pub slots_busy: u32,
+    pub slots_total: u32,
+    pub ema_latency_ms: f32,
+    pub last_update_ns: u64,
+}
+
+/// Servidor de inferência vivo (`ServerStatus`) — llama-server/ponte no domínio.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerRow {
+    pub server_id: String,
+    pub model_loaded: String,
+    pub slots_idle: i32,
+    pub slots_processing: i32,
+    pub ready: bool,
+}
+
+/// Converte o `AgentState` do fio para a linha da GUI (worker, feature dds).
+#[cfg(feature = "dds")]
+fn agent_row(state: &AgentState) -> AgentRow {
+    AgentRow {
+        agent_id: state.agent_id.clone(),
+        model: state.model.clone(),
+        slots_busy: state.slots_busy,
+        slots_total: state.slots_total,
+        ema_latency_ms: state.ema_latency_ms,
+        last_update_ns: state.last_update_ns,
+    }
+}
+
+/// Converte o `ServerStatus` do fio para a linha da GUI (worker, feature dds).
+#[cfg(feature = "dds")]
+fn server_row(status: &ServerStatus) -> ServerRow {
+    ServerRow {
+        server_id: status.server_id.clone(),
+        model_loaded: status.model_loaded.clone(),
+        slots_idle: status.slots_idle,
+        slots_processing: status.slots_processing,
+        ready: status.ready,
+    }
+}
+
+/// Evento do worker para a UI: foto completa do sistema vivo no domínio.
+#[derive(Debug, Clone, Default)]
 pub struct DiscoverySnapshot {
     pub nodes: Vec<DiscoveredNode>,
+    /// Agentes vivos no `AgentRegistry` (heartbeats DDS).
+    pub agents: Vec<AgentRow>,
+    /// Servidores de inferência vivos (`ServerStatus` — llama-server/ponte).
+    pub servers: Vec<ServerRow>,
 }
 
 /// Estado do painel de descoberta (thread-safe via mpsc — padrão da GUI).
@@ -50,6 +105,10 @@ pub struct DiscoverySnapshot {
 pub struct DiscoveryState {
     pub domain: u32,
     pub nodes: Vec<DiscoveredNode>,
+    /// Agentes vivos no domínio (alimentado pelo worker).
+    pub agents: Vec<AgentRow>,
+    /// Servidores de inferência vivos no domínio (ServerStatus).
+    pub servers: Vec<ServerRow>,
     /// `true` até o primeiro snapshot chegar (worker ainda escaneando).
     pub scanning: bool,
     pub error: String,
@@ -81,6 +140,8 @@ impl DiscoveryState {
         if let Some(rx) = &self.receiver {
             while let Ok(snapshot) = rx.try_recv() {
                 self.nodes = snapshot.nodes;
+                self.agents = snapshot.agents;
+                self.servers = snapshot.servers;
                 self.scanning = false;
                 self.error.clear();
             }
@@ -91,6 +152,18 @@ impl DiscoveryState {
     pub fn observe(&mut self, nodes: Vec<DiscoveredNode>) {
         self.nodes = nodes;
         self.scanning = false;
+    }
+
+    /// Observa o inventário completo (testável sem worker).
+    pub fn observe_system(
+        &mut self,
+        nodes: Vec<DiscoveredNode>,
+        agents: Vec<AgentRow>,
+        servers: Vec<ServerRow>,
+    ) {
+        self.observe(nodes);
+        self.agents = agents;
+        self.servers = servers;
     }
 
     /// URL do nó selecionado (`None` sem seleção ou seleção fora da lista).
@@ -203,7 +276,7 @@ fn run_worker(domain: u32, tx: std::sync::mpsc::Sender<DiscoverySnapshot>) {
     {
         Ok(rt) => rt,
         Err(err) => {
-            let _ = tx.send(DiscoverySnapshot { nodes: Vec::new() });
+            let _ = tx.send(DiscoverySnapshot::default());
             eprintln!("studio: descoberta: runtime tokio: {err}");
             return;
         }
@@ -213,32 +286,69 @@ fn run_worker(domain: u32, tx: std::sync::mpsc::Sender<DiscoverySnapshot>) {
             Ok(space) => std::sync::Arc::new(space),
             Err(err) => {
                 eprintln!("studio: descoberta: DataSpace domínio {domain}: {err}");
-                let _ = tx.send(DiscoverySnapshot { nodes: Vec::new() });
+                let _ = tx.send(DiscoverySnapshot::default());
                 return;
             }
         };
         use futures::StreamExt;
         use std::pin::pin;
-        let mut stream = pin!(space.stream_studio_node_presences());
+        // Inventário vivo do domínio: instalações (NodePresence), agentes
+        // (AgentRegistry) e inferência (ServerStatus) — mesmo worker, um
+        // snapshot único para a GUI inteira.
+        let mut presences = pin!(space.stream_studio_node_presences());
+        let mut agents_stream = pin!(space.stream_agent_states());
+        let mut servers_stream = pin!(space.stream_server_statuses());
         let mut nodes: Vec<DiscoveredNode> = Vec::new();
+        let mut agents: std::collections::BTreeMap<String, AgentState> =
+            std::collections::BTreeMap::new();
+        let mut servers: std::collections::BTreeMap<String, ServerStatus> =
+            std::collections::BTreeMap::new();
         let home = std::env::var("HOME").ok();
-        while let Some(presence) = stream.next().await {
-            let is_new = merge_presence(
-                &mut nodes,
-                &presence.node_id,
-                &presence.url,
-                presence.token_required,
-                presence.last_seen_ns,
-            );
-            if is_new {
-                let token = crate::discovery::token_for_url(&presence.url, home.as_deref());
-                let probe = Some(probe_node(&presence.url, token.as_deref()));
-                if let Some(entry) = nodes.iter_mut().find(|n| n.node_id == presence.node_id) {
-                    entry.probe = probe;
+        enum Event {
+            Presence(dds_contract::generated::dds_llm_orchestrator::StudioNodePresence),
+            Agent(AgentState),
+            Server(ServerStatus),
+        }
+        loop {
+            let event = tokio::select! {
+                Some(p) = presences.next() => Event::Presence((*p).clone()),
+                Some(a) = agents_stream.next() => Event::Agent((*a).clone()),
+                Some(sv) = servers_stream.next() => Event::Server((*sv).clone()),
+                else => break,
+            };
+            match event {
+                Event::Presence(presence) => {
+                    let is_new = merge_presence(
+                        &mut nodes,
+                        &presence.node_id,
+                        &presence.url,
+                        presence.token_required,
+                        presence.last_seen_ns,
+                    );
+                    if is_new {
+                        let token = crate::discovery::token_for_url(&presence.url, home.as_deref());
+                        let probe = Some(probe_node(&presence.url, token.as_deref()));
+                        if let Some(entry) =
+                            nodes.iter_mut().find(|n| n.node_id == presence.node_id)
+                        {
+                            entry.probe = probe;
+                        }
+                    }
+                }
+                Event::Agent(agent) => {
+                    agents.insert(agent.agent_id.clone(), agent);
+                }
+                Event::Server(server) => {
+                    servers.insert(server.server_id.clone(), server);
                 }
             }
+            // Poda honesta: agente sem heartbeat há >30 s sai do inventário.
+            let now = now_unix_ns();
+            agents.retain(|_, a| now.saturating_sub(a.last_update_ns) < 30_000_000_000);
             let _ = tx.send(DiscoverySnapshot {
                 nodes: nodes.clone(),
+                agents: agents.values().map(agent_row).collect(),
+                servers: servers.values().map(server_row).collect(),
             });
         }
     });

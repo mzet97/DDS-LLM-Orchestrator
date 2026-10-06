@@ -1,10 +1,49 @@
 //! Painel de inferência: sessão multi-turn contra o llama ao vivo.
 
+use crate::discovery::DiscoveryState;
 use crate::inference::{InferenceState, Role};
 use eframe::egui;
 
 /// Servidor, modelos, parâmetros, prompt e transcript da sessão.
-pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState) {
+pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &DiscoveryState) {
+    // Servidores de inferência VIVOS no domínio (ServerStatus — descoberta
+    // automática). Nota honesta: o contrato não carrega a URL HTTP do
+    // servidor (só id/modelo/slots); a URL do formulário segue manual.
+    ui.collapsing(
+        "Servidores de inferência no domínio (ServerStatus)",
+        |ui| {
+            if discovery.servers.is_empty() {
+                ui.label(format!(
+                    "Nenhum servidor de inferência anunciando ServerStatus no domínio {} \
+                 — o llama-server precisa rodar com LLAMA_DDS=ON neste domínio para \
+                 aparecer aqui.",
+                    discovery.domain
+                ));
+            } else {
+                egui::Grid::new("dds_live_servers")
+                    .striped(true)
+                    .show(ui, |ui| {
+                        ui.strong("server_id");
+                        ui.strong("modelo");
+                        ui.strong("slots");
+                        ui.strong("pronto");
+                        ui.end_row();
+                        for server in &discovery.servers {
+                            ui.monospace(&server.server_id);
+                            ui.label(&server.model_loaded);
+                            ui.label(format!(
+                                "{}/{}",
+                                server.slots_processing,
+                                server.slots_idle + server.slots_processing
+                            ));
+                            ui.label(if server.ready { "sim" } else { "não" });
+                            ui.end_row();
+                        }
+                    });
+            }
+        },
+    );
+    ui.separator();
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     infer.poll();
     ui.collapsing("Inferência (servidor llama ao vivo)", |ui| {

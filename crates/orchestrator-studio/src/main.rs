@@ -97,6 +97,11 @@ struct StudioApp {
     workflow: orchestrator_studio::workflow::WorkflowState,
     protected: orchestrator_studio::protected::ProtectedGuard,
     discovery: orchestrator_studio::discovery::DiscoveryState,
+    /// Alvo já carregado automaticamente (auto-carga única por troca de alvo).
+    autoloaded_target: Option<String>,
+    /// Observação DDS inicial já disparada (Topologia/Ferramentas ao abrir).
+    #[cfg(feature = "dds")]
+    dds_observed: bool,
 }
 
 impl StudioApp {
@@ -121,6 +126,9 @@ impl StudioApp {
             // T-890-03: descoberta automática no boot — escuta
             // Studio.NodePresence em background (domínio: env
             // STUDIO_DDS_DOMAIN, default 170 = laboratório).
+            autoloaded_target: None,
+            #[cfg(feature = "dds")]
+            dds_observed: false,
             discovery: {
                 let domain = std::env::var("STUDIO_DDS_DOMAIN")
                     .ok()
@@ -153,10 +161,45 @@ impl eframe::App for StudioApp {
             self.node_url = target.clone();
             self.services.url = target.clone();
             self.shared.url = target.clone();
-            self.machines.url = target;
+            self.machines.url = target.clone();
+            // AUTO-CARGA (T-890-03): trocou o alvo → os painéis disparam as
+            // próprias leituras SOZINHOS (Nó conecta, Serviços lê o plano,
+            // Catálogo tira o snapshot). Token do deploy quando existir.
+            if self.autoloaded_target.as_deref() != Some(target.as_str()) {
+                self.autoloaded_target = Some(target.clone());
+                let token = orchestrator_studio::discovery::token_for_url(
+                    &target,
+                    std::env::var("HOME").ok().as_deref(),
+                );
+                if let Some(token) = &token {
+                    self.node_token = token.clone();
+                }
+                self.state
+                    .refresh_from_node_with_token(&target, token.as_deref());
+                self.services.refresh();
+                self.shared.refresh();
+            }
+        }
+
+        // Topologia/Ferramentas: primeira observação automática ao entrar na
+        // aba (domínio default já é o da descoberta — ver DdsState::new).
+        #[cfg(feature = "dds")]
+        if matches!(self.section, Section::Topology | Section::Tools)
+            && !self.dds_observed
+            && !self.dds.busy
+        {
+            self.dds_observed = true;
+            self.dds.refresh();
         }
         egui::Panel::bottom("status").show(ui, |ui| {
             ui.label(self.state.status());
+            ui.separator();
+            ui.label(format!(
+                "🛰 descoberta: {} nó(s) · {} agente(s) · {} inferência(s)",
+                self.discovery.nodes.len(),
+                self.discovery.agents.len(),
+                self.discovery.servers.len()
+            ));
             if let Some(target) = self.discovery.selected_url() {
                 ui.separator();
                 ui.label(format!("🛰 alvo: {target}"));
@@ -218,9 +261,11 @@ impl eframe::App for StudioApp {
                         &mut self.node_token,
                     );
                 }
-                Section::Inference => {
-                    orchestrator_studio::views::inference::show(ui, &mut self.inference)
-                }
+                Section::Inference => orchestrator_studio::views::inference::show(
+                    ui,
+                    &mut self.inference,
+                    &self.discovery,
+                ),
                 Section::Launch => {
                     let known: Vec<String> = self
                         .services
@@ -230,7 +275,9 @@ impl eframe::App for StudioApp {
                         .collect();
                     orchestrator_studio::views::launch::show(ui, &mut self.launch, &known);
                 }
-                Section::Agents => orchestrator_studio::views::agents::show(ui, &mut self.agents),
+                Section::Agents => {
+                    orchestrator_studio::views::agents::show(ui, &mut self.agents, &self.discovery)
+                }
                 Section::Models => orchestrator_studio::views::models::show(ui, &mut self.models),
                 Section::Services => orchestrator_studio::views::services::show(
                     ui,

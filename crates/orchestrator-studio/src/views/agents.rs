@@ -1,10 +1,40 @@
 //! Painel de agentes: tabela viva do orquestrador.
 
 use crate::agents::AgentsState;
+use crate::discovery::DiscoveryState;
 use eframe::egui;
 
-/// URL, botão de leitura, erro e tabela de agentes.
-pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState) {
+/// Agentes vivos no DOMÍNIO (DDS, descoberta automática) + tabela HTTP do
+/// orquestrador (quando houver um rodando).
+pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoveryState) {
+    // Agentes do AgentRegistry — sempre populados pela descoberta, sem
+    // depender de orquestrador HTTP no ar.
+    ui.collapsing("Agentes no domínio (DDS, ao vivo)", |ui| {
+        if discovery.agents.is_empty() {
+            ui.label(format!(
+                "Nenhum agente com heartbeat no domínio {} — agentes aparecem aqui sozinhos ao subirem.",
+                discovery.domain
+            ));
+        } else {
+            egui::Grid::new("dds_live_agents")
+                .striped(true)
+                .show(ui, |ui| {
+                    ui.strong("agent_id");
+                    ui.strong("modelo");
+                    ui.strong("slots");
+                    ui.strong("latência ms");
+                    ui.end_row();
+                    for agent in &discovery.agents {
+                        ui.monospace(&agent.agent_id);
+                        ui.label(&agent.model);
+                        ui.label(format!("{}/{}", agent.slots_busy, agent.slots_total));
+                        ui.label(format!("{:.0}", agent.ema_latency_ms));
+                        ui.end_row();
+                    }
+                });
+        }
+    });
+    ui.separator();
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19, T-830-01).
     agents.poll();
     ui.collapsing("Agentes (orquestrador ao vivo)", |ui| {

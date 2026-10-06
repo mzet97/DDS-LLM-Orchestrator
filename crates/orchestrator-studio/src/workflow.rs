@@ -45,7 +45,7 @@ pub struct WorkflowConfig {
 impl Default for WorkflowConfig {
     fn default() -> Self {
         Self {
-            domain: 0,
+            domain: 170, // laboratório (T-890-03: mesmo default da descoberta)
             entry: String::new(),
             model: String::from("qwen3.5-0.8b"),
             timeout_ms: 120_000,
