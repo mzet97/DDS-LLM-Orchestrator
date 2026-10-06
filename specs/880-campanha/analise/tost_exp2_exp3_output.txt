@@ -1,0 +1,17 @@
+=== EXP2: fração T_extra/T_total (MEI [0; 0,10]) ===
+T_extra DDS (EXP1 cond50): n=30 média=770ms dp=46ms
+T_total EXP2 (LLM real):   n=30 média=5354ms dp=111ms
+razão pontual f = 0.1438 | Fieller IC90 = [0.1411; 0.1466] (g=0.0000)
+bootstrap IC90 (cross-check) = [0.1417; 0.1468]
+decisão: NÃO-EQUIVALENTE decidida (IC90 inteiramente acima do MEI — desfecho informativo)
+
+=== EXP3: razão de vazão E(c) (MEI [0,85; 1,15]) ===
+c=1: n=30 p50=1529ms
+c=2: n=60 p50=1530ms
+c=4: n=120 p50=1535ms
+c=8: n=240 p50=1562ms
+E(2) modelo (sem spawn) = 0.995 | bootstrap IC90 = [0.991; 0.998] → EQUIVALENTE (IC90 dentro do MEI)
+E(4) modelo (sem spawn) = 0.975 | bootstrap IC90 = [0.967; 0.983] → EQUIVALENTE (IC90 dentro do MEI)
+E(8) modelo (sem spawn) = 0.920 | bootstrap IC90 = [0.906; 0.933] → EQUIVALENTE (IC90 dentro do MEI)
+E(8) congelado c/ spawn cobrado = 0.854 (ponto; precisão de 1 dígito publicada no RESULTS)
+nota: a decisão formal usa o modelo por bloco; o ponto congelado inclui overhead do harness (spawn+discovery por wf-run) e é reportado como limite conservativo.

@@ -1,26 +1,26 @@
 {
-  "entry": "exp4 def 3",
+  "entry": "exp4 definitivo 3",
   "model": "qwen3.5-0.8b",
   "stages": [
     {
       "content": "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
       "expects": [],
-      "finished_ms": 1791226239916,
-      "latency_ms": 506,
+      "finished_ms": 1791250720819,
+      "latency_ms": 509,
       "stage": "A",
-      "started_ms": 1791226239410,
-      "task_id": "251cb072-d808-4f7d-a680-da7e5d60c949"
+      "started_ms": 1791250720310,
+      "task_id": "5b58c114-7fb3-423c-8f05-c3695302fd4e"
     },
     {
       "content": "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
       "expects": [
         "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004"
       ],
-      "finished_ms": 1791226240423,
-      "latency_ms": 506,
+      "finished_ms": 1791250721325,
+      "latency_ms": 505,
       "stage": "B",
-      "started_ms": 1791226239916,
-      "task_id": "6b8234c5-8989-4f67-ae8a-2099be40bf03"
+      "started_ms": 1791250720819,
+      "task_id": "28913364-2ff8-44b8-ad86-fea468911d14"
     },
     {
       "content": "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
@@ -28,11 +28,11 @@
         "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004",
         "chunk-0000chunk-0001chunk-0002chunk-0003chunk-0004"
       ],
-      "finished_ms": 1791226240930,
-      "latency_ms": 506,
+      "finished_ms": 1791250735287,
+      "latency_ms": 13961,
       "stage": "C",
-      "started_ms": 1791226240423,
-      "task_id": "b2434ba7-fce8-4b66-88a1-4b84bc956a48"
+      "started_ms": 1791250721325,
+      "task_id": "b0dc234c-2c39-47b4-ab5d-738e301d5a73"
     }
   ],
   "status": "completed",
