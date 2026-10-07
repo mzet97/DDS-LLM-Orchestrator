@@ -231,78 +231,76 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
     ui.add_space(theme::SPACE_SM);
 
     // ── Tabela: checksum calculado × manifesto em colunas separadas ──
-    egui::Grid::new("models-artifacts")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Arquivo",
-                    "Tamanho",
-                    "Checksum SHA-256 calculado",
-                    "Checksum do manifesto",
-                    "Status",
-                ],
-            );
-            for artifact in &state.list {
-                let visible = match state.filter {
-                    1 => artifact.manifest_status == ManifestStatus::Desviado,
-                    2 => artifact.manifest_status == ManifestStatus::Pendente,
-                    _ => true,
-                };
-                if !visible {
-                    continue;
-                }
-                kit::mono_cell(ui, &artifact.file_name);
-                kit::num_cell(
-                    ui,
-                    &format!("{:.1} MiB", artifact.size_bytes as f64 / 1_048_576.0),
-                );
-                let calculated = if artifact.sha256_hex.is_empty() {
-                    egui::RichText::new("calculando…")
-                        .small()
-                        .color(theme::WARN)
-                } else {
-                    egui::RichText::new(&artifact.sha256_hex)
-                        .monospace()
-                        .small()
-                };
-                ui.label(calculated);
-                let expected = state
-                    .manifest
-                    .as_ref()
-                    .and_then(|manifest| manifest.expected(&artifact.file_name));
-                match expected {
-                    Some(sha) => {
-                        let short: String = sha.chars().take(16).collect();
-                        ui.label(
-                            egui::RichText::new(format!("{short}…"))
-                                .monospace()
-                                .small()
-                                .color(theme::ON_SURFACE_VARIANT),
-                        );
-                    }
-                    None => {
-                        ui.label(
-                            egui::RichText::new("— sem registro")
-                                .small()
-                                .color(theme::STALE),
-                        );
-                    }
-                }
-                let status_color = match artifact.manifest_status {
-                    ManifestStatus::Ok => theme::OK,
-                    ManifestStatus::Desviado => theme::ERROR,
-                    ManifestStatus::Pendente | ManifestStatus::SemRegistro => theme::STALE,
-                };
-                ui.label(
-                    egui::RichText::new(artifact.manifest_status.label())
-                        .monospace()
-                        .color(status_color),
-                );
-                ui.end_row();
+    kit::table("models-artifacts").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Arquivo",
+                "Tamanho",
+                "Checksum SHA-256 calculado",
+                "Checksum do manifesto",
+                "Status",
+            ],
+        );
+        for artifact in &state.list {
+            let visible = match state.filter {
+                1 => artifact.manifest_status == ManifestStatus::Desviado,
+                2 => artifact.manifest_status == ManifestStatus::Pendente,
+                _ => true,
+            };
+            if !visible {
+                continue;
             }
-        });
+            kit::mono_cell(ui, &artifact.file_name);
+            kit::num_cell(
+                ui,
+                &format!("{:.1} MiB", artifact.size_bytes as f64 / 1_048_576.0),
+            );
+            let calculated = if artifact.sha256_hex.is_empty() {
+                egui::RichText::new("calculando…")
+                    .small()
+                    .color(theme::WARN)
+            } else {
+                egui::RichText::new(&artifact.sha256_hex)
+                    .monospace()
+                    .small()
+            };
+            ui.label(calculated);
+            let expected = state
+                .manifest
+                .as_ref()
+                .and_then(|manifest| manifest.expected(&artifact.file_name));
+            match expected {
+                Some(sha) => {
+                    let short: String = sha.chars().take(16).collect();
+                    ui.label(
+                        egui::RichText::new(format!("{short}…"))
+                            .monospace()
+                            .small()
+                            .color(theme::ON_SURFACE_VARIANT),
+                    );
+                }
+                None => {
+                    ui.label(
+                        egui::RichText::new("— sem registro")
+                            .small()
+                            .color(theme::STALE),
+                    );
+                }
+            }
+            let status_color = match artifact.manifest_status {
+                ManifestStatus::Ok => theme::OK,
+                ManifestStatus::Desviado => theme::ERROR,
+                ManifestStatus::Pendente | ManifestStatus::SemRegistro => theme::STALE,
+            };
+            ui.label(
+                egui::RichText::new(artifact.manifest_status.label())
+                    .monospace()
+                    .color(status_color),
+            );
+            ui.end_row();
+        }
+    });
     let hashed = state
         .list
         .iter()

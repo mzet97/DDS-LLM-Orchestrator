@@ -192,62 +192,60 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
     ui.add_space(theme::SPACE_SM);
 
     // ── Tabela de auditoria (política de decisão = prévia do resultado) ──
-    egui::Grid::new("tools_governance_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Call ID",
-                    "Ferramenta",
-                    "Solicitante",
-                    "Nível",
-                    "Status canônico",
-                    "Duração",
-                    "Política de decisão (prévia)",
-                ],
-            );
-            for tool in tools {
-                if dds.tools_filter.is_some_and(|code| tool.status != code) {
-                    continue;
-                }
-                let selected = dds
-                    .tools_selected
-                    .as_deref()
-                    .is_some_and(|id| id == tool.call_id);
-                let status = status_label(tool.status);
-                let status_color = match tool.status {
-                    2 | 5 => theme::ERROR,
-                    4 => theme::OK,
-                    3 => theme::WARN,
-                    _ => theme::ON_SURFACE_VARIANT,
-                };
-                let short_id: String = tool.call_id.chars().take(8).collect();
-                if ui
-                    .selectable_label(selected, egui::RichText::new(short_id).monospace())
-                    .clicked()
-                {
-                    dds.tools_selected = Some(tool.call_id.clone());
-                }
-                ui.label(&tool.tool_name);
-                ui.label(&tool.requester_id);
-                kit::mono_cell(
-                    ui,
-                    &crate::dds_observe::security_level_label(tool.security_level),
-                );
-                ui.label(egui::RichText::new(status).monospace().color(status_color));
-                kit::num_cell(
-                    ui,
-                    &if tool.duration_ms > 0 {
-                        format!("{} ms", tool.duration_ms)
-                    } else {
-                        String::from("aberta")
-                    },
-                );
-                ui.label(egui::RichText::new(&tool.result_preview).small().weak());
-                ui.end_row();
+    kit::table("tools_governance_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Call ID",
+                "Ferramenta",
+                "Solicitante",
+                "Nível",
+                "Status canônico",
+                "Duração",
+                "Política de decisão (prévia)",
+            ],
+        );
+        for tool in tools {
+            if dds.tools_filter.is_some_and(|code| tool.status != code) {
+                continue;
             }
-        });
+            let selected = dds
+                .tools_selected
+                .as_deref()
+                .is_some_and(|id| id == tool.call_id);
+            let status = status_label(tool.status);
+            let status_color = match tool.status {
+                2 | 5 => theme::ERROR,
+                4 => theme::OK,
+                3 => theme::WARN,
+                _ => theme::ON_SURFACE_VARIANT,
+            };
+            let short_id: String = tool.call_id.chars().take(8).collect();
+            if ui
+                .selectable_label(selected, egui::RichText::new(short_id).monospace())
+                .clicked()
+            {
+                dds.tools_selected = Some(tool.call_id.clone());
+            }
+            ui.label(&tool.tool_name);
+            ui.label(&tool.requester_id);
+            kit::mono_cell(
+                ui,
+                &crate::dds_observe::security_level_label(tool.security_level),
+            );
+            ui.label(egui::RichText::new(status).monospace().color(status_color));
+            kit::num_cell(
+                ui,
+                &if tool.duration_ms > 0 {
+                    format!("{} ms", tool.duration_ms)
+                } else {
+                    String::from("aberta")
+                },
+            );
+            ui.label(egui::RichText::new(&tool.result_preview).small().weak());
+            ui.end_row();
+        }
+    });
     ui.add_space(theme::SPACE_MD);
 
     // ── Inspetor REQUEST × RESPONSE (payloads íntegros do fio, PRD 3.13) ──

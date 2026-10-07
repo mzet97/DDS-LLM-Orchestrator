@@ -422,21 +422,19 @@ fn audit_table(ui: &mut egui::Ui, state: &mut WorkflowState) {
             state.stages.len()
         ),
     );
-    egui::Grid::new("workflow_stages")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &["Estágio", "Task ID", "Latência", "Buffer (prévia 96 chars)"],
-            );
-            for stage in &state.stages {
-                ui.label(egui::RichText::new(stage_display(&stage.stage)).strong());
-                kit::mono_cell(ui, &stage.task_id.chars().take(8).collect::<String>());
-                kit::num_cell(ui, &format!("{} ms", stage.latency_ms));
-                ui.label(egui::RichText::new(&stage.preview).small().weak());
-                ui.end_row();
-            }
-        });
+    kit::table("workflow_stages").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &["Estágio", "Task ID", "Latência", "Buffer (prévia 96 chars)"],
+        );
+        for stage in &state.stages {
+            ui.label(egui::RichText::new(stage_display(&stage.stage)).strong());
+            kit::mono_cell(ui, &stage.task_id.chars().take(8).collect::<String>());
+            kit::num_cell(ui, &format!("{} ms", stage.latency_ms));
+            ui.label(egui::RichText::new(&stage.preview).small().weak());
+            ui.end_row();
+        }
+    });
     if let Some(total_ms) = state.total_ms {
         if state.error.is_none() {
             ui.label(

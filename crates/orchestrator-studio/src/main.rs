@@ -246,7 +246,8 @@ impl eframe::App for StudioApp {
                             .color(orchestrator_studio::theme::OUTLINE),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        // chip de modo protegido (mockup: último à direita)
+                        // chip de modo protegido (mockup: último à direita; UX3:
+                        // pill vermelha quando armado, neutra desarmado).
                         let armed = self.protected.armed;
                         let chip_text = if armed {
                             "🛡 MODO PROTEGIDO: ARMADO (clique p/ desarmar)"
@@ -258,12 +259,36 @@ impl eframe::App for StudioApp {
                         } else {
                             orchestrator_studio::theme::ON_SURFACE_VARIANT
                         };
-                        let chip = ui.add(egui::Button::new(
-                            egui::RichText::new(chip_text)
-                                .monospace()
-                                .small()
-                                .color(chip_color),
-                        ));
+                        let chip = ui.add(
+                            egui::Button::new(
+                                egui::RichText::new(chip_text)
+                                    .monospace()
+                                    .small()
+                                    .color(chip_color),
+                            )
+                            .fill(if armed {
+                                orchestrator_studio::theme::tint(
+                                    orchestrator_studio::theme::ERROR,
+                                    14,
+                                )
+                            } else {
+                                orchestrator_studio::theme::SURFACE_HIGH
+                            })
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                if armed {
+                                    orchestrator_studio::theme::tint(
+                                        orchestrator_studio::theme::ERROR,
+                                        60,
+                                    )
+                                } else {
+                                    orchestrator_studio::theme::SURFACE_HIGHEST
+                                },
+                            ))
+                            .corner_radius(egui::CornerRadius::same(
+                                orchestrator_studio::theme::RADIUS_PILL as u8,
+                            )),
+                        );
                         if chip.clicked() {
                             self.protected.set_armed(!armed);
                         }
@@ -299,7 +324,8 @@ impl eframe::App for StudioApp {
                                 }
                             ));
                         }
-                        // chip NÓ ALVO (3.1/3.10): URL + estado de conexão
+                        // chip NÓ ALVO (3.1/3.10): URL + estado de conexão (UX3:
+                        // pill com borda ciana).
                         if let Some(target) = self.discovery.selected_url() {
                             let connected = self.state.node().is_some();
                             let state_text = if connected {
@@ -312,26 +338,39 @@ impl eframe::App for StudioApp {
                                 String::from("conectando…")
                             };
                             let (rect, _) =
-                                ui.allocate_at_least(egui::vec2(280.0, 22.0), egui::Sense::hover());
+                                ui.allocate_at_least(egui::vec2(280.0, 24.0), egui::Sense::hover());
+                            let pill = egui::CornerRadius::same(
+                                orchestrator_studio::theme::RADIUS_PILL as u8,
+                            );
                             ui.painter().rect_filled(
                                 rect,
-                                egui::CornerRadius::same(
-                                    orchestrator_studio::theme::RADIUS_SM as u8,
-                                ),
+                                pill,
                                 orchestrator_studio::theme::tint(
                                     orchestrator_studio::theme::PRIMARY_CONTAINER,
-                                    10,
+                                    12,
                                 ),
                             );
+                            ui.painter().rect_stroke(
+                                rect,
+                                pill,
+                                egui::Stroke::new(
+                                    1.0,
+                                    orchestrator_studio::theme::tint(
+                                        orchestrator_studio::theme::PRIMARY_CONTAINER,
+                                        55,
+                                    ),
+                                ),
+                                egui::StrokeKind::Inside,
+                            );
                             ui.painter().text(
-                                egui::pos2(rect.left() + 8.0, rect.center().y),
+                                egui::pos2(rect.left() + 10.0, rect.center().y),
                                 egui::Align2::LEFT_CENTER,
                                 format!("NÓ ALVO: {target}"),
                                 egui::FontId::monospace(10.0),
                                 orchestrator_studio::theme::PRIMARY_FIXED_DIM,
                             );
                             ui.painter().text(
-                                egui::pos2(rect.right() - 8.0, rect.center().y),
+                                egui::pos2(rect.right() - 10.0, rect.center().y),
                                 egui::Align2::RIGHT_CENTER,
                                 state_text,
                                 egui::FontId::monospace(9.0),
@@ -342,13 +381,21 @@ impl eframe::App for StudioApp {
                                 },
                             );
                         }
-                        // badge de domínio com dot pulsante
+                        // badge de domínio com dot pulsante (UX3: pill).
                         let (rect, _) =
-                            ui.allocate_at_least(egui::vec2(140.0, 22.0), egui::Sense::hover());
+                            ui.allocate_at_least(egui::vec2(150.0, 24.0), egui::Sense::hover());
+                        let pill =
+                            egui::CornerRadius::same(orchestrator_studio::theme::RADIUS_PILL as u8);
                         ui.painter().rect_filled(
                             rect,
-                            egui::CornerRadius::same(orchestrator_studio::theme::RADIUS_SM as u8),
+                            pill,
                             orchestrator_studio::theme::SURFACE_HIGH,
+                        );
+                        ui.painter().rect_stroke(
+                            rect,
+                            pill,
+                            egui::Stroke::new(1.0, orchestrator_studio::theme::SURFACE_HIGHEST),
+                            egui::StrokeKind::Inside,
                         );
                         let any_alive = self
                             .discovery
@@ -486,7 +533,7 @@ impl eframe::App for StudioApp {
                 )));
             });
         egui::Panel::left("nav")
-            .exact_size(256.0)
+            .exact_size(248.0)
             .resizable(false)
             .show(ui, |ui| {
                 ui.add_space(orchestrator_studio::theme::SPACE_SM);
@@ -500,37 +547,89 @@ impl eframe::App for StudioApp {
                     ui.add_space(orchestrator_studio::theme::SPACE_XS);
                     for section in *sections {
                         let busy = matches!(section, Section::Models) && self.models.is_busy();
+                        let base = section.label();
                         let label = if busy {
-                            format!("{} {}", section.num(), {
-                                let base = section.label();
-                                format!("{base} …")
-                            })
+                            format!("{base} …")
                         } else {
-                            format!("{} {}", section.num(), section.label())
+                            base.to_owned()
                         };
                         let selected = self.section == *section;
-                        let text = if selected {
-                            egui::RichText::new(&label)
-                                .strong()
-                                .color(orchestrator_studio::theme::PRIMARY_CONTAINER)
+                        // Item de navegação como LINHA (UX3): selecionado =
+                        // fundo tingido + hairline ciano + barra 3px à
+                        // esquerda (assinatura do design Stitch).
+                        let fill = if selected {
+                            orchestrator_studio::theme::tint(
+                                orchestrator_studio::theme::PRIMARY_CONTAINER,
+                                16,
+                            )
                         } else {
-                            egui::RichText::new(&label)
-                                .color(orchestrator_studio::theme::ON_SURFACE)
+                            egui::Color32::TRANSPARENT
                         };
-                        ui.horizontal(|ui| {
-                            let response = ui
-                                .selectable_label(selected, text)
-                                .interact(egui::Sense::click());
-                            if response.clicked() {
-                                self.section = *section;
-                            }
-                            ui.label(
-                                egui::RichText::new(section.tag())
-                                    .monospace()
-                                    .small()
-                                    .color(orchestrator_studio::theme::OUTLINE),
+                        let stroke = if selected {
+                            egui::Stroke::new(
+                                1.0,
+                                orchestrator_studio::theme::tint(
+                                    orchestrator_studio::theme::PRIMARY_CONTAINER,
+                                    65,
+                                ),
+                            )
+                        } else {
+                            egui::Stroke::NONE
+                        };
+                        let mut job = egui::text::LayoutJob::default();
+                        job.append(
+                            &format!("{}  ", section.num()),
+                            0.0,
+                            egui::TextFormat::simple(
+                                egui::FontId::monospace(11.0),
+                                if selected {
+                                    orchestrator_studio::theme::PRIMARY_CONTAINER
+                                } else {
+                                    orchestrator_studio::theme::OUTLINE
+                                },
+                            ),
+                        );
+                        job.append(
+                            &label,
+                            0.0,
+                            egui::TextFormat::simple(
+                                egui::FontId::proportional(13.0),
+                                if selected {
+                                    orchestrator_studio::theme::PRIMARY_FIXED_DIM
+                                } else {
+                                    orchestrator_studio::theme::ON_SURFACE
+                                },
+                            ),
+                        );
+                        job.append(
+                            &format!("   {}", section.tag()),
+                            0.0,
+                            egui::TextFormat::simple(
+                                egui::FontId::monospace(9.5),
+                                orchestrator_studio::theme::OUTLINE,
+                            ),
+                        );
+                        let response = ui.add_sized(
+                            [ui.available_width(), 30.0],
+                            egui::Button::new(job)
+                                .fill(fill)
+                                .stroke(stroke)
+                                .wrap_mode(egui::TextWrapMode::Truncate)
+                                .corner_radius(egui::CornerRadius::same(
+                                    orchestrator_studio::theme::RADIUS_SM as u8,
+                                )),
+                        );
+                        if selected {
+                            let bar = response.rect.with_max_x(response.rect.left() + 3.0);
+                            ui.painter().rect_filled(
+                                bar,
+                                0.0,
+                                orchestrator_studio::theme::PRIMARY_CONTAINER,
                             );
-                        });
+                        }
+                        if response.clicked() {
+                            self.section = *section;
+                        }
                     }
                     ui.add_space(orchestrator_studio::theme::SPACE_MD);
                 }
@@ -639,12 +738,12 @@ impl eframe::App for StudioApp {
 }
 
 fn main() -> Result<()> {
-    // Janela no tamanho do mockup (3.3 screen.png = 1600×1358) para que o
-    // layout respire — janela pequena espreme os cards e o design some.
+    // Janela no tamanho dos mockups Stitch (UX3: 1500×950, min 1280×800 —
+    // janela pequena espreme os cards e o design some).
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1600.0, 900.0])
-            .with_min_inner_size([1024.0, 640.0]),
+            .with_inner_size([1500.0, 950.0])
+            .with_min_inner_size([1280.0, 800.0]),
         ..eframe::NativeOptions::default()
     };
     eframe::run_native(

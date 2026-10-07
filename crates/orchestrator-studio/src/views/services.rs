@@ -155,102 +155,100 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                 }),
             );
             ui.add_space(theme::SPACE_SM);
-            egui::Grid::new("services_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    kit::grid_header(
-                        ui,
-                        &[
-                            "Unidade (Serviço)",
-                            "Pretendido",
-                            "Efetivo",
-                            "Divergência / Diff",
-                            "Comandos Remotos",
-                        ],
-                    );
-                    let mut pending: Option<(String, u8)> = None; // 0=iniciar 1=parar 2=reiniciar
-                    for row in &panel.list {
-                        let wanted = match row.wanted {
-                            Some(true) => "on",
-                            Some(false) => "off",
-                            None => "—",
-                        };
-                        let active = if row.active { "on" } else { "off" };
-                        kit::mono_cell(ui, &row.service);
-                        ui.label(wanted);
-                        ui.label(egui::RichText::new(active).color(if row.active {
-                            theme::OK
-                        } else {
-                            theme::STALE
-                        }));
-                        // Divergência honesta com o par pretendido×efetivo.
-                        match row.wanted {
-                            Some(w) if w != row.active => {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "⇐ DIVERGE (wanted={w}, active={})",
-                                        row.active
-                                    ))
+            kit::table("services_grid").show(ui, |ui| {
+                kit::grid_header(
+                    ui,
+                    &[
+                        "Unidade (Serviço)",
+                        "Pretendido",
+                        "Efetivo",
+                        "Divergência / Diff",
+                        "Comandos Remotos",
+                    ],
+                );
+                let mut pending: Option<(String, u8)> = None; // 0=iniciar 1=parar 2=reiniciar
+                for row in &panel.list {
+                    let wanted = match row.wanted {
+                        Some(true) => "on",
+                        Some(false) => "off",
+                        None => "—",
+                    };
+                    let active = if row.active { "on" } else { "off" };
+                    kit::mono_cell(ui, &row.service);
+                    ui.label(wanted);
+                    ui.label(egui::RichText::new(active).color(if row.active {
+                        theme::OK
+                    } else {
+                        theme::STALE
+                    }));
+                    // Divergência honesta com o par pretendido×efetivo.
+                    match row.wanted {
+                        Some(w) if w != row.active => {
+                            ui.label(
+                                egui::RichText::new(format!(
+                                    "⇐ DIVERGE (wanted={w}, active={})",
+                                    row.active
+                                ))
+                                .monospace()
+                                .small()
+                                .color(theme::ERROR),
+                            );
+                        }
+                        Some(false) if !row.active => {
+                            ui.label(
+                                egui::RichText::new("◌ DESATIVADO (conforme pretendido)")
                                     .monospace()
                                     .small()
-                                    .color(theme::ERROR),
-                                );
-                            }
-                            Some(false) if !row.active => {
-                                ui.label(
-                                    egui::RichText::new("◌ DESATIVADO (conforme pretendido)")
-                                        .monospace()
-                                        .small()
-                                        .color(theme::ON_SURFACE_VARIANT),
-                                );
-                            }
-                            _ => {
-                                ui.label(
-                                    egui::RichText::new("SINCRONIZADO")
-                                        .monospace()
-                                        .small()
-                                        .color(theme::OK),
-                                );
-                            }
+                                    .color(theme::ON_SURFACE_VARIANT),
+                            );
                         }
-                        ui.add_enabled_ui(!panel.busy, |ui| {
-                            ui.horizontal(|ui| {
-                                if ui.button("▶ Iniciar").clicked() {
-                                    pending = Some((row.service.clone(), 0));
-                                }
-                                if ui.button("■ Parar").clicked() {
-                                    pending = Some((row.service.clone(), 1));
-                                }
-                                if ui.button("↺ Reiniciar").clicked() {
-                                    pending = Some((row.service.clone(), 2));
-                                }
-                            });
+                        _ => {
+                            ui.label(
+                                egui::RichText::new("SINCRONIZADO")
+                                    .monospace()
+                                    .small()
+                                    .color(theme::OK),
+                            );
+                        }
+                    }
+                    ui.add_enabled_ui(!panel.busy, |ui| {
+                        ui.horizontal(|ui| {
+                            if ui.button("▶ Iniciar").clicked() {
+                                pending = Some((row.service.clone(), 0));
+                            }
+                            if ui.button("■ Parar").clicked() {
+                                pending = Some((row.service.clone(), 1));
+                            }
+                            if ui.button("↺ Reiniciar").clicked() {
+                                pending = Some((row.service.clone(), 2));
+                            }
                         });
-                        ui.end_row();
-                    }
-                    if let Some((service, action)) = pending {
-                        let description = format!(
-                            "{} serviço '{service}' no nó",
-                            match action {
-                                0 => "INICIAR",
-                                1 => "PARAR",
-                                _ => "REINICIAR (stop→start)",
-                            }
-                        );
-                        // G-38/65: desarmado RECUSA (nada trafega); armado pede
-                        // confirmação explícita antes de tocar a máquina remota.
-                        match guard.request(&description) {
-                            ProtectedOutcome::NeedsConfirmation(_) => {
-                                if action == 2 {
-                                    panel.pending_restart = Some(service);
-                                } else {
-                                    panel.pending_action = Some((service, action == 0));
-                                }
-                            }
-                            ProtectedOutcome::Refused(_) => {}
+                    });
+                    ui.end_row();
+                }
+                if let Some((service, action)) = pending {
+                    let description = format!(
+                        "{} serviço '{service}' no nó",
+                        match action {
+                            0 => "INICIAR",
+                            1 => "PARAR",
+                            _ => "REINICIAR (stop→start)",
                         }
+                    );
+                    // G-38/65: desarmado RECUSA (nada trafega); armado pede
+                    // confirmação explícita antes de tocar a máquina remota.
+                    match guard.request(&description) {
+                        ProtectedOutcome::NeedsConfirmation(_) => {
+                            if action == 2 {
+                                panel.pending_restart = Some(service);
+                            } else {
+                                panel.pending_action = Some((service, action == 0));
+                            }
+                        }
+                        ProtectedOutcome::Refused(_) => {}
                     }
-                });
+                }
+            });
         }
 
         // Confirmação da ação pendente (visível até resolvida) — 2 passos

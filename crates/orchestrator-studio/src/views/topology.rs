@@ -67,29 +67,19 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
         );
         for secs in WINDOW_PRESETS {
             let active = dds.window_secs == secs;
-            if ui
-                .selectable_label(
-                    active,
-                    egui::RichText::new(format!("{secs} s")).monospace().small(),
-                )
-                .clicked()
+            if kit::pill_chip(ui, active, &format!("{secs} s"), theme::PRIMARY_FIXED_DIM).clicked()
             {
                 dds.window_secs = secs;
             }
         }
         ui.add_enabled_ui(!dds.busy, |ui| {
-            let observe = ui.add(
-                egui::Button::new(
-                    egui::RichText::new(if dds.busy {
-                        "Observando domínio…"
-                    } else {
-                        "Observar Domínio"
-                    })
-                    .monospace()
-                    .small()
-                    .color(theme::ON_PRIMARY),
-                )
-                .fill(theme::PRIMARY_CONTAINER),
+            let observe = kit::primary_button(
+                ui,
+                if dds.busy {
+                    "Observando domínio…"
+                } else {
+                    "Observar Domínio"
+                },
             );
             if observe.clicked() {
                 crate::studio_log::info(format!(
@@ -229,24 +219,18 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
         for (index, (topic, tab)) in TOPIC_TABS.iter().enumerate() {
             let active = dds.tab == *tab && topic_active_for_tab(topic, dds.tab);
             let chip = format!("{topic} ({})", counts[index]);
-            if ui
-                .selectable_label(active, egui::RichText::new(chip).monospace().small())
-                .clicked()
-            {
+            if kit::pill_chip(ui, active, &chip, theme::PRIMARY_FIXED_DIM).clicked() {
                 dds.tab = *tab;
             }
         }
     });
     ui.add_space(theme::SPACE_XS);
 
-    // ── Painel de 7 abas com filtro ──
+    // ── Painel de 7 abas com filtro (UX3: pills) ──
     ui.horizontal(|ui| {
         for (index, name) in TABS.iter().enumerate() {
             let active = dds.tab as usize == index;
-            if ui
-                .selectable_label(active, egui::RichText::new(*name).monospace().small())
-                .clicked()
-            {
+            if kit::pill_chip(ui, active, name, theme::PRIMARY_FIXED_DIM).clicked() {
                 dds.tab = index as u8;
             }
         }
@@ -358,7 +342,13 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
     );
     let painter = ui.painter_at(rect);
 
-    // Fundo: grade de pontos 16 px (textura do mockup, sem gradiente).
+    // Fundo do canvas: superfície própria + grade de pontos 16 px (UX3 —
+    // o canvas se destaca do painel como nos mockups).
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(theme::RADIUS_MD as u8),
+        theme::SURFACE_LOW,
+    );
     let mut y = 8.0;
     while y < rect.height() {
         let mut x = 8.0;
@@ -441,43 +431,50 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
             let angle =
                 (-160.0 + (140.0 / (count as f32 - 1.0).max(1.0)) * index as f32).to_radians();
             let pos = center + egui::vec2(angle.cos() * radius, angle.sin() * radius);
-            let box_rect = egui::Rect::from_center_size(pos, egui::vec2(132.0, 34.0));
+            // Card de assinante (UX3 ciclo 2): maior, com dot de status.
+            let box_rect = egui::Rect::from_center_size(pos, egui::vec2(148.0, 38.0));
             let accent = if *alive { theme::OK } else { theme::STALE };
             let selected = dds.mesh_selected.as_deref() == Some(node_id.as_str());
             painter.line_segment(
-                [center + egui::vec2(0.0, -24.0), box_rect.center()],
-                egui::Stroke::new(1.0, theme::tint(accent, 60)),
+                [center + egui::vec2(0.0, -22.0), box_rect.center()],
+                egui::Stroke::new(1.25, theme::tint(accent, 90)),
             );
             painter.rect_filled(
                 box_rect,
-                egui::CornerRadius::same(3),
+                egui::CornerRadius::same(4),
                 theme::SURFACE_CONTAINER,
             );
             painter.rect_stroke(
                 box_rect,
-                egui::CornerRadius::same(3),
+                egui::CornerRadius::same(4),
                 egui::Stroke::new(
-                    1.0,
+                    if selected { 1.5 } else { 1.0 },
                     if selected {
                         theme::PRIMARY_CONTAINER
                     } else {
-                        theme::SURFACE_HIGHEST
+                        theme::tint(accent, 35)
                     },
                 ),
                 egui::StrokeKind::Inside,
             );
+            // Dot de status vivo/expirado (padrão dos cards do design).
+            painter.circle_filled(
+                egui::pos2(box_rect.left() + 9.0, box_rect.top() + 12.0),
+                3.5,
+                accent,
+            );
             painter.text(
-                egui::pos2(box_rect.left() + 6.0, box_rect.top() + 5.0),
+                egui::pos2(box_rect.left() + 17.0, box_rect.top() + 4.0),
                 egui::Align2::LEFT_TOP,
                 node_id,
-                egui::FontId::monospace(9.0),
+                egui::FontId::monospace(9.5),
                 theme::ON_SURFACE,
             );
             painter.text(
-                egui::pos2(box_rect.left() + 6.0, box_rect.top() + 19.0),
+                egui::pos2(box_rect.left() + 17.0, box_rect.top() + 20.0),
                 egui::Align2::LEFT_TOP,
-                format!("hb {age}s {}", if *alive { "● vivo" } else { "◌ expirado" }),
-                egui::FontId::monospace(8.0),
+                format!("hb {age}s · {}", if *alive { "vivo" } else { "expirado" }),
+                egui::FontId::monospace(8.5),
                 accent,
             );
             hit_rects.push((box_rect, format!("node:{node_id}")));
@@ -516,7 +513,7 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
         let anchor = egui::pos2(column_left - 8.0, top + (agents.len() as f32) * 18.0 / 2.0);
         painter.line_segment(
             [center, anchor],
-            egui::Stroke::new(1.0, theme::tint(theme::PRIMARY_FIXED_DIM, 60)),
+            egui::Stroke::new(1.25, theme::tint(theme::PRIMARY_FIXED_DIM, 90)),
         );
         painter.text(
             egui::pos2((center.x + anchor.x) / 2.0, center.y - 10.0),
@@ -527,14 +524,19 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
         );
         for agent in agents {
             let box_rect =
-                egui::Rect::from_min_size(egui::pos2(column_left, top), egui::vec2(148.0, 16.0));
+                egui::Rect::from_min_size(egui::pos2(column_left, top), egui::vec2(148.0, 18.0));
             painter.rect_filled(
                 box_rect,
-                egui::CornerRadius::same(2),
+                egui::CornerRadius::same(3),
                 theme::SURFACE_CONTAINER,
             );
+            painter.circle_filled(
+                egui::pos2(box_rect.left() + 6.0, box_rect.center().y),
+                2.5,
+                theme::PRIMARY_FIXED_DIM,
+            );
             painter.text(
-                egui::pos2(box_rect.left() + 4.0, box_rect.center().y),
+                egui::pos2(box_rect.left() + 13.0, box_rect.center().y),
                 egui::Align2::LEFT_CENTER,
                 format!(
                     "{} · {}/{} slots",
@@ -544,7 +546,7 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
                 theme::ON_SURFACE_VARIANT,
             );
             hit_rects.push((box_rect, format!("agent:{}", agent.agent_id)));
-            top += 18.0;
+            top += 20.0;
         }
     }
 
@@ -556,7 +558,7 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
         );
         painter.line_segment(
             [center, box_rect.center()],
-            egui::Stroke::new(1.0, theme::tint(theme::WARN, 60)),
+            egui::Stroke::new(1.25, theme::tint(theme::WARN, 90)),
         );
         painter.text(
             egui::pos2((center.x + box_rect.center().x) / 2.0, center.y + 16.0),
@@ -732,63 +734,61 @@ fn tasks_tab(
         return;
     }
     let now = now_unix_ns();
-    egui::Grid::new("topology_tasks_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Task ID",
-                    "Estado",
-                    "Agente",
-                    "Modelo",
-                    "Prioridade",
-                    "Retry",
-                    "Idade",
-                ],
-            );
-            for task in &snapshot.tasks {
-                let status = task_status_label(task.status);
-                if !filter.is_empty()
-                    && !matches(&[
-                        &task.task_id,
-                        status,
-                        &task.assigned_agent,
-                        &task.model_name,
-                    ])
-                {
-                    continue;
-                }
-                let is_selected = selected.as_deref() == Some(task.task_id.as_str());
-                let short_id: String = task.task_id.chars().take(8).collect();
-                if ui
-                    .selectable_label(is_selected, egui::RichText::new(&short_id).monospace())
-                    .clicked()
-                {
-                    *selected = Some(task.task_id.clone());
-                }
-                ui.label(
-                    egui::RichText::new(status)
-                        .monospace()
-                        .color(task_status_color(task.status)),
-                );
-                ui.label(if task.assigned_agent.is_empty() {
-                    "—"
-                } else {
-                    &task.assigned_agent
-                });
-                ui.label(if task.model_name.is_empty() {
-                    "—"
-                } else {
-                    &task.model_name
-                });
-                kit::num_cell(ui, &task.priority.to_string());
-                kit::num_cell(ui, &task.retry_count.to_string());
-                let age = now.saturating_sub(task.created_at_ns) / 1_000_000_000;
-                kit::num_cell(ui, &format!("{age} s"));
-                ui.end_row();
+    kit::table("topology_tasks_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Task ID",
+                "Estado",
+                "Agente",
+                "Modelo",
+                "Prioridade",
+                "Retry",
+                "Idade",
+            ],
+        );
+        for task in &snapshot.tasks {
+            let status = task_status_label(task.status);
+            if !filter.is_empty()
+                && !matches(&[
+                    &task.task_id,
+                    status,
+                    &task.assigned_agent,
+                    &task.model_name,
+                ])
+            {
+                continue;
             }
-        });
+            let is_selected = selected.as_deref() == Some(task.task_id.as_str());
+            let short_id: String = task.task_id.chars().take(8).collect();
+            if ui
+                .selectable_label(is_selected, egui::RichText::new(&short_id).monospace())
+                .clicked()
+            {
+                *selected = Some(task.task_id.clone());
+            }
+            ui.label(
+                egui::RichText::new(status)
+                    .monospace()
+                    .color(task_status_color(task.status)),
+            );
+            ui.label(if task.assigned_agent.is_empty() {
+                "—"
+            } else {
+                &task.assigned_agent
+            });
+            ui.label(if task.model_name.is_empty() {
+                "—"
+            } else {
+                &task.model_name
+            });
+            kit::num_cell(ui, &task.priority.to_string());
+            kit::num_cell(ui, &task.retry_count.to_string());
+            let age = now.saturating_sub(task.created_at_ns) / 1_000_000_000;
+            kit::num_cell(ui, &format!("{age} s"));
+            ui.end_row();
+        }
+    });
 }
 
 /// Barra de log de tarefas: `TaskOutput` ao vivo (mais recentes primeiro),
@@ -823,31 +823,29 @@ fn task_log_bar(ui: &mut egui::Ui, snapshot: &DdsSnapshot, selected: &mut Option
         .iter()
         .filter(|row| selected.as_ref().is_none_or(|id| row.task_id == *id))
         .collect();
-    egui::Grid::new("topology_tasklog_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Task ID",
-                    "Seq",
-                    "Agente",
-                    "Final",
-                    "Tokens",
-                    "Conteúdo (96 chars)",
-                ],
-            );
-            for row in rows.iter().rev().take(12) {
-                let short: String = row.task_id.chars().take(8).collect();
-                kit::mono_cell(ui, &short);
-                kit::num_cell(ui, &row.seq_num.to_string());
-                ui.label(&row.agent_id);
-                ui.label(if row.is_final { "✔" } else { "…" });
-                kit::num_cell(ui, &row.token_count.to_string());
-                kit::mono_cell(ui, &preview96(&row.content));
-                ui.end_row();
-            }
-        });
+    kit::table("topology_tasklog_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Task ID",
+                "Seq",
+                "Agente",
+                "Final",
+                "Tokens",
+                "Conteúdo (96 chars)",
+            ],
+        );
+        for row in rows.iter().rev().take(12) {
+            let short: String = row.task_id.chars().take(8).collect();
+            kit::mono_cell(ui, &short);
+            kit::num_cell(ui, &row.seq_num.to_string());
+            ui.label(&row.agent_id);
+            ui.label(if row.is_final { "✔" } else { "…" });
+            kit::num_cell(ui, &row.token_count.to_string());
+            kit::mono_cell(ui, &preview96(&row.content));
+            ui.end_row();
+        }
+    });
     if rows.len() > 12 {
         ui.label(
             egui::RichText::new(format!(
@@ -871,33 +869,31 @@ fn agents_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
         return;
     }
     let now = now_unix_ns();
-    egui::Grid::new("topology_agents_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Identificação",
-                    "Modelo",
-                    "Slots",
-                    "Latência EMA",
-                    "Heartbeat",
-                ],
+    kit::table("topology_agents_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Identificação",
+                "Modelo",
+                "Slots",
+                "Latência EMA",
+                "Heartbeat",
+            ],
+        );
+        for agent in &discovery.agents {
+            kit::mono_cell(ui, &agent.agent_id);
+            ui.label(&agent.model);
+            ui.label(format!("{}/{}", agent.slots_busy, agent.slots_total));
+            ui.label(format!("{:.0} ms", agent.ema_latency_ms));
+            let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
+            ui.label(
+                egui::RichText::new(format!("{age} s atrás"))
+                    .color(if age <= 5 { theme::OK } else { theme::WARN })
+                    .monospace(),
             );
-            for agent in &discovery.agents {
-                kit::mono_cell(ui, &agent.agent_id);
-                ui.label(&agent.model);
-                ui.label(format!("{}/{}", agent.slots_busy, agent.slots_total));
-                ui.label(format!("{:.0} ms", agent.ema_latency_ms));
-                let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
-                ui.label(
-                    egui::RichText::new(format!("{age} s atrás"))
-                        .color(if age <= 5 { theme::OK } else { theme::WARN })
-                        .monospace(),
-                );
-                ui.end_row();
-            }
-        });
+            ui.end_row();
+        }
+    });
 }
 
 /// Aba Server Status (inferência viva — descoberta contínua).
@@ -910,32 +906,30 @@ fn servers_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
         );
         return;
     }
-    egui::Grid::new("topology_servers_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Server ID",
-                    "Modelo carregado",
-                    "Slots idle",
-                    "Slots proc.",
-                    "Pronto",
-                ],
+    kit::table("topology_servers_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Server ID",
+                "Modelo carregado",
+                "Slots idle",
+                "Slots proc.",
+                "Pronto",
+            ],
+        );
+        for server in &discovery.servers {
+            kit::mono_cell(ui, &server.server_id);
+            ui.label(&server.model_loaded);
+            kit::num_cell(ui, &server.slots_idle.to_string());
+            kit::num_cell(ui, &server.slots_processing.to_string());
+            ui.label(
+                egui::RichText::new(if server.ready { "● sim" } else { "◌ não" })
+                    .monospace()
+                    .color(if server.ready { theme::OK } else { theme::WARN }),
             );
-            for server in &discovery.servers {
-                kit::mono_cell(ui, &server.server_id);
-                ui.label(&server.model_loaded);
-                kit::num_cell(ui, &server.slots_idle.to_string());
-                kit::num_cell(ui, &server.slots_processing.to_string());
-                ui.label(
-                    egui::RichText::new(if server.ready { "● sim" } else { "◌ não" })
-                        .monospace()
-                        .color(if server.ready { theme::OK } else { theme::WARN }),
-                );
-                ui.end_row();
-            }
-        });
+            ui.end_row();
+        }
+    });
 }
 
 /// Aba Tool Calls (janela de observação; governança requester/nível).
@@ -953,60 +947,58 @@ fn tools_tab(
         );
         return;
     }
-    egui::Grid::new("topology_tools_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Call ID",
-                    "Ferramenta",
-                    "Solicitante",
-                    "Nível",
-                    "Status",
-                    "Duração",
-                    "Resultado (prévia)",
-                ],
-            );
-            for tool in &snapshot.tools {
-                let status = crate::dds_observe::status_label(tool.status);
-                if !filter.is_empty()
-                    && !matches(&[
-                        &tool.call_id,
-                        &tool.tool_name,
-                        &tool.requester_id,
-                        status,
-                        &tool.result_preview,
-                    ])
-                {
-                    continue;
-                }
-                let short_id: String = tool.call_id.chars().take(8).collect();
-                kit::mono_cell(ui, &short_id);
-                ui.label(&tool.tool_name);
-                ui.label(&tool.requester_id);
-                kit::mono_cell(
-                    ui,
-                    &crate::dds_observe::security_level_label(tool.security_level),
-                );
-                let status_color = match tool.status {
-                    2 | 5 => theme::ERROR,
-                    4 => theme::OK,
-                    _ => theme::ON_SURFACE_VARIANT,
-                };
-                ui.label(egui::RichText::new(status).monospace().color(status_color));
-                kit::num_cell(
-                    ui,
-                    &if tool.duration_ms > 0 {
-                        format!("{} ms", tool.duration_ms)
-                    } else {
-                        String::from("aberta")
-                    },
-                );
-                ui.label(egui::RichText::new(&tool.result_preview).small().weak());
-                ui.end_row();
+    kit::table("topology_tools_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Call ID",
+                "Ferramenta",
+                "Solicitante",
+                "Nível",
+                "Status",
+                "Duração",
+                "Resultado (prévia)",
+            ],
+        );
+        for tool in &snapshot.tools {
+            let status = crate::dds_observe::status_label(tool.status);
+            if !filter.is_empty()
+                && !matches(&[
+                    &tool.call_id,
+                    &tool.tool_name,
+                    &tool.requester_id,
+                    status,
+                    &tool.result_preview,
+                ])
+            {
+                continue;
             }
-        });
+            let short_id: String = tool.call_id.chars().take(8).collect();
+            kit::mono_cell(ui, &short_id);
+            ui.label(&tool.tool_name);
+            ui.label(&tool.requester_id);
+            kit::mono_cell(
+                ui,
+                &crate::dds_observe::security_level_label(tool.security_level),
+            );
+            let status_color = match tool.status {
+                2 | 5 => theme::ERROR,
+                4 => theme::OK,
+                _ => theme::ON_SURFACE_VARIANT,
+            };
+            ui.label(egui::RichText::new(status).monospace().color(status_color));
+            kit::num_cell(
+                ui,
+                &if tool.duration_ms > 0 {
+                    format!("{} ms", tool.duration_ms)
+                } else {
+                    String::from("aberta")
+                },
+            );
+            ui.label(egui::RichText::new(&tool.result_preview).small().weak());
+            ui.end_row();
+        }
+    });
 }
 
 /// Aba Métricas (SystemMetric drenadas na janela).
@@ -1020,20 +1012,18 @@ fn metrics_tab(
         kit::empty_state(ui, "Nenhuma métrica de sistema na janela.");
         return;
     }
-    egui::Grid::new("topology_metrics_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(ui, &["Origem", "Métrica (unidade)", "Valor"]);
-            for metric in &snapshot.metrics {
-                if !filter.is_empty() && !matches(&[&metric.source, &metric.name]) {
-                    continue;
-                }
-                kit::mono_cell(ui, &metric.source);
-                ui.label(&metric.name);
-                kit::num_cell(ui, &format!("{:.3}", metric.value));
-                ui.end_row();
+    kit::table("topology_metrics_grid").show(ui, |ui| {
+        kit::grid_header(ui, &["Origem", "Métrica (unidade)", "Valor"]);
+        for metric in &snapshot.metrics {
+            if !filter.is_empty() && !matches(&[&metric.source, &metric.name]) {
+                continue;
             }
-        });
+            kit::mono_cell(ui, &metric.source);
+            ui.label(&metric.name);
+            kit::num_cell(ui, &format!("{:.3}", metric.value));
+            ui.end_row();
+        }
+    });
 }
 
 /// Aba Descoberta DDS (eventos drenados na janela).
@@ -1047,22 +1037,20 @@ fn discovery_tab(
         kit::empty_state(ui, "Nenhum evento de descoberta na janela.");
         return;
     }
-    egui::Grid::new("topology_discovery_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(ui, &["Evento", "Tópico", "Entidade remota"]);
-            for event in &snapshot.discoveries {
-                if !filter.is_empty()
-                    && !matches(&[&event.event_type, &event.topic_name, &event.remote_entity])
-                {
-                    continue;
-                }
-                ui.label(&event.event_type);
-                kit::mono_cell(ui, &event.topic_name);
-                kit::mono_cell(ui, &event.remote_entity);
-                ui.end_row();
+    kit::table("topology_discovery_grid").show(ui, |ui| {
+        kit::grid_header(ui, &["Evento", "Tópico", "Entidade remota"]);
+        for event in &snapshot.discoveries {
+            if !filter.is_empty()
+                && !matches(&[&event.event_type, &event.topic_name, &event.remote_entity])
+            {
+                continue;
             }
-        });
+            ui.label(&event.event_type);
+            kit::mono_cell(ui, &event.topic_name);
+            kit::mono_cell(ui, &event.remote_entity);
+            ui.end_row();
+        }
+    });
 }
 
 /// Aba Instalações (presença contínua: nós Studio com probe e idade).
@@ -1076,41 +1064,39 @@ fn installations_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
         return;
     }
     let now = now_unix_ns();
-    egui::Grid::new("topology_nodes_grid")
-        .striped(true)
-        .show(ui, |ui| {
-            kit::grid_header(
-                ui,
-                &[
-                    "Node ID",
-                    "URL",
-                    "Estado do probe",
-                    "Idade HB",
-                    "Token exigido",
-                ],
+    kit::table("topology_nodes_grid").show(ui, |ui| {
+        kit::grid_header(
+            ui,
+            &[
+                "Node ID",
+                "URL",
+                "Estado do probe",
+                "Idade HB",
+                "Token exigido",
+            ],
+        );
+        for node in &discovery.nodes {
+            kit::mono_cell(ui, &node.node_id);
+            kit::mono_cell(ui, &node.url);
+            let (color, detail) = match &node.probe {
+                Some(probe) => match probe.state {
+                    ProbeState::Online => (theme::OK, probe.detail.clone()),
+                    ProbeState::AuthPending => (theme::AUTH, probe.detail.clone()),
+                    ProbeState::Offline | ProbeState::Unknown => {
+                        (theme::ERROR, probe.detail.clone())
+                    }
+                },
+                None => (theme::STALE, String::from("sondando…")),
+            };
+            ui.label(
+                egui::RichText::new(format!("● {detail}"))
+                    .monospace()
+                    .small()
+                    .color(color),
             );
-            for node in &discovery.nodes {
-                kit::mono_cell(ui, &node.node_id);
-                kit::mono_cell(ui, &node.url);
-                let (color, detail) = match &node.probe {
-                    Some(probe) => match probe.state {
-                        ProbeState::Online => (theme::OK, probe.detail.clone()),
-                        ProbeState::AuthPending => (theme::AUTH, probe.detail.clone()),
-                        ProbeState::Offline | ProbeState::Unknown => {
-                            (theme::ERROR, probe.detail.clone())
-                        }
-                    },
-                    None => (theme::STALE, String::from("sondando…")),
-                };
-                ui.label(
-                    egui::RichText::new(format!("● {detail}"))
-                        .monospace()
-                        .small()
-                        .color(color),
-                );
-                kit::num_cell(ui, &format!("{} s", node.age_secs(now)));
-                ui.label(if node.token_required { "sim" } else { "não" });
-                ui.end_row();
-            }
-        });
+            kit::num_cell(ui, &format!("{} s", node.age_secs(now)));
+            ui.label(if node.token_required { "sim" } else { "não" });
+            ui.end_row();
+        }
+    });
 }

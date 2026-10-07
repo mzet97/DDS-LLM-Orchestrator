@@ -91,40 +91,34 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
         );
     } else {
         let now = now_unix_ns();
-        egui::Grid::new("dds_live_agents")
-            .striped(true)
-            .show(ui, |ui| {
-                kit::grid_header(
-                    ui,
-                    &[
-                        "Identificação",
-                        "Modelo",
-                        "Slots",
-                        "Latência EMA",
-                        "Heartbeat (poda 30 s)",
-                    ],
+        kit::table("dds_live_agents").show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Identificação",
+                    "Modelo",
+                    "Slots",
+                    "Latência EMA",
+                    "Heartbeat (poda 30 s)",
+                ],
+            );
+            for agent in &discovery.agents {
+                kit::mono_cell(ui, &agent.agent_id);
+                ui.label(&agent.model);
+                kit::num_cell(ui, &format!("{}/{}", agent.slots_busy, agent.slots_total));
+                kit::num_cell(ui, &format!("{:.0} ms", agent.ema_latency_ms));
+                let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{age} s atrás · {}s/30s",
+                        30_u64.saturating_sub(age)
+                    ))
+                    .monospace()
+                    .color(if age <= 5 { theme::OK } else { theme::WARN }),
                 );
-                for agent in &discovery.agents {
-                    kit::mono_cell(ui, &agent.agent_id);
-                    ui.label(&agent.model);
-                    kit::num_cell(ui, &format!("{}/{}", agent.slots_busy, agent.slots_total));
-                    kit::num_cell(ui, &format!("{:.0} ms", agent.ema_latency_ms));
-                    let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{age} s atrás · {}s/30s",
-                            30_u64.saturating_sub(age)
-                        ))
-                        .monospace()
-                        .color(if age <= 5 {
-                            theme::OK
-                        } else {
-                            theme::WARN
-                        }),
-                    );
-                    ui.end_row();
-                }
-            });
+                ui.end_row();
+            }
+        });
     }
     ui.add_space(theme::SPACE_LG);
 

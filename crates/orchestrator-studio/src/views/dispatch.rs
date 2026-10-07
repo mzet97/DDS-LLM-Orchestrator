@@ -201,55 +201,53 @@ pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState, discovery: &Discove
                 avg
             ),
         );
-        egui::Grid::new("dispatch_history")
-            .striped(true)
-            .show(ui, |ui| {
-                kit::grid_header(
+        kit::table("dispatch_history").show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Task ID",
+                    "Agente executor",
+                    "Latência",
+                    "Fila",
+                    "Geração",
+                    "Desfecho",
+                ],
+            );
+            for record in dispatch.history.iter().rev() {
+                kit::mono_cell(ui, &record.task_id);
+                ui.label(record.agent.as_deref().unwrap_or("—"));
+                kit::num_cell(
                     ui,
-                    &[
-                        "Task ID",
-                        "Agente executor",
-                        "Latência",
-                        "Fila",
-                        "Geração",
-                        "Desfecho",
-                    ],
+                    &record
+                        .latency_ms
+                        .map(|ms| format!("{ms} ms"))
+                        .unwrap_or_else(|| "—".to_owned()),
                 );
-                for record in dispatch.history.iter().rev() {
-                    kit::mono_cell(ui, &record.task_id);
-                    ui.label(record.agent.as_deref().unwrap_or("—"));
-                    kit::num_cell(
-                        ui,
-                        &record
-                            .latency_ms
-                            .map(|ms| format!("{ms} ms"))
-                            .unwrap_or_else(|| "—".to_owned()),
-                    );
-                    kit::num_cell(
-                        ui,
-                        &record
-                            .queue_ms
-                            .map(|ms| format!("{ms} ms"))
-                            .unwrap_or_else(|| "—".to_owned()),
-                    );
-                    kit::num_cell(
-                        ui,
-                        &record
-                            .inference_ms
-                            .map(|ms| format!("{ms} ms"))
-                            .unwrap_or_else(|| "—".to_owned()),
-                    );
-                    ui.label(if record.ok {
-                        egui::RichText::new("200 OK · concluída")
-                            .small()
-                            .color(theme::OK)
-                    } else {
-                        egui::RichText::new(format!("falha: {}", record.detail))
-                            .small()
-                            .color(theme::ERROR)
-                    });
-                    ui.end_row();
-                }
-            });
+                kit::num_cell(
+                    ui,
+                    &record
+                        .queue_ms
+                        .map(|ms| format!("{ms} ms"))
+                        .unwrap_or_else(|| "—".to_owned()),
+                );
+                kit::num_cell(
+                    ui,
+                    &record
+                        .inference_ms
+                        .map(|ms| format!("{ms} ms"))
+                        .unwrap_or_else(|| "—".to_owned()),
+                );
+                ui.label(if record.ok {
+                    egui::RichText::new("200 OK · concluída")
+                        .small()
+                        .color(theme::OK)
+                } else {
+                    egui::RichText::new(format!("falha: {}", record.detail))
+                        .small()
+                        .color(theme::ERROR)
+                });
+                ui.end_row();
+            }
+        });
     }
 }

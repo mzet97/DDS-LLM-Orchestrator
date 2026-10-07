@@ -52,17 +52,21 @@ pub const AUTH: Color32 = Color32::from_rgb(0xa8, 0x55, 0xf7);
 /// Apagado/never-loaded.
 pub const STALE: Color32 = Color32::from_rgb(0x6b, 0x72, 0x80);
 
-// ── Espaçamento (escala do DESIGN.md) ───────────────────────────────────
-pub const SPACE_XS: f32 = 2.0;
-pub const SPACE_SM: f32 = 4.0;
-pub const SPACE_MD: f32 = 8.0;
-pub const SPACE_LG: f32 = 12.0;
-pub const SPACE_XL: f32 = 16.0;
+// ── Espaçamento (escala ampliada na UX3 — o design respira mais) ────────
+pub const SPACE_XS: f32 = 3.0;
+pub const SPACE_SM: f32 = 6.0;
+pub const SPACE_MD: f32 = 10.0;
+pub const SPACE_LG: f32 = 16.0;
+pub const SPACE_XL: f32 = 24.0;
+/// Ritmo entre seções de uma tela (UX3: ar dos mockups Stitch).
+pub const SPACE_XXL: f32 = 32.0;
 
-/// Raio padrão de badges/botões/cards (2 px — "industrial").
-pub const RADIUS_SM: f32 = 2.0;
-pub const RADIUS_MD: f32 = 4.0;
-pub const RADIUS_LG: f32 = 8.0;
+/// Raios (UX3: cards/pills mais suaves que o "industrial" 2px original).
+pub const RADIUS_SM: f32 = 4.0;
+pub const RADIUS_MD: f32 = 6.0;
+pub const RADIUS_LG: f32 = 10.0;
+/// Pill completa (badges/chips do design Stitch).
+pub const RADIUS_PILL: f32 = 999.0;
 
 /// Tinta translúcida para fundo de badge (escala 0–25 ≈ 0–100% de alpha;
 /// valores maiores são saturados em 255 — nunca overflow).
@@ -112,14 +116,15 @@ fn apply_fonts(ctx: &egui::Context) {
         mono.extend(fallbacks);
     }
 
-    // Escala de TextStyles (pt): tokens do DESIGN.md com o Inter como família.
+    // Escala de TextStyles (UX3: hierarquia dos mockups — títulos e números
+    // GRANDES, corpo confortável; Inter na UI, JBM nos dados).
     ctx.all_styles_mut(|style| {
         style.text_styles = [
-            (TextStyle::Heading, FontFamily::Proportional, 16.0),
-            (TextStyle::Body, FontFamily::Proportional, 13.0),
-            (TextStyle::Button, FontFamily::Proportional, 12.0),
-            (TextStyle::Small, FontFamily::Proportional, 11.0),
-            (TextStyle::Monospace, FontFamily::Monospace, 11.0),
+            (TextStyle::Heading, FontFamily::Proportional, 20.0),
+            (TextStyle::Body, FontFamily::Proportional, 14.0),
+            (TextStyle::Button, FontFamily::Proportional, 13.0),
+            (TextStyle::Small, FontFamily::Proportional, 12.0),
+            (TextStyle::Monospace, FontFamily::Monospace, 12.5),
         ]
         .into_iter()
         .map(|(key, family, size)| (key, egui::FontId::new(size, family)))
@@ -140,7 +145,8 @@ fn apply_visuals(ctx: &egui::Context) {
         v.window_fill = SURFACE_CONTAINER;
         v.extreme_bg_color = SURFACE_LOW;
 
-        // Hairlines 1 px em vez de sombras (DESIGN.md: sem drop shadows).
+        // Hairlines 1 px em vez de sombras (DESIGN.md: sem drop shadows);
+        // hover com tinta ciano sutil (UX3).
         v.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, SURFACE_HIGHEST);
         v.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, SURFACE_HIGHEST);
         v.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, PRIMARY_FIXED_DIM);
@@ -148,25 +154,25 @@ fn apply_visuals(ctx: &egui::Context) {
 
         v.widgets.noninteractive.bg_fill = SURFACE_LOW;
         v.widgets.inactive.bg_fill = SURFACE_CONTAINER;
-        v.widgets.hovered.bg_fill = SURFACE_HIGH;
-        v.widgets.active.bg_fill = SURFACE_HIGH;
+        v.widgets.hovered.bg_fill = tint(PRIMARY_CONTAINER, 8);
+        v.widgets.active.bg_fill = tint(PRIMARY_CONTAINER, 14);
 
         v.widgets.inactive.fg_stroke = egui::Stroke::new(1.0, ON_SURFACE);
         v.widgets.hovered.fg_stroke = egui::Stroke::new(1.0, ON_SURFACE);
         v.widgets.active.fg_stroke = egui::Stroke::new(1.0, PRIMARY_CONTAINER);
         v.widgets.noninteractive.fg_stroke = egui::Stroke::new(1.0, ON_SURFACE_VARIANT);
 
-        // Rounding 2/4 (industrial). CornerRadius é u8 por canto.
+        // Raios suaves (UX3); botões quase-pill.
         let small = egui::CornerRadius::same(RADIUS_SM as u8);
         v.widgets.noninteractive.corner_radius = small;
-        v.widgets.inactive.corner_radius = small;
+        v.widgets.inactive.corner_radius = egui::CornerRadius::same(RADIUS_MD as u8);
         v.widgets.hovered.corner_radius = egui::CornerRadius::same(RADIUS_MD as u8);
-        v.widgets.active.corner_radius = small;
-        v.window_corner_radius = egui::CornerRadius::same(RADIUS_MD as u8);
+        v.widgets.active.corner_radius = egui::CornerRadius::same(RADIUS_MD as u8);
+        v.window_corner_radius = egui::CornerRadius::same(RADIUS_LG as u8);
 
-        // Seleção = accent ciano.
-        v.selection.bg_fill = PRIMARY_CONTAINER;
-        v.selection.stroke = egui::Stroke::new(1.0, ON_PRIMARY);
+        // Seleção = tinta ciano 20% + stroke (não sólida — UX3).
+        v.selection.bg_fill = tint(PRIMARY_CONTAINER, 20);
+        v.selection.stroke = egui::Stroke::new(1.0, PRIMARY_FIXED_DIM);
 
         v.hyperlink_color = PRIMARY_FIXED_DIM;
     });

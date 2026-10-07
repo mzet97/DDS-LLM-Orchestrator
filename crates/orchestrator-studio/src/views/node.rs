@@ -268,26 +268,24 @@ pub fn show(
             let mut selected: Option<usize> = ui
                 .ctx()
                 .data(|data| data.get_temp(egui::Id::new("node-op-selected")));
-            egui::Grid::new("node_ops_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    kit::grid_header(ui, &["Op ID", "Tipo", "Resumo / alvo"]);
-                    for (index, record) in node.operations.iter().enumerate() {
-                        let is_selected = selected == Some(index);
-                        if ui
-                            .selectable_label(
-                                is_selected,
-                                egui::RichText::new(&record.id.0).monospace(),
-                            )
-                            .clicked()
-                        {
-                            selected = Some(index);
-                        }
-                        ui.label(op_kind(&record.op));
-                        ui.label(op_summary(&record.op));
-                        ui.end_row();
+            kit::table("node_ops_grid").show(ui, |ui| {
+                kit::grid_header(ui, &["Op ID", "Tipo", "Resumo / alvo"]);
+                for (index, record) in node.operations.iter().enumerate() {
+                    let is_selected = selected == Some(index);
+                    if ui
+                        .selectable_label(
+                            is_selected,
+                            egui::RichText::new(&record.id.0).monospace(),
+                        )
+                        .clicked()
+                    {
+                        selected = Some(index);
                     }
-                });
+                    ui.label(op_kind(&record.op));
+                    ui.label(op_summary(&record.op));
+                    ui.end_row();
+                }
+            });
             ui.ctx()
                 .data_mut(|data| data.insert_temp(egui::Id::new("node-op-selected"), selected));
             if let Some(index) = selected {

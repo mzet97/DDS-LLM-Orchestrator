@@ -1,8 +1,6 @@
-//! Kit de componentes visuais compartilhados (migração Stitch → egui).
-//!
-//! Cada componente replica o padrão do design system: badges com tinta de
-//! 10%, dots de status, banners de erro/aviso, headers de tabela em mono,
-//! cards de métrica com valor grande e cards com filete de acento.
+//! Kit de componentes visuais compartilhados (migração Stitch → egui;
+//! reforma visual UX3: hierarquia tipográfica forte, pills com borda,
+//! cabeçalho de tabela em faixa, cards com borda de acento).
 //! Sem sombra — profundidade por luminância (DESIGN.md).
 
 use crate::theme;
@@ -14,29 +12,86 @@ pub fn status_dot(ui: &mut egui::Ui, color: egui::Color32, size: f32) {
     ui.painter().circle_filled(rect.center(), size / 2.0, color);
 }
 
-/// Badge: tinta de 10% no fundo + texto colorido + radius 2.
+/// Badge PILL (UX3): fundo tint 18% + borda 1px da cor + texto mono 10px.
 pub fn badge(ui: &mut egui::Ui, text: &str, color: egui::Color32) {
-    let bg = theme::tint(color, 10);
+    let bg = theme::tint(color, 18);
     let galley = ui
         .painter()
         .layout_no_wrap(text.to_owned(), egui::FontId::monospace(10.0), color);
     let (rect, _) = ui.allocate_at_least(
-        egui::vec2(galley.size().x + theme::SPACE_MD * 2.0, 16.0),
+        egui::vec2(galley.size().x + theme::SPACE_LG * 2.0, 20.0),
         egui::Sense::hover(),
     );
-    ui.painter()
-        .rect_filled(rect, egui::CornerRadius::same(theme::RADIUS_SM as u8), bg);
+    let pill = egui::CornerRadius::same(theme::RADIUS_PILL as u8);
+    ui.painter().rect_filled(rect, pill, bg);
+    ui.painter().rect_stroke(
+        rect,
+        pill,
+        egui::Stroke::new(1.0, theme::tint(color, 60)),
+        egui::StrokeKind::Inside,
+    );
     ui.painter()
         .galley(rect.center() - galley.size() / 2.0, galley, color);
 }
 
+/// Botão primário PILL (UX3): preenchido ciano, texto ON_PRIMARY mono forte.
+pub fn primary_button(ui: &mut egui::Ui, text: &str) -> egui::Response {
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(text)
+                .monospace()
+                .strong()
+                .color(theme::ON_PRIMARY),
+        )
+        .fill(theme::PRIMARY_CONTAINER)
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_PILL as u8)),
+    )
+}
+
+/// Chip selecionável PILL (UX3 — filtros/abas/janelas): ativo = tinta 18% +
+/// borda da cor; inativo = superfície HIGH discreta com hairline.
+pub fn pill_chip(
+    ui: &mut egui::Ui,
+    active: bool,
+    text: &str,
+    color: egui::Color32,
+) -> egui::Response {
+    let fill = if active {
+        theme::tint(color, 18)
+    } else {
+        theme::SURFACE_HIGH
+    };
+    let stroke_color = if active {
+        theme::tint(color, 70)
+    } else {
+        theme::SURFACE_HIGHEST
+    };
+    let text_color = if active {
+        color
+    } else {
+        theme::ON_SURFACE_VARIANT
+    };
+    ui.add(
+        egui::Button::new(
+            egui::RichText::new(text)
+                .monospace()
+                .small()
+                .color(text_color),
+        )
+        .fill(fill)
+        .stroke(egui::Stroke::new(1.0, stroke_color))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_PILL as u8)),
+    )
+}
+
 /// Banner de erro: fundo tinta de erro + texto colorido.
 pub fn error_banner(ui: &mut egui::Ui, message: &str) {
-    let bg = theme::tint(theme::ERROR, 10);
+    let bg = theme::tint(theme::ERROR, 12);
     egui::Frame::NONE
         .fill(bg)
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
         .inner_margin(theme::SPACE_MD)
+        .stroke(egui::Stroke::new(1.0, theme::tint(theme::ERROR, 50)))
         .show(ui, |ui| {
             ui.label(egui::RichText::new(format!("⚠ {message}")).color(theme::ERROR));
         });
@@ -44,11 +99,12 @@ pub fn error_banner(ui: &mut egui::Ui, message: &str) {
 
 /// Banner de confirmação em 2 passos (modo protegido): fundo âmbar.
 pub fn warn_banner(ui: &mut egui::Ui, message: &str) {
-    let bg = theme::tint(theme::WARN, 10);
+    let bg = theme::tint(theme::WARN, 12);
     egui::Frame::NONE
         .fill(bg)
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
         .inner_margin(theme::SPACE_MD)
+        .stroke(egui::Stroke::new(1.0, theme::tint(theme::WARN, 50)))
         .show(ui, |ui| {
             ui.label(egui::RichText::new(format!("⚠ {message}")).color(theme::WARN));
         });
@@ -57,11 +113,12 @@ pub fn warn_banner(ui: &mut egui::Ui, message: &str) {
 /// Banner de ação destrutiva pendente (PRD 3.8): vermelho — gravação no nó
 /// aguardando o 2º passo; mesmo formato do `warn_banner`.
 pub fn danger_banner(ui: &mut egui::Ui, message: &str) {
-    let bg = theme::tint(theme::ERROR, 10);
+    let bg = theme::tint(theme::ERROR, 14);
     egui::Frame::NONE
         .fill(bg)
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
         .inner_margin(theme::SPACE_MD)
+        .stroke(egui::Stroke::new(1.0, theme::tint(theme::ERROR, 60)))
         .show(ui, |ui| {
             ui.label(
                 egui::RichText::new(format!("⚠ {message}"))
@@ -74,22 +131,45 @@ pub fn danger_banner(ui: &mut egui::Ui, message: &str) {
 /// Estado vazio honesto: ícone ◌ + instrução.
 pub fn empty_state(ui: &mut egui::Ui, message: &str) {
     ui.horizontal(|ui| {
-        ui.label(egui::RichText::new("◌").color(theme::STALE).size(14.0));
+        ui.label(egui::RichText::new("◌").color(theme::STALE).size(15.0));
         ui.label(egui::RichText::new(message).weak());
     });
 }
 
-/// Header de tabela (grid): fundo HIGH, texto mono uppercase em OUTLINE.
+/// Header de tabela (UX3): cada coluna vira uma mini-faixa preenchida
+/// (SURFACE_HIGH, radius topo) com texto mono uppercase — o texto é o MESMO
+/// de antes (âncoras kittest preservadas), só o visual muda.
 pub fn grid_header(ui: &mut egui::Ui, columns: &[&str]) {
     for column in columns {
-        ui.label(
-            egui::RichText::new(column.to_uppercase())
-                .monospace()
-                .small()
-                .color(theme::OUTLINE),
-        );
+        egui::Frame::NONE
+            .fill(theme::SURFACE_HIGH)
+            .corner_radius(egui::CornerRadius {
+                nw: theme::RADIUS_SM as u8,
+                ne: theme::RADIUS_SM as u8,
+                sw: 0,
+                se: 0,
+            })
+            .inner_margin(egui::Margin::symmetric(10, 6))
+            .show(ui, |ui| {
+                ui.label(
+                    egui::RichText::new(column.to_uppercase())
+                        .monospace()
+                        .size(11.0)
+                        .strong()
+                        .color(theme::ON_SURFACE_VARIANT),
+                );
+            });
     }
     ui.end_row();
+}
+
+/// Grid de tabela no padrão UX3: zebra + linhas altas (28px) + respiro
+/// entre colunas. Troca `egui::Grid::new(id).striped(true)` nas views.
+pub fn table(id: &str) -> egui::Grid {
+    egui::Grid::new(id)
+        .striped(true)
+        .min_row_height(28.0)
+        .spacing(egui::vec2(14.0, 6.0))
 }
 
 /// Célula monospace para IDs/hex/URLs.
@@ -115,20 +195,28 @@ pub fn num_cell(ui: &mut egui::Ui, text: &str) {
     });
 }
 
-/// Rótulo de seção interna da tela (ex.: "SEÇÃO A — FONTE 1: DDS"):
-/// mono uppercase em OUTLINE com espaçamento.
+/// Rótulo de seção interna da tela (UX3): mono uppercase em OUTLINE com
+/// hairline na largura total abaixo (separador de seção dos mockups).
 pub fn section_label(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        egui::RichText::new(text.to_uppercase())
-            .monospace()
-            .small()
-            .color(theme::OUTLINE),
+    let label = egui::RichText::new(text.to_uppercase())
+        .monospace()
+        .small()
+        .color(theme::OUTLINE);
+    let response = ui.add_sized([ui.available_width(), 16.0], egui::Label::new(label));
+    let y = response.rect.bottom() + 2.0;
+    ui.painter().line_segment(
+        [
+            egui::pos2(response.rect.left(), y),
+            egui::pos2(response.rect.right(), y),
+        ],
+        egui::Stroke::new(1.0, theme::SURFACE_HIGHEST),
     );
-    ui.add_space(theme::SPACE_XS);
+    ui.add_space(theme::SPACE_SM);
 }
 
-/// Card de métrica (mockups 3.11/3.7/3.14): rótulo mono uppercase, valor
-/// grande no accent e subtexto real; ocupa a largura disponível da coluna.
+/// Card de métrica HERO (UX3): borda 1px com acento translúcido, número
+/// 32px forte no acento, label mono pequeno e subtexto — o padrão visual
+/// dominante dos mockups (hierarquia pelo tamanho do número).
 pub fn metric_card(
     ui: &mut egui::Ui,
     label: &str,
@@ -140,16 +228,17 @@ pub fn metric_card(
         .fill(theme::SURFACE_CONTAINER)
         .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
         .inner_margin(theme::SPACE_LG)
-        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+        .stroke(egui::Stroke::new(1.0, theme::tint(accent, 45)))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
+            ui.set_min_height(92.0);
             ui.label(
                 egui::RichText::new(label.to_uppercase())
                     .monospace()
                     .small()
                     .color(theme::OUTLINE),
             );
-            ui.label(egui::RichText::new(value).size(22.0).strong().color(accent));
+            ui.label(egui::RichText::new(value).size(32.0).strong().color(accent));
             if !sub.is_empty() {
                 ui.label(
                     egui::RichText::new(sub)
@@ -160,7 +249,7 @@ pub fn metric_card(
         });
 }
 
-/// Card com filete colorido à esquerda (estado por cor), largura total.
+/// Card com filete colorido à esquerda + borda de acento (UX3), largura total.
 pub fn accent_card<R>(
     ui: &mut egui::Ui,
     accent: egui::Color32,
@@ -169,8 +258,8 @@ pub fn accent_card<R>(
     let response = egui::Frame::NONE
         .fill(theme::SURFACE_CONTAINER)
         .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
-        .inner_margin(theme::SPACE_MD)
-        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+        .inner_margin(theme::SPACE_LG)
+        .stroke(egui::Stroke::new(1.0, theme::tint(accent, 45)))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
             add_contents(ui)
@@ -180,31 +269,34 @@ pub fn accent_card<R>(
         .response
         .rect
         .with_max_x(response.response.rect.left() + 3.0);
-    ui.painter().rect_filled(stripe, 0.0, accent);
+    ui.painter()
+        .rect_filled(stripe, 0.0, theme::tint(accent, 80));
     response.inner
 }
 
-/// Chip do alvo único no topo das telas HTTP: "ALVO: url · estado".
+/// Chip do alvo único no topo das telas HTTP (UX3: pill com borda ciana).
 pub fn target_chip(ui: &mut egui::Ui, url: &str, state: &str, ok: bool) {
+    let color = theme::PRIMARY_FIXED_DIM;
     let galley = ui.painter().layout_no_wrap(
         format!("ALVO: {url} · {state}"),
         egui::FontId::monospace(10.0),
-        theme::PRIMARY_FIXED_DIM,
+        color,
     );
     let (rect, _) = ui.allocate_at_least(
-        egui::vec2(galley.size().x + theme::SPACE_LG * 2.0, 22.0),
+        egui::vec2(galley.size().x + theme::SPACE_LG * 2.0, 24.0),
         egui::Sense::hover(),
     );
-    ui.painter().rect_filled(
+    let pill = egui::CornerRadius::same(theme::RADIUS_PILL as u8);
+    ui.painter()
+        .rect_filled(rect, pill, theme::tint(theme::PRIMARY_CONTAINER, 12));
+    ui.painter().rect_stroke(
         rect,
-        egui::CornerRadius::same(theme::RADIUS_SM as u8),
-        theme::tint(theme::PRIMARY_CONTAINER, 10),
+        pill,
+        egui::Stroke::new(1.0, theme::tint(theme::PRIMARY_CONTAINER, 55)),
+        egui::StrokeKind::Inside,
     );
-    ui.painter().galley(
-        rect.center() - galley.size() / 2.0,
-        galley,
-        theme::PRIMARY_FIXED_DIM,
-    );
+    ui.painter()
+        .galley(rect.center() - galley.size() / 2.0, galley, color);
     if !ok {
         ui.label(
             egui::RichText::new(state)

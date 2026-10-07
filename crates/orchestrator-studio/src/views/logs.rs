@@ -144,7 +144,7 @@ pub fn show(ui: &mut egui::Ui, panel: &mut LogsPanel) {
             kit::empty_state(ui, "(nenhum evento no filtro atual)");
             return;
         }
-        egui::Grid::new("studio_logs").show(ui, |ui| {
+        kit::table("studio_logs").show(ui, |ui| {
             kit::grid_header(
                 ui,
                 &[

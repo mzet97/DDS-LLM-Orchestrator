@@ -118,122 +118,120 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
             ],
         );
         ui.add_space(theme::SPACE_SM);
-        egui::Grid::new("discovery_grid")
-            .striped(true)
-            .show(ui, |ui| {
-                kit::grid_header(
-                    ui,
-                    &[
-                        "Estado / Node ID",
-                        "Ponto de Extremidade (URL)",
-                        "Probe de Protocolo & Versão",
-                        "Autenticação (Bearer)",
-                        "Heartbeat & Ações",
-                    ],
+        kit::table("discovery_grid").show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Estado / Node ID",
+                    "Ponto de Extremidade (URL)",
+                    "Probe de Protocolo & Versão",
+                    "Autenticação (Bearer)",
+                    "Heartbeat & Ações",
+                ],
+            );
+            for (index, node) in discovery.nodes.iter().enumerate() {
+                let alive = node.is_alive(now_ns);
+                let age = node.age_secs(now_ns);
+                let selected = discovery.selected == Some(index);
+
+                // Coluna 1: estado + node_id (+ badge ALVO PRIMÁRIO).
+                let (probe_state, probe_detail) = match &node.probe {
+                    Some(probe) => (probe.state, probe.detail.clone()),
+                    None => (ProbeState::Unknown, String::from("sondando…")),
+                };
+                let (state_color, state_dot) = match (&node.probe, alive) {
+                    (Some(probe), _) => dot_style(probe.state),
+                    (None, true) => (theme::WARN, "◐"),
+                    (None, false) => (theme::STALE, "◌"),
+                };
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(state_dot).color(state_color).size(14.0));
+                    kit::mono_cell(ui, &node.node_id);
+                    if selected {
+                        kit::badge(ui, "ALVO PRIMÁRIO", theme::PRIMARY_FIXED_DIM);
+                    }
+                });
+                let _ = probe_state;
+
+                // Coluna 2: URL.
+                ui.hyperlink_to(&node.url, &node.url);
+
+                // Coluna 3: probe (protocolo ou motivo).
+                ui.label(
+                    egui::RichText::new(match &node.probe {
+                        Some(probe) => format!("● {}", probe.detail),
+                        None => String::from("aguardando probe…"),
+                    })
+                    .monospace()
+                    .small()
+                    .color(state_color),
                 );
-                for (index, node) in discovery.nodes.iter().enumerate() {
-                    let alive = node.is_alive(now_ns);
-                    let age = node.age_secs(now_ns);
-                    let selected = discovery.selected == Some(index);
 
-                    // Coluna 1: estado + node_id (+ badge ALVO PRIMÁRIO).
-                    let (probe_state, probe_detail) = match &node.probe {
-                        Some(probe) => (probe.state, probe.detail.clone()),
-                        None => (ProbeState::Unknown, String::from("sondando…")),
-                    };
-                    let (state_color, state_dot) = match (&node.probe, alive) {
-                        (Some(probe), _) => dot_style(probe.state),
-                        (None, true) => (theme::WARN, "◐"),
-                        (None, false) => (theme::STALE, "◌"),
-                    };
-                    ui.horizontal(|ui| {
-                        ui.label(egui::RichText::new(state_dot).color(state_color).size(14.0));
-                        kit::mono_cell(ui, &node.node_id);
-                        if selected {
-                            kit::badge(ui, "ALVO PRIMÁRIO", theme::PRIMARY_FIXED_DIM);
+                // Coluna 4: autenticação (401 é CREDENCIAL, não rede).
+                let has_token = machines.token_for(&node.url).is_some();
+                let (auth_text, auth_color) = match &node.probe {
+                    Some(probe) if probe.state == ProbeState::AuthPending => {
+                        (probe_detail.clone(), theme::AUTH)
+                    }
+                    Some(probe) if probe.state == ProbeState::Online => {
+                        if node.token_required {
+                            if has_token {
+                                ("Bearer em memória · aceito".to_owned(), theme::OK)
+                            } else {
+                                ("sem token exigido pelo nó".to_owned(), theme::OK)
+                            }
+                        } else {
+                            ("token não exigido".to_owned(), theme::OK)
                         }
-                    });
-                    let _ = probe_state;
-
-                    // Coluna 2: URL.
-                    ui.hyperlink_to(&node.url, &node.url);
-
-                    // Coluna 3: probe (protocolo ou motivo).
-                    ui.label(
-                        egui::RichText::new(match &node.probe {
-                            Some(probe) => format!("● {}", probe.detail),
-                            None => String::from("aguardando probe…"),
-                        })
+                    }
+                    Some(_) => (String::from("— sem resposta"), theme::ERROR),
+                    None => (String::from("—"), theme::STALE),
+                };
+                ui.label(
+                    egui::RichText::new(auth_text)
                         .monospace()
                         .small()
-                        .color(state_color),
-                    );
+                        .color(auth_color),
+                );
 
-                    // Coluna 4: autenticação (401 é CREDENCIAL, não rede).
-                    let has_token = machines.token_for(&node.url).is_some();
-                    let (auth_text, auth_color) = match &node.probe {
-                        Some(probe) if probe.state == ProbeState::AuthPending => {
-                            (probe_detail.clone(), theme::AUTH)
-                        }
-                        Some(probe) if probe.state == ProbeState::Online => {
-                            if node.token_required {
-                                if has_token {
-                                    ("Bearer em memória · aceito".to_owned(), theme::OK)
-                                } else {
-                                    ("sem token exigido pelo nó".to_owned(), theme::OK)
-                                }
-                            } else {
-                                ("token não exigido".to_owned(), theme::OK)
-                            }
-                        }
-                        Some(_) => (String::from("— sem resposta"), theme::ERROR),
-                        None => (String::from("—"), theme::STALE),
-                    };
+                // Coluna 5: heartbeat + ações.
+                let (hb, hb_color) = heartbeat_label(age);
+                ui.vertical(|ui| {
                     ui.label(
-                        egui::RichText::new(auth_text)
+                        egui::RichText::new(format!("[{hb} {age}s]"))
                             .monospace()
                             .small()
-                            .color(auth_color),
+                            .color(hb_color),
                     );
-
-                    // Coluna 5: heartbeat + ações.
-                    let (hb, hb_color) = heartbeat_label(age);
-                    ui.vertical(|ui| {
-                        ui.label(
-                            egui::RichText::new(format!("[{hb} {age}s]"))
-                                .monospace()
-                                .small()
-                                .color(hb_color),
-                        );
-                        ui.horizontal(|ui| {
-                            if selected {
-                                ui.add_enabled(
-                                    false,
-                                    egui::Button::new(egui::RichText::new("Alvo Atual").small()),
-                                );
-                            } else if ui.button("Definir Alvo").clicked() {
-                                discovery.selected = Some(index);
-                                crate::studio_log::info(format!(
-                                    "máquinas: alvo comutado para {}",
-                                    node.url
-                                ));
-                            }
-                            let needs_token = matches!(
-                                &node.probe,
-                                Some(p) if p.state == ProbeState::AuthPending
+                    ui.horizontal(|ui| {
+                        if selected {
+                            ui.add_enabled(
+                                false,
+                                egui::Button::new(egui::RichText::new("Alvo Atual").small()),
                             );
-                            if needs_token && ui.button("Inserir token…").clicked() {
-                                machines.modal_url = Some(node.url.clone());
-                                machines.modal_token = String::new();
-                            }
-                            if ui.button("Re-testar").clicked() {
-                                machines.probe_url(&node.url);
-                            }
-                        });
+                        } else if ui.button("Definir Alvo").clicked() {
+                            discovery.selected = Some(index);
+                            crate::studio_log::info(format!(
+                                "máquinas: alvo comutado para {}",
+                                node.url
+                            ));
+                        }
+                        let needs_token = matches!(
+                            &node.probe,
+                            Some(p) if p.state == ProbeState::AuthPending
+                        );
+                        if needs_token && ui.button("Inserir token…").clicked() {
+                            machines.modal_url = Some(node.url.clone());
+                            machines.modal_token = String::new();
+                        }
+                        if ui.button("Re-testar").clicked() {
+                            machines.probe_url(&node.url);
+                        }
                     });
-                    ui.end_row();
-                }
-            });
+                });
+                ui.end_row();
+            }
+        });
     }
     ui.add_space(theme::SPACE_LG);
 
@@ -400,47 +398,45 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                 "Nenhuma máquina no snapshot. Clique Ler snapshot ou registre acima.",
             );
         } else {
-            egui::Grid::new("machines_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    kit::grid_header(
-                        ui,
-                        &[
-                            "Identificador Persistido",
-                            "URL Base / Porta",
-                            "Modo Auth",
-                            "Comandos",
-                        ],
-                    );
-                    for machine in &list {
-                        ui.vertical(|ui| {
-                            kit::mono_cell(ui, &machine.machine_id);
-                            ui.label(
-                                egui::RichText::new(format!("host: {}", machine.host))
-                                    .small()
-                                    .weak(),
-                            );
-                        });
-                        kit::mono_cell(ui, &machine.node_url);
-                        match machines.probes.get(&machine.node_url) {
-                            None => kit::badge(ui, "SEM_RESPOSTA", theme::STALE),
-                            Some(status) => match status.state {
-                                ProbeState::Online => kit::badge(ui, "TOKEN_OK", theme::OK),
-                                ProbeState::AuthPending => {
-                                    kit::badge(ui, "AUTH_PEND (401)", theme::AUTH);
-                                }
-                                ProbeState::Offline => kit::badge(ui, "OFFLINE", theme::ERROR),
-                                ProbeState::Unknown => kit::badge(ui, "SEM_RESPOSTA", theme::STALE),
-                            },
-                        }
-                        ui.add_enabled_ui(!machines.busy, |ui| {
-                            if ui.button("Probe").clicked() {
-                                machines.probe(machine);
+            kit::table("machines_grid").show(ui, |ui| {
+                kit::grid_header(
+                    ui,
+                    &[
+                        "Identificador Persistido",
+                        "URL Base / Porta",
+                        "Modo Auth",
+                        "Comandos",
+                    ],
+                );
+                for machine in &list {
+                    ui.vertical(|ui| {
+                        kit::mono_cell(ui, &machine.machine_id);
+                        ui.label(
+                            egui::RichText::new(format!("host: {}", machine.host))
+                                .small()
+                                .weak(),
+                        );
+                    });
+                    kit::mono_cell(ui, &machine.node_url);
+                    match machines.probes.get(&machine.node_url) {
+                        None => kit::badge(ui, "SEM_RESPOSTA", theme::STALE),
+                        Some(status) => match status.state {
+                            ProbeState::Online => kit::badge(ui, "TOKEN_OK", theme::OK),
+                            ProbeState::AuthPending => {
+                                kit::badge(ui, "AUTH_PEND (401)", theme::AUTH);
                             }
-                        });
-                        ui.end_row();
+                            ProbeState::Offline => kit::badge(ui, "OFFLINE", theme::ERROR),
+                            ProbeState::Unknown => kit::badge(ui, "SEM_RESPOSTA", theme::STALE),
+                        },
                     }
-                });
+                    ui.add_enabled_ui(!machines.busy, |ui| {
+                        if ui.button("Probe").clicked() {
+                            machines.probe(machine);
+                        }
+                    });
+                    ui.end_row();
+                }
+            });
             ui.label(
                 egui::RichText::new("~/.dds_studio/nodes_catalog.json (autoridade do nó alvo)")
                     .small()

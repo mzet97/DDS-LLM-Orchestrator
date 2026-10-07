@@ -321,33 +321,31 @@ pub fn show(
         );
     } else {
         let now = now_unix_ns();
-        egui::Grid::new("overview_nodes_grid")
-            .striped(true)
-            .show(ui, |ui| {
-                kit::grid_header(ui, &["Node ID", "URL", "Idade HB", "Estado"]);
-                for node in &discovery.nodes {
-                    kit::mono_cell(ui, &node.node_id);
-                    kit::mono_cell(ui, &node.url);
-                    kit::num_cell(ui, &format!("{} s", node.age_secs(now)));
-                    let (color, detail) = match &node.probe {
-                        Some(probe) => match probe.state {
-                            ProbeState::Online => (theme::OK, probe.detail.clone()),
-                            ProbeState::AuthPending => (theme::AUTH, probe.detail.clone()),
-                            ProbeState::Offline | ProbeState::Unknown => {
-                                (theme::ERROR, probe.detail.clone())
-                            }
-                        },
-                        None => (theme::STALE, String::from("sondando…")),
-                    };
-                    ui.label(
-                        egui::RichText::new(format!("● {detail}"))
-                            .monospace()
-                            .small()
-                            .color(color),
-                    );
-                    ui.end_row();
-                }
-            });
+        kit::table("overview_nodes_grid").show(ui, |ui| {
+            kit::grid_header(ui, &["Node ID", "URL", "Idade HB", "Estado"]);
+            for node in &discovery.nodes {
+                kit::mono_cell(ui, &node.node_id);
+                kit::mono_cell(ui, &node.url);
+                kit::num_cell(ui, &format!("{} s", node.age_secs(now)));
+                let (color, detail) = match &node.probe {
+                    Some(probe) => match probe.state {
+                        ProbeState::Online => (theme::OK, probe.detail.clone()),
+                        ProbeState::AuthPending => (theme::AUTH, probe.detail.clone()),
+                        ProbeState::Offline | ProbeState::Unknown => {
+                            (theme::ERROR, probe.detail.clone())
+                        }
+                    },
+                    None => (theme::STALE, String::from("sondando…")),
+                };
+                ui.label(
+                    egui::RichText::new(format!("● {detail}"))
+                        .monospace()
+                        .small()
+                        .color(color),
+                );
+                ui.end_row();
+            }
+        });
     }
 
     ui.add_space(theme::SPACE_MD);

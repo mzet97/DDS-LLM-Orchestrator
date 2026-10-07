@@ -264,36 +264,34 @@ pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
                 }
             });
             ui.add_space(theme::SPACE_SM);
-            egui::Grid::new("shared_catalog_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    kit::grid_header(
-                        ui,
-                        &["ID do registro", "Kind", "Rev", "Valor (JSON, prévia)"],
-                    );
-                    for item in &snapshot.items {
-                        let kind = kind_of(&item.id.0);
-                        if shared
-                            .kind_filter
-                            .as_deref()
-                            .is_some_and(|filter| filter != kind)
-                        {
-                            continue;
-                        }
-                        kit::mono_cell(ui, &item.id.0);
-                        kit::mono_cell(ui, kind);
-                        kit::num_cell(ui, &format!("r{}", item.revision.0));
-                        let flat = item.value.replace(['\n', '\r'], " ");
-                        let preview: String = flat.chars().take(64).collect();
-                        let preview = if flat.chars().count() > 64 {
-                            format!("{preview}…")
-                        } else {
-                            preview
-                        };
-                        ui.label(egui::RichText::new(preview).small().weak());
-                        ui.end_row();
+            kit::table("shared_catalog_grid").show(ui, |ui| {
+                kit::grid_header(
+                    ui,
+                    &["ID do registro", "Kind", "Rev", "Valor (JSON, prévia)"],
+                );
+                for item in &snapshot.items {
+                    let kind = kind_of(&item.id.0);
+                    if shared
+                        .kind_filter
+                        .as_deref()
+                        .is_some_and(|filter| filter != kind)
+                    {
+                        continue;
                     }
-                });
+                    kit::mono_cell(ui, &item.id.0);
+                    kit::mono_cell(ui, kind);
+                    kit::num_cell(ui, &format!("r{}", item.revision.0));
+                    let flat = item.value.replace(['\n', '\r'], " ");
+                    let preview: String = flat.chars().take(64).collect();
+                    let preview = if flat.chars().count() > 64 {
+                        format!("{preview}…")
+                    } else {
+                        preview
+                    };
+                    ui.label(egui::RichText::new(preview).small().weak());
+                    ui.end_row();
+                }
+            });
         }
     }
 
