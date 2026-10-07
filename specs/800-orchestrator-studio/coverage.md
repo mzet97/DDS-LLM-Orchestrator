@@ -619,3 +619,21 @@ desenhado). Comparativo arquivado em `logs/studio_ux3_vs_design_2026-10-07.png`.
 
 **Gates:** 101/0 (dds) · 85/0 (default) · clippy 0/0 ×2 · âncoras kittest
 intactas. Binário instalado e rodando (boot validado no lab).
+
+## T-890-UX4 — MESH COMO NO DESIGN + MÉTRICAS 42px (2026-10-07, `cd514e9`)
+
+**Gatilho:** autor reprovou a UX3 mesmo com a autovalidação "confirmada" —
+a análise automatizada por visão NÃO é juiz confiável (checklist satisfeito
+≠ gestalt igual). Re-diagnóstico olhando EU MESMO close-ups do design:
+(1) o mesh do design são **cards de assinante GRANDES e ricos** espalhados
+e conectados ao hub — o meu era radial com cards 148×38 (canvas vazio);
+(2) números do design ~44–52px, meus 32px; (3) canvas do design domina.
+
+**Entrega:** `draw_mesh` refabricada — canvas 420px, cards 258px com faixa
+superior colorida por tipo + título + 4 linhas de propriedades REAIS
+(url/hb/lease, QoS do contrato, tópicos por papel, token), hub ESTAÇÃO
+LOCAL, linhas 1.5px, clique→ASSINANTE SELECIONADO preservado; métricas
+42px/h≥104. 101/0 (dds) · clippy 0/0. Comparativo: `logs/studio_ux4_vs_design_2026-10-07.png`.
+
+**Lição registrada:** para fidelidade visual, o juiz é o olho humano
+(autor) — automação serve para não-regredir, não para aprovar.
