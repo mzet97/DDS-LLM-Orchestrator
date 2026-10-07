@@ -78,12 +78,16 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                 }
             });
         }
-        // Confirmação da ação pendente (visível até resolvida).
+        // Confirmação da ação pendente (visível até resolvida) — 2 passos
+        // com banner âmbar (3.8 do mockup).
         if let Some(pending) = &guard.pending {
             ui.separator();
-            ui.colored_label(
-                egui::Color32::YELLOW,
-                format!("CONFIRMAR: {}", pending.description),
+            crate::kit::warn_banner(
+                ui,
+                &format!(
+                    "CONFIRMAÇÃO EM 2 PASSOS — Ação solicitada: {}",
+                    pending.description
+                ),
             );
             ui.horizontal(|ui| {
                 if ui.button("✔ Confirmar").clicked() {

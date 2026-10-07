@@ -2,6 +2,7 @@
 
 use crate::discovery::DiscoveryState;
 use crate::inference::{InferenceState, Role};
+use crate::kit;
 use eframe::egui;
 
 /// Servidor, modelos, parâmetros, prompt e transcript da sessão.
@@ -9,27 +10,28 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
     // Servidores de inferência VIVOS no domínio (ServerStatus — descoberta
     // automática). Nota honesta: o contrato não carrega a URL HTTP do
     // servidor (só id/modelo/slots); a URL do formulário segue manual.
+    // ── PLANO 1 (3.3): SERVIDOR DESCOBERTO — DDS, automático ──
     ui.collapsing(
-        "Servidores de inferência no domínio (ServerStatus)",
+        format!(
+            "SERVIDOR DESCOBERTO (DDS) — domínio {} [{}]",
+            discovery.domain,
+            if discovery.servers.is_empty() { "nenhum" } else { "presente" }
+        ),
         |ui| {
             if discovery.servers.is_empty() {
                 ui.label(format!(
-                    "Nenhum servidor de inferência anunciando ServerStatus no domínio {} \
-                 — o llama-server precisa rodar com LLAMA_DDS=ON neste domínio para \
-                 aparecer aqui.",
-                    discovery.domain
+                    "Nenhum servidor anunciando ServerStatus no domínio {} — \
+                     o llama-server precisa rodar com --enable-dds --dds-domain {} \
+                     para aparecer aqui.",
+                    discovery.domain, discovery.domain
                 ));
             } else {
                 egui::Grid::new("dds_live_servers")
                     .striped(true)
                     .show(ui, |ui| {
-                        ui.strong("server_id");
-                        ui.strong("modelo");
-                        ui.strong("slots");
-                        ui.strong("pronto");
-                        ui.end_row();
+                        kit::grid_header(ui, &["server_id", "modelo", "slots", "pronto"]);
                         for server in &discovery.servers {
-                            ui.monospace(&server.server_id);
+                            kit::mono_cell(ui, &server.server_id);
                             ui.label(&server.model_loaded);
                             ui.label(format!(
                                 "{}/{}",
@@ -40,6 +42,7 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
                             ui.end_row();
                         }
                     });
+                ui.weak("Nota: o ServerStatus não carrega URL HTTP — o endpoint do chat é manual (abaixo).");
             }
         },
     );

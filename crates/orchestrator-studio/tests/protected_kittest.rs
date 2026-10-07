@@ -68,7 +68,9 @@ fn armed_guard_requires_confirmation_before_actuation() {
         .click();
     harness.run_steps(5);
 
-    harness.get_by_label_contains("CONFIRMAR: PARAR serviço 'dds-agent' no nó");
+    harness.get_by_label_contains(
+        "CONFIRMAÇÃO EM 2 PASSOS — Ação solicitada: PARAR serviço 'dds-agent' no nó",
+    );
     harness.get_by_label("✔ Confirmar").click();
     harness.run_steps(5);
 
