@@ -78,7 +78,7 @@ impl LaunchPlan {
         Ok(())
     }
 
-    /// Prévia legível: mostra o que será feito antes de qualquer efeito.
+    /// Prévia legível: as 5 etapas canônicas (PRD 3.4) antes de qualquer efeito.
     #[must_use]
     pub fn preview(&self) -> String {
         let device = match self.device {
@@ -86,13 +86,15 @@ impl LaunchPlan {
             Device::Gpu => "GPU (exige build com o backend real)",
         };
         format!(
-            "1. POST {}/services/{}/start (operação idempotente nova)\n\
-             2. aguardar active=true em GET /services (até 60s)\n\
-             3. GET {}/v1/models e usar o primeiro modelo anunciado\n\
-             4. prova: POST /v1/chat/completions, temp 0, 32 tokens\n\
+            "1. GET {}/services — ① verificar unidade & binário (hash .gguf: tela 3.7)\n\
+             2. POST {}/services/{}/start — ② spawn do processo (systemd)\n\
+             3. aguardar active=true (até 60 s) — ③ processo vivo\n\
+             4. GET {}/v1/models — ④ modelo & KV cache alocados\n\
+             5. prova: POST /v1/chat/completions (temp 0, 32 tokens) — ⑤ geração + ServerStatus\n\
              dispositivo pedido: {device} · contexto: {} · slots: {}\n\
              rota DDS pretendida: {}\n\
              NADA é criado no nó: só start de unidade própria existente.",
+            self.node_url,
             self.node_url,
             self.service,
             self.llama_url,
@@ -222,11 +224,17 @@ impl Default for LaunchState {
     }
 }
 
-/// Executa o plano real com cronômetro por etapa (wizard 3.4 com tempos
-/// medidos — nada estimado).
+/// Executa o plano real com cronômetro por etapa — as 5 etapas canônicas do
+/// PRD 3.4, cada uma amarrada a uma operação REAL do nó/servidor:
+/// ① verificar unidade & binário (GET /services — o hash .gguf é a tela 3.7)
+/// ② spawn do processo (POST /services/{u}/start — systemd cria o processo)
+/// ③ aguardar processo vivo (active=true em GET /services)
+/// ④ modelo & KV cache (GET /v1/models — modelo alocado pela unidade)
+/// ⑤ prova de geração (chat real; a publicação ServerStatus é conferida
+///    ao vivo pela descoberta na view).
 fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
     use std::time::Instant;
-    let mut steps = Vec::with_capacity(4);
+    let mut steps = Vec::with_capacity(5);
     let timed = |step: StepResult, started: Instant| {
         let mut step = step;
         step.duration_ms = started.elapsed().as_millis() as u64;
@@ -245,7 +253,51 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
         duration_ms: 0,
     };
 
+    // ① Verificar unidade & binário no nó (leitura pura, sem efeito).
     let t0 = Instant::now();
+    match list_services(&plan.node_url) {
+        Ok(list) if list.iter().any(|item| item.service == plan.service) => {
+            let known: Vec<&str> = list.iter().map(|item| item.service.as_str()).collect();
+            steps.push(timed(
+                done(
+                    "① verificar unidade & binário",
+                    format!(
+                        "unidade {} presente no nó ({})",
+                        plan.service,
+                        known.join(" · ")
+                    ),
+                ),
+                t0,
+            ));
+        }
+        Ok(list) => {
+            steps.push(timed(
+                fail(
+                    "① verificar unidade & binário",
+                    format!(
+                        "unidade {} ausente no nó — unidades: {}",
+                        plan.service,
+                        list.iter()
+                            .map(|item| item.service.as_str())
+                            .collect::<Vec<_>>()
+                            .join(" · ")
+                    ),
+                ),
+                t0,
+            ));
+            return steps;
+        }
+        Err(err) => {
+            steps.push(timed(
+                fail("① verificar unidade & binário", err.to_string()),
+                t0,
+            ));
+            return steps;
+        }
+    }
+
+    // ② Spawn do processo (systemd start).
+    let t1 = Instant::now();
     match actuate(
         &plan.node_url,
         &plan.service,
@@ -254,24 +306,29 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
     ) {
         Ok(out) if out.active || !out.acted => steps.push(timed(
             done(
-                "atuar start",
+                "② spawn do processo (systemd start)",
                 format!("wanted=true active={} acted={}", out.active, out.acted),
             ),
-            t0,
+            t1,
         )),
         Ok(out) => steps.push(timed(
             done(
-                "atuar start",
+                "② spawn do processo (systemd start)",
                 format!("registrado; active={} (aguardando)", out.active),
             ),
-            t0,
+            t1,
         )),
         Err(err) => {
-            steps.push(timed(fail("atuar start", err.to_string()), t0));
+            steps.push(timed(
+                fail("② spawn do processo (systemd start)", err.to_string()),
+                t1,
+            ));
             return steps;
         }
     }
-    let t1 = Instant::now();
+
+    // ③ Aguardar o processo vivo (active=true).
+    let t2 = Instant::now();
     let mut active = false;
     for _ in 0..60 {
         match list_services(&plan.node_url) {
@@ -285,7 +342,7 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
             }
             Ok(_) => std::thread::sleep(std::time::Duration::from_secs(1)),
             Err(err) => {
-                steps.push(timed(fail("aguardar ativo", err.to_string()), t1));
+                steps.push(timed(fail("③ aguardar processo vivo", err.to_string()), t2));
                 return steps;
             }
         }
@@ -293,43 +350,54 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
     if !active {
         steps.push(timed(
             fail(
-                "aguardar ativo",
+                "③ aguardar processo vivo",
                 String::from("unidade não ficou ativa em 60s"),
             ),
-            t1,
+            t2,
         ));
         return steps;
     }
     steps.push(timed(
-        done("aguardar ativo", String::from("active=true")),
-        t1,
+        done("③ aguardar processo vivo", String::from("active=true")),
+        t2,
     ));
-    let t2 = Instant::now();
+
+    // ④ Modelo & KV cache (o servidor anuncia o modelo alocado pela unidade).
+    let t3 = Instant::now();
     let model = match list_models(&plan.llama_url) {
         Ok(models) if !models.is_empty() => {
             let id = models[0].id.clone();
             steps.push(timed(
-                done("listar modelos", format!("primeiro anunciado: {id}")),
-                t2,
+                done(
+                    "④ modelo & KV cache (/v1/models)",
+                    format!("modelo alocado: {id}"),
+                ),
+                t3,
             ));
             id
         }
         Ok(_) => {
             steps.push(timed(
                 fail(
-                    "listar modelos",
+                    "④ modelo & KV cache (/v1/models)",
                     String::from("servidor sem modelos anunciados"),
                 ),
-                t2,
+                t3,
             ));
             return steps;
         }
         Err(err) => {
-            steps.push(timed(fail("listar modelos", err.to_string()), t2));
+            steps.push(timed(
+                fail("④ modelo & KV cache (/v1/models)", err.to_string()),
+                t3,
+            ));
             return steps;
         }
     };
-    let t3 = Instant::now();
+
+    // ⑤ Prova de geração real (a publicação ServerStatus é visível na
+    // descoberta — a view mostra o chip ao vivo).
+    let t4 = Instant::now();
     match chat_completion(
         &plan.llama_url,
         &ChatRequest {
@@ -343,8 +411,8 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
             max_tokens: 32,
         },
     ) {
-        Ok(reply) => steps.push(timed(done("prova de geração", reply), t3)),
-        Err(err) => steps.push(timed(fail("prova de geração", err.to_string()), t3)),
+        Ok(reply) => steps.push(timed(done("⑤ prova de geração", reply), t4)),
+        Err(err) => steps.push(timed(fail("⑤ prova de geração", err.to_string()), t4)),
     }
     steps
 }

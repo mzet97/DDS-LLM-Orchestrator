@@ -103,6 +103,7 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
             ui.add_enabled_ui(!panel.busy, |ui| {
                 ui.text_edit_singleline(&mut panel.url);
                 if ui.button("Ler plano").clicked() {
+                    panel.audit_manual_list = true; // GET manual → auditoria
                     panel.refresh();
                 }
             });
@@ -253,10 +254,11 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
         }
 
         // Confirmação da ação pendente (visível até resolvida) — 2 passos
-        // com banner âmbar (mockup 3.8). Âncoras literais dos kittest.
+        // com banner VERMELHO (PRD 3.8: ação destrutiva pendente). Âncoras
+        // literais dos kittest preservadas.
         if let Some(pending) = &guard.pending {
             ui.separator();
-            crate::kit::warn_banner(
+            crate::kit::danger_banner(
                 ui,
                 &format!(
                     "CONFIRMAÇÃO EM 2 PASSOS — Ação solicitada: {}",

@@ -565,6 +565,7 @@ impl eframe::App for StudioApp {
                         &mut self.node_url,
                         &mut self.node_token,
                         &self.discovery,
+                        &self.protected,
                     );
                 }
                 Section::Inference => orchestrator_studio::views::inference::show(
@@ -584,6 +585,7 @@ impl eframe::App for StudioApp {
                         &mut self.launch,
                         &known,
                         &mut self.go_chat,
+                        &self.discovery,
                     );
                 }
                 Section::Agents => {
@@ -596,16 +598,18 @@ impl eframe::App for StudioApp {
                     &mut self.protected,
                 ),
                 Section::Shared => {
-                    orchestrator_studio::views::shared_catalog::show(ui, &mut self.shared)
+                    orchestrator_studio::views::shared_catalog::show(ui, &mut self.shared);
                 }
                 Section::Machines => orchestrator_studio::views::machines::show(
                     ui,
                     &mut self.machines,
                     &mut self.discovery,
                 ),
-                Section::Dispatch => {
-                    orchestrator_studio::views::dispatch::show(ui, &mut self.dispatch)
-                }
+                Section::Dispatch => orchestrator_studio::views::dispatch::show(
+                    ui,
+                    &mut self.dispatch,
+                    &self.discovery,
+                ),
                 #[cfg(feature = "dds")]
                 Section::Topology => {
                     orchestrator_studio::views::topology::show(ui, &mut self.dds, &self.discovery)

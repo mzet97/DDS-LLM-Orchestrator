@@ -107,8 +107,8 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
                 for agent in &discovery.agents {
                     kit::mono_cell(ui, &agent.agent_id);
                     ui.label(&agent.model);
-                    ui.label(format!("{}/{}", agent.slots_busy, agent.slots_total));
-                    ui.label(format!("{:.0} ms", agent.ema_latency_ms));
+                    kit::num_cell(ui, &format!("{}/{}", agent.slots_busy, agent.slots_total));
+                    kit::num_cell(ui, &format!("{:.0} ms", agent.ema_latency_ms));
                     let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
                     ui.label(
                         egui::RichText::new(format!(
@@ -178,14 +178,8 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
                 kit::mono_cell(ui, &agent.agent_id);
                 ui.label(&agent.model);
                 ui.label(&agent.hostname);
-                ui.label(agent.completed_total.to_string());
-                ui.label(egui::RichText::new(agent.failed_total.to_string()).color(
-                    if agent.failed_total > 0 {
-                        theme::WARN
-                    } else {
-                        theme::ON_SURFACE_VARIANT
-                    },
-                ));
+                kit::num_cell(ui, &agent.completed_total.to_string());
+                kit::num_cell(ui, &agent.failed_total.to_string());
                 match success_rate(agent.completed_total, agent.failed_total) {
                     Some(rate) => {
                         ui.label(
@@ -204,7 +198,7 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
                         ui.label("—");
                     }
                 }
-                ui.label(format!("{:.1} ms", agent.ema_latency_ms));
+                kit::num_cell(ui, &format!("{:.1} ms", agent.ema_latency_ms));
                 ui.end_row();
             }
             // Linha agregada do enxame (derivação honesta dos totais).

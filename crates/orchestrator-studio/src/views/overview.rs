@@ -328,7 +328,7 @@ pub fn show(
                 for node in &discovery.nodes {
                     kit::mono_cell(ui, &node.node_id);
                     kit::mono_cell(ui, &node.url);
-                    ui.label(format!("{} s", node.age_secs(now)));
+                    kit::num_cell(ui, &format!("{} s", node.age_secs(now)));
                     let (color, detail) = match &node.probe {
                         Some(probe) => match probe.state {
                             ProbeState::Online => (theme::OK, probe.detail.clone()),

@@ -1,10 +1,14 @@
 //! Painel 3.14 Logs da GUI (FIFO Ring Buffer 500): KPIs de ocupação, busca
 //! por substring, filtros por nível com contagem, auto-scroll, limpeza e
 //! exportação `.log` — os mesmos eventos seguem espelhados no stderr.
+//!
+//! PRD 3.14: colunas SUBSISTEMA e OFFSET (Δ ms) + inspetor lateral da
+//! entrada selecionada (SLOT # · THREAD · FONTE file:line · mensagem crua
+//! · STACK TRACE em erros · CONTEXTO payload JSON).
 
 use crate::kit;
 use crate::panel_header::panel_header;
-use crate::studio_log::{self, LogsPanel};
+use crate::studio_log::{self, LogEntry, LogsPanel};
 use crate::theme;
 use eframe::egui;
 
@@ -100,6 +104,7 @@ pub fn show(ui: &mut egui::Ui, panel: &mut LogsPanel) {
         ui.checkbox(&mut panel.auto_scroll, "Auto-scroll");
         if ui.button("Limpar buffer").clicked() {
             studio_log::clear();
+            panel.selected = None;
         }
         if ui.button("Exportar (.log)").clicked() {
             match studio_log::export() {
@@ -116,20 +121,23 @@ pub fn show(ui: &mut egui::Ui, panel: &mut LogsPanel) {
     );
     ui.add_space(theme::SPACE_SM);
 
-    // ── Tabela: # | hora | nível (badge colorido) | evento ──
+    // ── Tabela: # | hora | nível | subsistema | evento | offset ──
     let search = panel.search.trim().to_lowercase();
-    let visible: Vec<(usize, &studio_log::LogEntry)> = entries
+    let visible: Vec<&LogEntry> = entries
         .iter()
-        .enumerate()
-        .filter(|(_, entry)| {
+        .filter(|entry| {
             let level_ok = panel.filter_level.is_none_or(|level| entry.level == level);
-            let search_ok = search.is_empty() || entry.message.to_lowercase().contains(&search);
+            let search_ok = search.is_empty()
+                || entry.message.to_lowercase().contains(&search)
+                || entry.source.to_lowercase().contains(&search);
             level_ok && search_ok
         })
         .collect();
+    let selected_slot = panel.selected;
+    let mut clicked: Option<u64> = None;
     let scroll = egui::ScrollArea::vertical()
         .auto_shrink([false, false])
-        .max_height(420.0)
+        .max_height(380.0)
         .stick_to_bottom(panel.auto_scroll);
     scroll.show(ui, |ui| {
         if visible.is_empty() {
@@ -137,14 +145,31 @@ pub fn show(ui: &mut egui::Ui, panel: &mut LogsPanel) {
             return;
         }
         egui::Grid::new("studio_logs").show(ui, |ui| {
-            kit::grid_header(ui, &["#", "Timestamp", "Nível", "Evento / mensagem"]);
-            for (index, entry) in visible {
-                ui.label(
-                    egui::RichText::new(index.to_string())
-                        .monospace()
-                        .small()
-                        .color(theme::OUTLINE),
-                );
+            kit::grid_header(
+                ui,
+                &[
+                    "SLOT #",
+                    "Timestamp",
+                    "Nível",
+                    "Subsistema",
+                    "Evento / mensagem",
+                    "Offset",
+                ],
+            );
+            for entry in &visible {
+                let is_selected = selected_slot == Some(entry.slot);
+                if ui
+                    .selectable_label(
+                        is_selected,
+                        egui::RichText::new(entry.slot.to_string())
+                            .monospace()
+                            .small()
+                            .color(theme::OUTLINE),
+                    )
+                    .clicked()
+                {
+                    clicked = Some(entry.slot);
+                }
                 kit::mono_cell(ui, &entry.timestamp);
                 ui.label(
                     egui::RichText::new(entry.level)
@@ -152,9 +177,96 @@ pub fn show(ui: &mut egui::Ui, panel: &mut LogsPanel) {
                         .small()
                         .color(level_color(entry.level)),
                 );
+                kit::mono_cell(ui, entry.source);
                 ui.label(&entry.message);
+                kit::num_cell(ui, &format!("+{} ms", entry.offset_ms));
                 ui.end_row();
             }
         });
     });
+    if let Some(slot) = clicked {
+        panel.selected = (panel.selected != Some(slot)).then_some(slot);
+    }
+
+    // ── Inspetor lateral (PRD 3.14): detalhes forenses da entrada ──
+    if let Some(slot) = panel.selected {
+        if let Some(entry) = entries.iter().find(|e| e.slot == slot) {
+            ui.add_space(theme::SPACE_SM);
+            kit::accent_card(ui, level_color(entry.level), |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(
+                        egui::RichText::new(format!("INSPETOR · SLOT #{}", entry.slot))
+                            .monospace()
+                            .small()
+                            .color(theme::PRIMARY_FIXED_DIM),
+                    );
+                    if ui
+                        .add(egui::Button::new(
+                            egui::RichText::new("fechar").monospace().small(),
+                        ))
+                        .clicked()
+                    {
+                        panel.selected = None;
+                    }
+                });
+                egui::Grid::new("log_inspector").show(ui, |ui| {
+                    ui.label("thread:");
+                    kit::mono_cell(ui, &entry.thread);
+                    ui.end_row();
+                    ui.label("fonte:");
+                    kit::mono_cell(ui, &entry.origin);
+                    ui.end_row();
+                    ui.label("subsistema:");
+                    kit::mono_cell(ui, entry.source);
+                    ui.end_row();
+                    ui.label("momento:");
+                    kit::mono_cell(
+                        ui,
+                        &format!("{} · +{} ms do anterior", entry.timestamp, entry.offset_ms),
+                    );
+                    ui.end_row();
+                });
+                ui.label(
+                    egui::RichText::new("MENSAGEM CRUA")
+                        .monospace()
+                        .small()
+                        .color(theme::OUTLINE),
+                );
+                ui.add(
+                    egui::TextEdit::multiline(&mut entry.message.clone())
+                        .font(egui::TextStyle::Monospace)
+                        .desired_rows(1)
+                        .interactive(false),
+                );
+                if let Some(payload) = &entry.payload {
+                    ui.label(
+                        egui::RichText::new("CONTEXTO (payload serializado)")
+                            .monospace()
+                            .small()
+                            .color(theme::OUTLINE),
+                    );
+                    ui.add(
+                        egui::TextEdit::multiline(&mut payload.clone())
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(2)
+                            .interactive(false),
+                    );
+                }
+                if let Some(backtrace) = &entry.backtrace {
+                    ui.label(
+                        egui::RichText::new("STACK TRACE (Rust · capturado no registro)")
+                            .monospace()
+                            .small()
+                            .color(theme::ERROR),
+                    );
+                    ui.add(
+                        egui::TextEdit::multiline(&mut backtrace.clone())
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(6)
+                            .interactive(false),
+                    );
+                }
+            });
+        }
+    }
 }

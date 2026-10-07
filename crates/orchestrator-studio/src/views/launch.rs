@@ -1,7 +1,9 @@
 //! Painel 3.4 Subir Inferência (runner local §9.3, P2): parâmetros da
-//! unidade própria do nó, CLI preview copiável, wizard de etapas com
-//! duração MEDIDA por passo e atalho para o chat (3.3).
+//! unidade própria do nó, CLI preview copiável, wizard nas 5 etapas
+//! canônicas do PRD com duração MEDIDA, console de saídas reais das
+//! operações e chip ServerStatus ao vivo (publicação ⑤).
 
+use crate::discovery::DiscoveryState;
 use crate::kit;
 use crate::launch::{Device, LaunchState};
 use crate::panel_header::panel_header;
@@ -14,6 +16,7 @@ pub fn show(
     launch: &mut LaunchState,
     known_services: &[String],
     go_chat: &mut bool,
+    discovery: &DiscoveryState,
 ) {
     panel_header(
         ui,
@@ -22,6 +25,11 @@ pub fn show(
         "Sobe a unidade PRÓPRIA do nó (start de unidade existente — nada é \
          criado no host) e comprova com geração real no llama-server",
     );
+    // DoD PRD: chip do alvo único (mesma URL da descoberta nas 14 telas).
+    if let Some(target) = discovery.selected_url() {
+        kit::target_chip(ui, &target, "alvo da descoberta", true);
+        ui.add_space(theme::SPACE_SM);
+    }
     launch.poll();
     if launch.running {
         ui.ctx().request_repaint();
@@ -169,6 +177,65 @@ pub fn show(
                     .monospace()
                     .strong()
                     .color(theme::OK),
+            );
+        }
+
+        // ── Console de saídas reais (PRD 3.4): o que o nó/servidor ──
+        //    responderiu a cada etapa — stdout/stderr do subprocesso não
+        //    atravessam a API do nó; aqui vão as respostas literais.
+        ui.add_space(theme::SPACE_SM);
+        kit::section_label(
+            ui,
+            "CONSOLE · SAÍDAS REAIS DAS OPERAÇÕES (RESPOSTAS DO NÓ/SERVIDOR)",
+        );
+        egui::Frame::NONE
+            .fill(theme::SURFACE_LOW)
+            .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+            .inner_margin(theme::SPACE_MD)
+            .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                for step in &launch.steps {
+                    let prefix = if step.ok { "OUT" } else { "ERR" };
+                    let color = if step.ok {
+                        theme::ON_SURFACE_VARIANT
+                    } else {
+                        theme::ERROR
+                    };
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "[{prefix} · {} ms] {} → {}",
+                            step.duration_ms, step.step, step.detail
+                        ))
+                        .monospace()
+                        .small()
+                        .color(color),
+                    );
+                }
+                ui.label(
+                    egui::RichText::new(
+                        "stdout/stderr do subprocesso não atravessam a API do nó — \
+                         as linhas acima são as respostas literais das operações.",
+                    )
+                    .small()
+                    .weak(),
+                );
+            });
+
+        // ⑤ publicação ServerStatus ao vivo (sinal de convergência DDS).
+        ui.add_space(theme::SPACE_XS);
+        if discovery.servers.is_empty() {
+            kit::badge(ui, "⑤ SERVERSTATUS: NENHUM NO DOMÍNIO AINDA", theme::WARN);
+        } else {
+            let servers: Vec<&str> = discovery
+                .servers
+                .iter()
+                .map(|server| server.server_id.as_str())
+                .collect();
+            kit::badge(
+                ui,
+                &format!("⑤ SERVERSTATUS NO DOMÍNIO: {}", servers.join(" · ")),
+                theme::OK,
             );
         }
     } else if !launch.running {

@@ -38,6 +38,9 @@ pub enum ModelsError {
     /// Falha de leitura/parse do manifesto GGUF×SHA (T-890-08, G-09..11).
     #[error("manifesto invalido: {0}")]
     Manifest(String),
+    /// Hash interrompido pelo usuário (botão Cancelar da 3.7).
+    #[error("hash cancelado")]
+    Cancelled,
 }
 
 /// Status do artefato frente ao manifesto (T-890-08, G-09..11).
@@ -178,21 +181,51 @@ pub fn manifest_status(
 
 /// SHA-256 de um arquivo em blocos (chamado na thread de hash).
 pub fn hash_file(dir: &Path, file_name: &str) -> Result<String, ModelsError> {
+    hash_file_with_progress(dir, file_name, None, |_, _, _| {})
+}
+
+/// SHA-256 com progresso intra-arquivo e cancelamento imediato (PRD 3.7:
+/// taxa MB/s medida e ETA honesto). `on_progress(bytes_lidos, total,
+/// bytes_por_segundo)` é chamado no máximo a cada ~150 ms.
+pub fn hash_file_with_progress(
+    dir: &Path,
+    file_name: &str,
+    stop: Option<&AtomicBool>,
+    mut on_progress: impl FnMut(u64, u64, u64),
+) -> Result<String, ModelsError> {
     let path = dir.join(file_name);
     let fail = |detail: String| ModelsError::Unreadable {
         dir: path.display().to_string(),
         detail,
     };
     let mut file = std::fs::File::open(&path).map_err(|err| fail(err.to_string()))?;
+    let total = file.metadata().map(|meta| meta.len()).unwrap_or(0);
     let mut hasher = sha2::Sha256::new();
     use sha2::Digest;
     let mut buf = [0u8; 64 * 1024];
+    let mut read_total: u64 = 0;
+    let started = std::time::Instant::now();
+    let mut last_emit = std::time::Instant::now();
     loop {
+        if stop.is_some_and(|flag| flag.load(Ordering::Relaxed)) {
+            return Err(ModelsError::Cancelled);
+        }
         let n = file.read(&mut buf).map_err(|err| fail(err.to_string()))?;
         if n == 0 {
             break;
         }
         hasher.update(&buf[..n]);
+        read_total += n as u64;
+        if last_emit.elapsed() >= std::time::Duration::from_millis(150) {
+            let elapsed = started.elapsed().as_secs_f64();
+            let rate = if elapsed > 0.0 {
+                (read_total as f64 / elapsed) as u64
+            } else {
+                0
+            };
+            on_progress(read_total, total, rate);
+            last_emit = std::time::Instant::now();
+        }
     }
     Ok(format!("{:x}", hasher.finalize()))
 }
@@ -203,10 +236,45 @@ pub struct HashProgress {
     pub done: usize,
     pub total: usize,
     pub current: String,
+    /// Bytes lidos do arquivo corrente (taxa/ETA da 3.7).
+    pub current_bytes: u64,
+    /// Tamanho total do arquivo corrente (0 se desconhecido).
+    pub current_total: u64,
+    /// Taxa medida do arquivo corrente (bytes/s, medição real).
+    pub rate_bps: u64,
+}
+
+impl HashProgress {
+    /// Fração do arquivo corrente (0.0–1.0; 0 sem total conhecido).
+    #[must_use]
+    pub fn current_fraction(&self) -> f32 {
+        if self.current_total == 0 {
+            0.0
+        } else {
+            (self.current_bytes as f32 / self.current_total as f32).clamp(0.0, 1.0)
+        }
+    }
+
+    /// ETA do arquivo corrente em segundos (`None` sem taxa medida).
+    #[must_use]
+    pub fn current_eta_secs(&self) -> Option<u64> {
+        if self.rate_bps == 0 || self.current_bytes >= self.current_total {
+            return None;
+        }
+        Some((self.current_total - self.current_bytes) / self.rate_bps)
+    }
 }
 
 enum HashMsg {
-    FileDone { index: usize, sha: String },
+    FileDone {
+        index: usize,
+        sha: String,
+    },
+    Progress {
+        bytes_done: u64,
+        file_total: u64,
+        rate_bps: u64,
+    },
     Finished,
 }
 
@@ -412,6 +480,20 @@ impl ModelsState {
                                 .get(progress.done)
                                 .map(|artifact| artifact.file_name.clone())
                                 .unwrap_or_default();
+                            progress.current_bytes = 0;
+                            progress.current_total = 0;
+                            progress.rate_bps = 0;
+                        }
+                    }
+                    HashMsg::Progress {
+                        bytes_done,
+                        file_total,
+                        rate_bps,
+                    } => {
+                        if let Some(progress) = self.hashing.as_mut() {
+                            progress.current_bytes = bytes_done;
+                            progress.current_total = file_total;
+                            progress.rate_bps = rate_bps;
                         }
                     }
                     HashMsg::Finished => {
@@ -445,8 +527,23 @@ impl ModelsState {
                 if stop.load(Ordering::Relaxed) {
                     break;
                 }
-                if let Ok(sha) = hash_file(&dir, name) {
-                    let _ = tx.send(HashMsg::FileDone { index, sha });
+                let tx_progress = tx.clone();
+                let result =
+                    hash_file_with_progress(&dir, name, Some(&stop), |bytes, total, rate| {
+                        // Throttle extra na thread de UI: o worker já limita a
+                        // ~6.7 msg/s por arquivo; canal absorve picos.
+                        let _ = tx_progress.send(HashMsg::Progress {
+                            bytes_done: bytes,
+                            file_total: total,
+                            rate_bps: rate,
+                        });
+                    });
+                match result {
+                    Ok(sha) => {
+                        let _ = tx.send(HashMsg::FileDone { index, sha });
+                    }
+                    Err(ModelsError::Cancelled) => break,
+                    Err(_) => continue,
                 }
             }
             let _ = tx.send(HashMsg::Finished);
@@ -461,6 +558,9 @@ impl ModelsState {
                 .first()
                 .map(|item| item.file_name.clone())
                 .unwrap_or_default(),
+            current_bytes: 0,
+            current_total: 0,
+            rate_bps: 0,
         });
     }
 }
@@ -641,6 +741,47 @@ mod tests {
 
         assert_eq!(first, second);
         assert_eq!(first.len(), 64);
+    }
+
+    /// PRD 3.7: fração e ETA do arquivo corrente derivam da taxa medida.
+    #[test]
+    fn hash_progress_derives_fraction_and_eta() {
+        let progress = HashProgress {
+            done: 1,
+            total: 3,
+            current: String::from("b.gguf"),
+            current_bytes: 250,
+            current_total: 1_000,
+            rate_bps: 50,
+        };
+        assert!((progress.current_fraction() - 0.25).abs() < f32::EPSILON);
+        assert_eq!(
+            progress.current_eta_secs(),
+            Some(15),
+            "750 bytes restantes a 50 B/s"
+        );
+
+        let unknown = HashProgress {
+            done: 0,
+            total: 1,
+            current: String::new(),
+            current_bytes: 0,
+            current_total: 0,
+            rate_bps: 0,
+        };
+        assert_eq!(unknown.current_fraction(), 0.0);
+        assert_eq!(unknown.current_eta_secs(), None);
+    }
+
+    /// Cancelamento intra-arquivo: flag interrompe o hash imediatamente.
+    #[test]
+    fn hash_file_with_progress_stops_on_flag() {
+        let dir = fixture_dir("cancel");
+        let stop = AtomicBool::new(true); // já cancelado
+        let err = hash_file_with_progress(&dir, "a-Q4_K_M.gguf", Some(&stop), |_, _, _| {})
+            .expect_err("flag cancelada aborta");
+        assert!(matches!(err, ModelsError::Cancelled));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

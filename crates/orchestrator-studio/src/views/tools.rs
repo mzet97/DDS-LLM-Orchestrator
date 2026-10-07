@@ -1,8 +1,10 @@
 //! Painel 3.13 Ferramentas & Tool Calls (T-890-06, G-18..22): governança ao
-//! vivo do `ToolCall.Request` — cards de nível de segurança com contagens
-//! reais (contrato: 0=PUBLIC, 1=INTERNAL), chips de filtro por status
-//! canônico com contagem, tabela com requester/nível e inspetor da chamada
-//! selecionada. Usa o MESMO `DdsState` da Topologia.
+//! vivo do `ToolCall.Request` — cards de nível de segurança no vocabulário
+//! do PRD (N0 READ_ONLY / N1 SANDBOX_EXEC / N2 HOST_MUTATION), chips de
+//! filtro por status canônico com contagem + taxa REQ/s + bloqueios da
+//! sessão, tabela com requester/nível/duração e inspetor REQUEST×RESPONSE
+//! lado a lado (payloads íntegros do fio). Usa o MESMO `DdsState` da
+//! Topologia.
 
 use crate::dds_observe::{status_label, DdsState};
 use crate::kit;
@@ -91,31 +93,39 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
     }
     ui.add_space(theme::SPACE_MD);
 
-    // ── 3 cards de nível de segurança (contagens reais da janela) ──
+    // ── 3 cards de nível (vocabulário PRD 3.13) com contagens reais ──
     let tools = &dds.snapshot.tools;
     let level_count = |level: i32| tools.iter().filter(|t| t.security_level == level).count();
-    let other_levels = tools.iter().filter(|t| t.security_level > 1).count();
+    let higher = tools.iter().filter(|t| t.security_level > 2).count();
     let denied_total = tools.iter().filter(|t| t.status == 2).count();
     ui.columns(3, |cols| {
         kit::metric_card(
             &mut cols[0],
-            "Nível 0 · public",
+            "N0 READ_ONLY",
             level_count(0).to_string(),
-            &format!("{} na janela", level_count(0)),
+            "leitura pura — sem efeito no host",
             theme::PRIMARY_FIXED_DIM,
         );
         kit::metric_card(
             &mut cols[1],
-            "Nível 1 · internal",
+            "N1 SANDBOX_EXEC",
             level_count(1).to_string(),
-            &format!("{} na janela", level_count(1)),
+            "execução isolada (sandbox)",
             theme::WARN,
         );
         kit::metric_card(
             &mut cols[2],
-            "Níveis não confirmados no IDL",
-            other_levels.to_string(),
-            &format!("{denied_total} negada(s) no total (DENIED)"),
+            "N2 HOST_MUTATION",
+            level_count(2).to_string(),
+            &format!(
+                "mutação no host · {} nível(is) fora da escala{}",
+                higher,
+                if denied_total > 0 {
+                    format!(" · {denied_total} bloqueio(s) DENIED")
+                } else {
+                    String::new()
+                }
+            ),
             theme::ERROR,
         );
     });
@@ -131,8 +141,10 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
         return;
     }
 
-    // ── Chips de filtro por status com contagens ──
-    ui.horizontal(|ui| {
+    // ── Chips de status + taxa REQ/s da janela + bloqueios da sessão ──
+    // (taxa honesta: chamadas drenadas ÷ janela — não é QPS do barramento)
+    let rate = tools.len() as f64 / dds.window_secs.max(1) as f64;
+    ui.horizontal_wrapped(|ui| {
         if ui
             .selectable_label(
                 dds.tools_filter.is_none(),
@@ -158,10 +170,28 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
                 dds.tools_filter = Some(code);
             }
         }
+        ui.separator();
+        ui.label(
+            egui::RichText::new(format!("TAXA {rate:.1} REQ/s (janela)"))
+                .monospace()
+                .small()
+                .color(theme::PRIMARY_FIXED_DIM),
+        );
+        ui.separator();
+        ui.label(
+            egui::RichText::new(format!("BLOQUEIOS (DENIED na janela): {denied_total}"))
+                .monospace()
+                .small()
+                .color(if denied_total > 0 {
+                    theme::ERROR
+                } else {
+                    theme::OK
+                }),
+        );
     });
     ui.add_space(theme::SPACE_SM);
 
-    // ── Tabela de auditoria ──
+    // ── Tabela de auditoria (política de decisão = prévia do resultado) ──
     egui::Grid::new("tools_governance_grid")
         .striped(true)
         .show(ui, |ui| {
@@ -173,7 +203,8 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
                     "Solicitante",
                     "Nível",
                     "Status canônico",
-                    "Resultado (prévia)",
+                    "Duração",
+                    "Política de decisão (prévia)",
                 ],
             );
             for tool in tools {
@@ -205,16 +236,24 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
                     &crate::dds_observe::security_level_label(tool.security_level),
                 );
                 ui.label(egui::RichText::new(status).monospace().color(status_color));
+                kit::num_cell(
+                    ui,
+                    &if tool.duration_ms > 0 {
+                        format!("{} ms", tool.duration_ms)
+                    } else {
+                        String::from("aberta")
+                    },
+                );
                 ui.label(egui::RichText::new(&tool.result_preview).small().weak());
                 ui.end_row();
             }
         });
     ui.add_space(theme::SPACE_MD);
 
-    // ── Inspetor da chamada selecionada ──
+    // ── Inspetor REQUEST × RESPONSE (payloads íntegros do fio, PRD 3.13) ──
     if let Some(selected_id) = dds.tools_selected.clone() {
         if let Some(tool) = tools.iter().find(|t| t.call_id == selected_id) {
-            kit::section_label(ui, "INSPETOR DE CHAMADA SELECIONADA");
+            kit::section_label(ui, "INSPETOR DE CHAMADA · REQUEST × RESPONSE");
             egui::Frame::NONE
                 .fill(theme::SURFACE_LOW)
                 .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
@@ -223,25 +262,83 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, guard: &ProtectedGuard) {
                 .show(ui, |ui| {
                     ui.set_min_width(ui.available_width());
                     let level = crate::dds_observe::security_level_label(tool.security_level);
-                    let pairs: [(&str, String); 6] = [
-                        ("call_id", tool.call_id.clone()),
-                        ("tool_name", tool.tool_name.clone()),
-                        ("requester_id", tool.requester_id.clone()),
-                        ("security_level", level),
-                        ("status", status_label(tool.status).to_owned()),
-                        ("result (prévia)", tool.result_preview.clone()),
-                    ];
-                    for (label, value) in pairs {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("{label}:"))
-                                    .monospace()
-                                    .small()
-                                    .color(theme::PRIMARY_FIXED_DIM),
+                    let raw_json = serde_json::json!({
+                        "call_id": tool.call_id,
+                        "tool_name": tool.tool_name,
+                        "requester_id": tool.requester_id,
+                        "security_level": level,
+                        "status": status_label(tool.status),
+                        "duration_ms": tool.duration_ms,
+                        "arguments": serde_json::from_str::<serde_json::Value>(
+                            &tool.arguments_json
+                        )
+                        .unwrap_or(serde_json::Value::String(tool.arguments_json.clone())),
+                        "result": serde_json::from_str::<serde_json::Value>(&tool.result_json)
+                            .unwrap_or(serde_json::Value::String(tool.result_json.clone())),
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "● {} · {} · {}",
+                                tool.tool_name,
+                                level,
+                                status_label(tool.status)
+                            ))
+                            .monospace()
+                            .small()
+                            .color(theme::PRIMARY_FIXED_DIM),
+                        );
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("COPIAR RAW").monospace().small(),
+                            ))
+                            .clicked()
+                        {
+                            ui.ctx().copy_text(
+                                serde_json::to_string_pretty(&raw_json).unwrap_or_default(),
                             );
-                            ui.label(egui::RichText::new(value).monospace().small());
-                        });
-                    }
+                            crate::studio_log::info(format!(
+                                "ferramentas: chamada {} copiada como JSON",
+                                tool.call_id
+                            ));
+                        }
+                    });
+                    ui.columns(2, |cols| {
+                        kit::section_label(&mut cols[0], "REQUEST (arguments_json)");
+                        let args = if tool.arguments_json.is_empty() {
+                            String::from("(vazio no fio)")
+                        } else {
+                            tool.arguments_json.clone()
+                        };
+                        egui::ScrollArea::vertical()
+                            .id_salt("tool-request")
+                            .max_height(220.0)
+                            .show(&mut cols[0], |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut args.clone())
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_rows(6)
+                                        .interactive(false),
+                                );
+                            });
+                        kit::section_label(&mut cols[1], "RESPONSE (result_json)");
+                        let result = if tool.result_json.is_empty() {
+                            String::from("(ainda sem resultado)")
+                        } else {
+                            tool.result_json.clone()
+                        };
+                        egui::ScrollArea::vertical()
+                            .id_salt("tool-response")
+                            .max_height(220.0)
+                            .show(&mut cols[1], |ui| {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut result.clone())
+                                        .font(egui::TextStyle::Monospace)
+                                        .desired_rows(6)
+                                        .interactive(false),
+                                );
+                            });
+                    });
                 });
         }
     }

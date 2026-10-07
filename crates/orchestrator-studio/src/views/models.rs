@@ -69,17 +69,40 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         );
     }
 
-    // ── Progresso rico: arquivo corrente + n/total (sem números inventados) ──
+    // ── Progresso rico (PRD 3.7): arquivo corrente · n/total · % · MB/s
+    //    medidos · ETA · Cancelar — tudo deriva do worker de hash real ──
     if let Some(progress) = &state.hashing {
-        kit::progress_line(
-            ui,
-            "CALCULANDO SHA-256:",
-            progress.done as f32 / progress.total.max(1) as f32,
-            &format!(
-                "{}/{} verificados · corrente: {}",
-                progress.done, progress.total, progress.current
-            ),
+        let rate_mb_s = progress.rate_bps as f64 / (1024.0 * 1024.0);
+        let mut detail = format!(
+            "{}/{} verificados · corrente: {}",
+            progress.done, progress.total, progress.current
         );
+        if progress.current_total > 0 {
+            detail.push_str(&format!(" · {:.1} MB/s", rate_mb_s));
+            if let Some(eta) = progress.current_eta_secs() {
+                detail.push_str(&format!(" · ETA ~{eta}s"));
+            }
+        }
+        // Barra dupla: corrente (medida) na frente, lote (n/total) atrás.
+        ui.horizontal(|ui| {
+            ui.label(
+                egui::RichText::new("CALCULANDO SHA-256:")
+                    .monospace()
+                    .small()
+                    .color(theme::ON_SURFACE_VARIANT),
+            );
+            ui.add(
+                egui::ProgressBar::new(progress.done as f32 / progress.total.max(1) as f32)
+                    .desired_width(220.0),
+            );
+            ui.add(
+                egui::ProgressBar::new(progress.current_fraction())
+                    .desired_width(120.0)
+                    .fill(theme::PRIMARY_CONTAINER)
+                    .text(""),
+            );
+            ui.label(egui::RichText::new(detail).small().weak());
+        });
     }
 
     // Estado do manifesto (âncora literal: "manifesto carregado: N registro(s)").
@@ -231,10 +254,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
                     continue;
                 }
                 kit::mono_cell(ui, &artifact.file_name);
-                ui.label(format!(
-                    "{:.1} MiB",
-                    artifact.size_bytes as f64 / 1_048_576.0
-                ));
+                kit::num_cell(
+                    ui,
+                    &format!("{:.1} MiB", artifact.size_bytes as f64 / 1_048_576.0),
+                );
                 let calculated = if artifact.sha256_hex.is_empty() {
                     egui::RichText::new("calculando…")
                         .small()

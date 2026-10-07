@@ -211,6 +211,18 @@ fn stage_of<'a>(stages: &'a [StageOut], name: &str) -> Option<&'a StageOut> {
     stages.iter().find(|stage| stage.stage == name)
 }
 
+/// Nome canônico do estágio (PRD 3.12): a chave interna ("A"/"B"/"C" do
+/// `wf_assembly`) ganha o rótulo do processo de negócio.
+#[cfg(feature = "dds")]
+fn stage_display(name: &str) -> String {
+    match name {
+        "A" => String::from("A · Triagem & Fatos"),
+        "B" => String::from("B · Síntese LLM"),
+        "C" => String::from("C · Validação & Formatação"),
+        other => other.to_owned(),
+    }
+}
+
 #[cfg(feature = "dds")]
 fn stage_visual(state: &WorkflowState, name: &str) -> StageVisual {
     if stage_of(&state.stages, name).is_some() {
@@ -352,7 +364,7 @@ fn stage_cards(ui: &mut egui::Ui, state: &mut WorkflowState) {
             kit::accent_card(ui, accent, |ui| {
                 ui.set_min_width(230.0);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(name).strong().size(16.0));
+                    ui.label(egui::RichText::new(stage_display(name)).strong().size(14.0));
                     kit::badge(ui, state_label, accent);
                 });
                 match stage_of(&state.stages, name) {
@@ -418,9 +430,9 @@ fn audit_table(ui: &mut egui::Ui, state: &mut WorkflowState) {
                 &["Estágio", "Task ID", "Latência", "Buffer (prévia 96 chars)"],
             );
             for stage in &state.stages {
-                ui.label(egui::RichText::new(&stage.stage).strong());
+                ui.label(egui::RichText::new(stage_display(&stage.stage)).strong());
                 kit::mono_cell(ui, &stage.task_id.chars().take(8).collect::<String>());
-                ui.label(format!("{} ms", stage.latency_ms));
+                kit::num_cell(ui, &format!("{} ms", stage.latency_ms));
                 ui.label(egui::RichText::new(&stage.preview).small().weak());
                 ui.end_row();
             }

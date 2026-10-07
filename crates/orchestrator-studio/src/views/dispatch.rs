@@ -1,14 +1,15 @@
 //! Painel 3.6 Despacho (teste síncrono direto ao orquestrador): formulário,
-//! card de resultado estruturado (agente executor · latência · task) e
-//! histórico dos despachos da sessão com taxa de sucesso real.
+//! card de resultado estruturado (agente executor · latência decomposta
+//! T1–T6 · task) e histórico dos despachos da sessão com taxa de sucesso.
 
+use crate::discovery::DiscoveryState;
 use crate::kit;
 use crate::panel_header::panel_header;
 use crate::theme;
 use crate::workload::{DispatchOutcome, DispatchState};
 use eframe::egui;
 
-pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {
+pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState, discovery: &DiscoveryState) {
     panel_header(
         ui,
         "SEC 3.6 · DESPACHO — TASK SÍNCRONA · POST /api/v1/chat/completions/sync",
@@ -16,6 +17,12 @@ pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {
         "Task síncrona direto ao orquestrador: resposta com agente executor, \
          latência e motivo de falha tipado · pode levar minutos (agente real infere)",
     );
+    // DoD PRD: chip do alvo único da descoberta (o orquestrador é o plano
+    // HTTP auxiliar — endpoint próprio abaixo).
+    if let Some(target) = discovery.selected_url() {
+        kit::target_chip(ui, &target, "alvo da descoberta", true);
+        ui.add_space(theme::SPACE_SM);
+    }
     // Drena o worker de despacho (thread + mpsc — REQ/T-820-19).
     dispatch.poll();
 
@@ -62,6 +69,7 @@ pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {
             assigned_agent,
             latency_ms,
             content,
+            breakdown,
         }) => {
             kit::accent_card(ui, theme::OK, |ui| {
                 ui.horizontal(|ui| {
@@ -76,6 +84,57 @@ pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {
                     ui.label(format!("{latency_ms} ms"));
                     ui.end_row();
                 });
+                // Decomposição real T1–T6 do `/sync`: fila × geração ×
+                // transporte × serialização (PRD 3.6).
+                match breakdown {
+                    Some(b) => {
+                        ui.add_space(theme::SPACE_XS);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "TOTAL {latency_ms} ms = FILA {} + GERAÇÃO {} + TRANSPORTE {} + SERIAL {}",
+                                b.queue_ms, b.inference_ms, b.transport_ms, b.serial_ms
+                            ))
+                            .monospace()
+                            .small()
+                            .color(theme::PRIMARY_FIXED_DIM),
+                        );
+                        // Barra proporcional honesta dos componentes.
+                        let parts = [
+                            (b.queue_ms, theme::STALE),
+                            (b.inference_ms, theme::PRIMARY_CONTAINER),
+                            (b.transport_ms, theme::WARN),
+                            (b.serial_ms, theme::AUTH),
+                        ];
+                        let sum: u64 = parts.iter().map(|(value, _)| *value).sum::<u64>().max(1);
+                        ui.horizontal(|ui| {
+                            for (value, color) in parts {
+                                let fraction = value as f32 / sum as f32;
+                                if fraction > 0.0 {
+                                    ui.add(
+                                        egui::ProgressBar::new(fraction)
+                                            .desired_width(fraction * 480.0)
+                                            .fill(color),
+                                    );
+                                }
+                            }
+                        });
+                        ui.label(
+                            egui::RichText::new(
+                                "fila = t_agent_queue · geração = t_inference · transporte = \
+                                 send+return · serial = serialize+deserialize",
+                            )
+                            .small()
+                            .weak(),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("decomposição T1–T6 não reportada nesta resposta")
+                                .small()
+                                .weak(),
+                        );
+                    }
+                }
                 if let Some(content) = content {
                     ui.add_space(theme::SPACE_XS);
                     ui.label(
@@ -145,13 +204,38 @@ pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {
         egui::Grid::new("dispatch_history")
             .striped(true)
             .show(ui, |ui| {
-                kit::grid_header(ui, &["Task ID", "Agente executor", "Latência", "Desfecho"]);
+                kit::grid_header(
+                    ui,
+                    &[
+                        "Task ID",
+                        "Agente executor",
+                        "Latência",
+                        "Fila",
+                        "Geração",
+                        "Desfecho",
+                    ],
+                );
                 for record in dispatch.history.iter().rev() {
                     kit::mono_cell(ui, &record.task_id);
                     ui.label(record.agent.as_deref().unwrap_or("—"));
-                    ui.label(
-                        record
+                    kit::num_cell(
+                        ui,
+                        &record
                             .latency_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".to_owned()),
+                    );
+                    kit::num_cell(
+                        ui,
+                        &record
+                            .queue_ms
+                            .map(|ms| format!("{ms} ms"))
+                            .unwrap_or_else(|| "—".to_owned()),
+                    );
+                    kit::num_cell(
+                        ui,
+                        &record
+                            .inference_ms
                             .map(|ms| format!("{ms} ms"))
                             .unwrap_or_else(|| "—".to_owned()),
                     );

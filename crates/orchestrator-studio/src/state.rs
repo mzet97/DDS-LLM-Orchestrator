@@ -18,6 +18,8 @@ use crate::origin::{fetch_node_summary_with_token, NodeSummary, OriginError};
 struct NodeMsg {
     url: String,
     result: Result<NodeSummary, OriginError>,
+    /// RTT medido do probe (duração integral da chamada, ms).
+    rtt_ms: u64,
 }
 
 /// Estado da janela principal: resumo do nó mais mensagem de status.
@@ -26,6 +28,10 @@ pub struct AppState {
     status: String,
     node: Option<NodeSummary>,
     busy: bool,
+    /// RTT do último probe concluído (PRD 3.2 — medição real, não estimada).
+    rtt_ms: Option<u64>,
+    /// EMA do RTT (α=0.3) para suavizar jitter sem esconder passos.
+    rtt_ema_ms: Option<f64>,
     receiver: Option<mpsc::Receiver<NodeMsg>>,
 }
 
@@ -37,6 +43,8 @@ impl AppState {
             status: String::from("sem leitura do nó"),
             node: None,
             busy: false,
+            rtt_ms: None,
+            rtt_ema_ms: None,
             receiver: None,
         }
     }
@@ -80,23 +88,55 @@ impl AppState {
         let (tx, rx) = mpsc::channel();
         let worker_url = url.clone();
         std::thread::spawn(move || {
+            // RTT real do probe (PRD 3.2): duração integral da chamada —
+            // conexão + requisição + resposta, medida no cliente.
+            let started = std::time::Instant::now();
             let result = fetch_node_summary_with_token(&worker_url, token.as_deref());
-            let _ = tx.send(NodeMsg { url, result });
+            let rtt_ms = started.elapsed().as_millis() as u64;
+            let _ = tx.send(NodeMsg {
+                url,
+                result,
+                rtt_ms,
+            });
         });
         self.receiver = Some(rx);
         self.busy = true;
         self.status = format!("conectando ao nó {status_url}…");
     }
 
+    /// RTT do último probe concluído (ms) — `None` sem probe concluído.
+    #[must_use]
+    pub fn rtt_ms(&self) -> Option<u64> {
+        self.rtt_ms
+    }
+
+    /// EMA do RTT (ms, α=0.3) — suaviza o jitter dos probes.
+    #[must_use]
+    pub fn rtt_ema_ms(&self) -> Option<f64> {
+        self.rtt_ema_ms
+    }
+
     /// Drena o worker da leitura do nó; chamar a cada frame enquanto `busy`.
     pub fn poll(&mut self) {
         let mut finished = false;
         if let Some(rx) = &self.receiver {
-            while let Ok(NodeMsg { url, result }) = rx.try_recv() {
+            while let Ok(NodeMsg {
+                url,
+                result,
+                rtt_ms,
+            }) = rx.try_recv()
+            {
+                // EMA do RTT (α=0.3) independentemente do desfecho — um 401
+                // ou refused também tem RTT real.
+                self.rtt_ema_ms = Some(match self.rtt_ema_ms {
+                    Some(ema) => ema * 0.7 + (rtt_ms as f64) * 0.3,
+                    None => rtt_ms as f64,
+                });
                 match result {
                     Ok(summary) => {
+                        self.rtt_ms = Some(rtt_ms);
                         self.status = format!(
-                            "nó {url} · protocolo {}.{} · {} operação(ões)",
+                            "nó {url} · protocolo {}.{} · {} operação(ões) · rtt {rtt_ms} ms",
                             summary.version.major,
                             summary.version.minor,
                             summary.operations.len()

@@ -49,18 +49,29 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
         "Escutando tráfego Studio.NodePresence · Lease 10s · Poda 30s · Heartbeat a cada 5s",
     );
 
-    // ── Pills do mockup: participantes + varredura + forçar probe ──
+    // ── Pills do mockup: participantes + varredura (contagem real) + RTPS ──
     ui.horizontal(|ui| {
         kit::badge(
             ui,
             &format!("PARTICIPANTES ATIVOS: {}", discovery.nodes.len()),
             theme::PRIMARY_FIXED_DIM,
         );
+        // Próximo heartbeat esperado: 5 s após o mais fresco do domínio
+        // (derivação real — nós publicam presença a cada 5 s).
+        let now = crate::machines::now_unix_ns();
+        let freshest_age = discovery
+            .nodes
+            .iter()
+            .map(|node| node.age_secs(now))
+            .min()
+            .unwrap_or(5);
+        let next_in = 5_u64.saturating_sub(freshest_age);
         kit::badge(
             ui,
-            "CICLO DE VARREDURA: 5s (contínua)",
+            &format!("CICLO DE VARREDURA · PRÓXIMA ~{next_in}s"),
             theme::ON_SURFACE_VARIANT,
         );
+        kit::badge(ui, "RTPS MULTICAST 239.255.0.1:7400", theme::OUTLINE);
         let force = ui.button("Forçar probe (todos os nós)");
         if force.clicked() {
             let urls: Vec<String> = discovery.nodes.iter().map(|n| n.url.clone()).collect();
@@ -72,6 +83,8 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                 urls.len()
             ));
         }
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
     });
     ui.add_space(theme::SPACE_SM);
 

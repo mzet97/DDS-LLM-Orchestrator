@@ -134,6 +134,9 @@ pub struct InferenceState {
     pub stats: Vec<TurnStats>,
     /// `true` enquanto há HTTP em background (`poll` drena e libera).
     pub busy: bool,
+    /// Momento do envio da geração em curso (timer vivo "GERANDO · N.Ns";
+    /// `None` fora de geração) — PRD 3.3.
+    pub pending_since: Option<std::time::Instant>,
     receiver: Option<mpsc::Receiver<InferMsg>>,
 }
 
@@ -153,6 +156,7 @@ impl InferenceState {
             history: Vec::new(),
             stats: Vec::new(),
             busy: false,
+            pending_since: None,
             receiver: None,
         }
     }
@@ -205,6 +209,7 @@ impl InferenceState {
         });
         self.receiver = Some(rx);
         self.busy = true;
+        self.pending_since = Some(std::time::Instant::now());
         self.reply = "gerando…".into();
     }
 
@@ -254,6 +259,7 @@ impl InferenceState {
         if finished {
             self.receiver = None;
             self.busy = false;
+            self.pending_since = None;
         }
     }
 

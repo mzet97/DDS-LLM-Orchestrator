@@ -1,12 +1,13 @@
 //! Painel 3.11 Topologia DDS & Enxame Distribuído (tela inicial do Studio).
 //!
-//! Refeito sobre o mockup Stitch: barra de kicker com QoS do contrato,
-//! janela em chips, faixa de 6 contadores, mesh desenhado com `Painter`
-//! (estação local no centro, nós ao redor, enxame IA e inferência como
-//! satélites) e painel de 5 abas com as coleções drenadas + filtro.
+//! Refeito sobre o mockup Stitch atual + PRD v1.0: kicker com QoS do
+//! contrato, janela em chips, faixa de 6 contadores, chips de filtro por
+//! tópico canônico, mesh desenhado com `Painter` (cards clicáveis →
+//! "ASSINANTE SELECIONADO") e painel de 7 abas — a primeira é TAREFAS DDS
+//! (Tasks ao vivo) com barra de log de `TaskOutput` no rodapé.
 //! Só dados reais: nada de GUID/RTT/throughput inventado.
 
-use crate::dds_observe::{DdsSnapshot, DdsState};
+use crate::dds_observe::{task_status_label, DdsSnapshot, DdsState, TaskRow};
 use crate::discovery::DiscoveryState;
 use crate::kit;
 use crate::machines::{now_unix_ns, ProbeState};
@@ -18,12 +19,24 @@ use eframe::egui;
 const WINDOW_PRESETS: [u64; 5] = [1, 5, 10, 15, 30];
 
 /// Abas do painel de coleções (índice = `DdsState::tab`).
-const TABS: [&str; 5] = [
+const TABS: [&str; 7] = [
+    "Tarefas DDS",
     "Agentes DDS",
+    "Server Status",
     "Tool Calls",
     "Métricas",
     "Descoberta DDS",
     "Instalações",
+];
+
+/// Tópicos canônicos filtráveis (PRD 3.11) → aba correspondente.
+const TOPIC_TABS: [(&str, u8); 6] = [
+    ("Tasks", 0),
+    ("TaskOutput", 0),
+    ("AgentRegistry", 1),
+    ("ServerStatus", 2),
+    ("ToolCall.Request", 3),
+    ("Studio.NodePresence", 6),
 ];
 
 pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
@@ -107,12 +120,25 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
     ui.add_space(theme::SPACE_MD);
 
     // ── Faixa de 6 contadores (todos reais: coleções + descoberta) ──
-    let snapshot = &dds.snapshot;
-    let drained = snapshot.agents.len()
-        + snapshot.tools.len()
-        + snapshot.metrics.len()
-        + snapshot.discoveries.len()
-        + snapshot.studio_nodes.len();
+    // (valores extraídos em escopo — o borrow do snapshot termina antes
+    // do `draw_mesh`, que recebe `&mut DdsState` para a seleção do mesh.)
+    let (drained, task_count, tool_count, output_count, (pending, running, done)) = {
+        let snapshot = &dds.snapshot;
+        let drained = snapshot.tasks.len()
+            + snapshot.task_outputs.len()
+            + snapshot.agents.len()
+            + snapshot.tools.len()
+            + snapshot.metrics.len()
+            + snapshot.discoveries.len()
+            + snapshot.studio_nodes.len();
+        (
+            drained,
+            snapshot.tasks.len(),
+            snapshot.tools.len(),
+            snapshot.task_outputs.len(),
+            task_breakdown(&snapshot.tasks),
+        )
+    };
     let node_ids: Vec<&str> = discovery.nodes.iter().map(|n| n.node_id.as_str()).collect();
     let agent_ids: Vec<&str> = discovery
         .agents
@@ -155,15 +181,15 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
         );
         kit::metric_card(
             &mut cols[4],
-            "Tool Calls",
-            snapshot.tools.len().to_string(),
-            &format!("janela de {} s", dds.window_secs),
+            "Tarefas DDS",
+            task_count.to_string(),
+            &format!("{pending} pendente(s) · {running} running · {done} done"),
             theme::PRIMARY_FIXED_DIM,
         );
         kit::metric_card(
             &mut cols[5],
-            "Métricas",
-            snapshot.metrics.len().to_string(),
+            "Tool Calls",
+            tool_count.to_string(),
             &format!("janela de {} s", dds.window_secs),
             theme::PRIMARY_FIXED_DIM,
         );
@@ -172,11 +198,11 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
 
     // ── Mesh (Painter): estação local no centro + nós + enxame + inferência ──
     draw_mesh(ui, dds, discovery);
+    selected_subscriber_card(ui, dds, discovery);
     ui.label(
         egui::RichText::new(
-            "TÓPICOS DO CONTRATO (19 canônicos): Tasks · TaskOutput · AgentRegistry · \
-             ServerStatus · Studio.NodePresence · LLM.InferenceRequest/Result · \
-             ToolCall.Request · SystemMetrics · Execution.Trace",
+            "TÓPICOS FILTRÁVEIS: Tasks · TaskOutput · AgentRegistry · ServerStatus · \
+             ToolCall.Request · Studio.NodePresence",
         )
         .monospace()
         .small()
@@ -184,7 +210,36 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
     );
     ui.add_space(theme::SPACE_MD);
 
-    // ── Painel de 5 abas com filtro ──
+    // ── Chips de filtro por tópico canônico (PRD 3.11) ──
+    ui.horizontal_wrapped(|ui| {
+        ui.label(
+            egui::RichText::new("FILTRO:")
+                .monospace()
+                .small()
+                .color(theme::OUTLINE),
+        );
+        let counts = [
+            task_count,              // Tasks
+            output_count,            // TaskOutput
+            discovery.agents.len(),  // AgentRegistry
+            discovery.servers.len(), // ServerStatus
+            tool_count,              // ToolCall.Request
+            discovery.nodes.len(),   // Studio.NodePresence
+        ];
+        for (index, (topic, tab)) in TOPIC_TABS.iter().enumerate() {
+            let active = dds.tab == *tab && topic_active_for_tab(topic, dds.tab);
+            let chip = format!("{topic} ({})", counts[index]);
+            if ui
+                .selectable_label(active, egui::RichText::new(chip).monospace().small())
+                .clicked()
+            {
+                dds.tab = *tab;
+            }
+        }
+    });
+    ui.add_space(theme::SPACE_XS);
+
+    // ── Painel de 7 abas com filtro ──
     ui.horizontal(|ui| {
         for (index, name) in TABS.iter().enumerate() {
             let active = dds.tab as usize == index;
@@ -212,18 +267,47 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
                 .iter()
                 .any(|part| part.to_lowercase().contains(&filter))
     };
-    match dds.tab {
-        1 => tools_tab(ui, &dds.snapshot, &filter, matches),
-        2 => metrics_tab(ui, &dds.snapshot, &filter, matches),
-        3 => discovery_tab(ui, &dds.snapshot, &filter, matches),
-        4 => installations_tab(ui, discovery),
-        _ => agents_tab(ui, discovery),
+    let tab = dds.tab;
+    let snapshot = &dds.snapshot;
+    match tab {
+        0 => tasks_tab(ui, snapshot, &mut dds.task_selected, &filter, matches),
+        1 => agents_tab(ui, discovery),
+        2 => servers_tab(ui, discovery),
+        3 => tools_tab(ui, snapshot, &filter, matches),
+        4 => metrics_tab(ui, snapshot, &filter, matches),
+        5 => discovery_tab(ui, snapshot, &filter, matches),
+        _ => installations_tab(ui, discovery),
     }
+
+    // ── Barra de log de tarefas (TaskOutput ao vivo — rodapé da 3.11) ──
+    task_log_bar(ui, snapshot, &mut dds.task_selected);
+}
+
+/// Chip "Tasks"/"TaskOutput" só fica ativo na aba 0 (ambos apontam lá).
+fn topic_active_for_tab(topic: &str, tab: u8) -> bool {
+    if tab == 0 {
+        topic != "TaskOutput"
+    } else {
+        true
+    }
+}
+
+/// Contagem por estado do ciclo canônico (pendente = PENDING+ASSIGNED).
+fn task_breakdown(tasks: &[TaskRow]) -> (usize, usize, usize) {
+    let pending = tasks
+        .iter()
+        .filter(|t| t.status == 0 || t.status == 1)
+        .count();
+    let running = tasks.iter().filter(|t| t.status == 2).count();
+    let done = tasks.iter().filter(|t| t.status == 3).count();
+    (pending, running, done)
 }
 
 /// `true` quando alguma coleção da janela tem linha (para o selo CONVERGIDA).
 fn snapshot_has_data(snapshot: &DdsSnapshot) -> bool {
-    !(snapshot.agents.is_empty()
+    !(snapshot.tasks.is_empty()
+        && snapshot.task_outputs.is_empty()
+        && snapshot.agents.is_empty()
         && snapshot.tools.is_empty()
         && snapshot.metrics.is_empty()
         && snapshot.discoveries.is_empty()
@@ -239,16 +323,38 @@ fn join_preview(ids: &[&str], max: usize) -> String {
     }
 }
 
+/// Prévia de 96 chars achatada (padrão PRD para conteúdos de tarefa).
+fn preview96(text: &str) -> String {
+    let flat = text.replace(['\n', '\r'], " ");
+    if flat.chars().count() <= 96 {
+        flat
+    } else {
+        format!("{}…", flat.chars().take(96).collect::<String>())
+    }
+}
+
+/// Cor do estado do ciclo de vida da tarefa.
+fn task_status_color(status: i32) -> egui::Color32 {
+    match status {
+        0 | 1 => theme::STALE,
+        2 => theme::PRIMARY_FIXED_DIM,
+        3 => theme::OK,
+        4 => theme::ERROR,
+        _ => theme::ON_SURFACE_VARIANT,
+    }
+}
+
 // ── Mesh ─────────────────────────────────────────────────────────────────
 
 /// Desenha o diagrama de topologia: grade de pontos, estação local no
 /// centro, nós Studio no arco superior, enxame IA à direita e servidor de
-/// inferência à esquerda — linhas rotuladas pelos tópicos reais.
-fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
+/// inferência à esquerda — linhas rotuladas pelos tópicos reais. Os cards
+/// são clicáveis: a seleção vira o card "ASSINANTE SELECIONADO".
+fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
     let height = 300.0;
-    let (rect, _) = ui.allocate_exact_size(
+    let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
-        egui::Sense::hover(),
+        egui::Sense::click(),
     );
     let painter = ui.painter_at(rect);
 
@@ -285,6 +391,9 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
     let now = now_unix_ns();
     let center = rect.center();
 
+    // Cards clicáveis coletados para o hit-test do clique.
+    let mut hit_rects: Vec<(egui::Rect, String)> = Vec::new();
+
     // Estação local (este Studio) no centro.
     let local_box = egui::Rect::from_center_size(center, egui::vec2(160.0, 48.0));
     painter.rect_filled(local_box, egui::CornerRadius::same(4), theme::SURFACE_HIGH);
@@ -311,7 +420,6 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
 
     // Nós Studio no arco superior (presença contínua da descoberta; fallback
     // para a foto da janela quando a descoberta ainda não viu nada).
-    let mut node_lines: Vec<(String, bool, egui::Pos2, egui::Pos2)> = Vec::new();
     let nodes: Vec<(String, bool, u64)> = if discovery.nodes.is_empty() {
         dds.snapshot
             .studio_nodes
@@ -335,6 +443,7 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
             let pos = center + egui::vec2(angle.cos() * radius, angle.sin() * radius);
             let box_rect = egui::Rect::from_center_size(pos, egui::vec2(132.0, 34.0));
             let accent = if *alive { theme::OK } else { theme::STALE };
+            let selected = dds.mesh_selected.as_deref() == Some(node_id.as_str());
             painter.line_segment(
                 [center + egui::vec2(0.0, -24.0), box_rect.center()],
                 egui::Stroke::new(1.0, theme::tint(accent, 60)),
@@ -347,7 +456,14 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
             painter.rect_stroke(
                 box_rect,
                 egui::CornerRadius::same(3),
-                egui::Stroke::new(1.0, theme::SURFACE_HIGHEST),
+                egui::Stroke::new(
+                    1.0,
+                    if selected {
+                        theme::PRIMARY_CONTAINER
+                    } else {
+                        theme::SURFACE_HIGHEST
+                    },
+                ),
                 egui::StrokeKind::Inside,
             );
             painter.text(
@@ -364,19 +480,16 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
                 egui::FontId::monospace(8.0),
                 accent,
             );
-            node_lines.push((node_id.clone(), *alive, center, box_rect.center()));
+            hit_rects.push((box_rect, format!("node:{node_id}")));
         }
         // Rótulo do tópico na primeira linha (sem poluir as demais).
-        if let Some((_, _, a, b)) = node_lines.first() {
-            let mid = (*a + b.to_vec2()) / 2.0;
-            painter.text(
-                mid,
-                egui::Align2::CENTER_CENTER,
-                "Studio.NodePresence",
-                egui::FontId::monospace(8.0),
-                theme::OUTLINE,
-            );
-        }
+        painter.text(
+            egui::pos2(center.x, center.y - radius * 0.55),
+            egui::Align2::CENTER_CENTER,
+            "Studio.NodePresence",
+            egui::FontId::monospace(8.0),
+            theme::OUTLINE,
+        );
     } else {
         painter.text(
             egui::pos2(center.x, rect.top() + 60.0),
@@ -430,6 +543,7 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
                 egui::FontId::monospace(8.0),
                 theme::ON_SURFACE_VARIANT,
             );
+            hit_rects.push((box_rect, format!("agent:{}", agent.agent_id)));
             top += 18.0;
         }
     }
@@ -482,10 +596,269 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
             egui::FontId::monospace(8.0),
             theme::ON_SURFACE_VARIANT,
         );
+        hit_rects.push((box_rect, format!("server:{}", server.server_id)));
+    }
+
+    // Hit-test do clique: seleciona o card sob o ponteiro.
+    if response.clicked() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            if let Some((_, key)) = hit_rects.iter().find(|(r, _)| r.contains(pos)) {
+                dds.mesh_selected = Some(key.clone());
+            } else {
+                dds.mesh_selected = None;
+            }
+        }
     }
 }
 
+/// Card de detalhe do assinante selecionado no mesh (mockup: "SELECTED
+/// SUBSCRIBER") — dados reais do tipo correspondente + tópicos que publica.
+fn selected_subscriber_card(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
+    let Some(key) = dds.mesh_selected.clone() else {
+        return;
+    };
+    kit::accent_card(ui, theme::PRIMARY_CONTAINER, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(
+                egui::RichText::new("ASSINANTE SELECIONADO")
+                    .monospace()
+                    .small()
+                    .color(theme::PRIMARY_FIXED_DIM),
+            );
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new("limpar seleção").monospace().small(),
+                ))
+                .clicked()
+            {
+                dds.mesh_selected = None;
+            }
+        });
+        let now = now_unix_ns();
+        if let Some(node_id) = key.strip_prefix("node:") {
+            if let Some(node) = discovery.nodes.iter().find(|n| n.node_id == node_id) {
+                kit::mono_cell(ui, &format!("NÓ STUDIO · {}", node.node_id));
+                ui.label(format!(
+                    "url {} · token exigido: {}",
+                    node.url,
+                    if node.token_required { "sim" } else { "não" }
+                ));
+                let (probe, color) = match &node.probe {
+                    Some(probe) => match probe.state {
+                        ProbeState::Online => (probe.detail.clone(), theme::OK),
+                        ProbeState::AuthPending => (probe.detail.clone(), theme::AUTH),
+                        ProbeState::Offline | ProbeState::Unknown => {
+                            (probe.detail.clone(), theme::ERROR)
+                        }
+                    },
+                    None => (String::from("sondando…"), theme::STALE),
+                };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "probe {probe} · heartbeat {} s atrás",
+                        node.age_secs(now)
+                    ))
+                    .small()
+                    .color(color),
+                );
+                ui.label(
+                    egui::RichText::new("publica: Studio.NodePresence (heartbeat 5 s)")
+                        .small()
+                        .weak(),
+                );
+                return;
+            }
+        }
+        if let Some(agent_id) = key.strip_prefix("agent:") {
+            if let Some(agent) = discovery.agents.iter().find(|a| a.agent_id == agent_id) {
+                kit::mono_cell(ui, &format!("AGENTE DDS · {}", agent.agent_id));
+                ui.label(format!(
+                    "modelo {} · slots {}/{} · latência EMA {:.0} ms",
+                    agent.model, agent.slots_busy, agent.slots_total, agent.ema_latency_ms
+                ));
+                let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
+                ui.label(
+                    egui::RichText::new(format!("heartbeat {age} s atrás"))
+                        .small()
+                        .color(if age <= 5 { theme::OK } else { theme::WARN }),
+                );
+                ui.label(
+                    egui::RichText::new(
+                        "publica: AgentRegistry · subscreve: Tasks (claim) · publica: TaskOutput",
+                    )
+                    .small()
+                    .weak(),
+                );
+                return;
+            }
+        }
+        if let Some(server_id) = key.strip_prefix("server:") {
+            if let Some(server) = discovery.servers.iter().find(|s| s.server_id == server_id) {
+                kit::mono_cell(
+                    ui,
+                    &format!("SERVIDOR DE INFERÊNCIA · {}", server.server_id),
+                );
+                ui.label(format!(
+                    "modelo {} · slots {}/{} · pronto: {}",
+                    server.model_loaded,
+                    server.slots_processing,
+                    server.slots_idle + server.slots_processing,
+                    if server.ready { "sim" } else { "não" }
+                ));
+                ui.label(egui::RichText::new("publica: ServerStatus").small().weak());
+                return;
+            }
+        }
+        ui.label(egui::RichText::new("seleção saiu do domínio").weak());
+    });
+}
+
 // ── Abas de coleções ─────────────────────────────────────────────────────
+
+/// Aba Tarefas DDS (Tasks ao vivo — ciclo, agente, prioridade, retry).
+fn tasks_tab(
+    ui: &mut egui::Ui,
+    snapshot: &DdsSnapshot,
+    selected: &mut Option<String>,
+    filter: &str,
+    matches: impl Fn(&[&str]) -> bool,
+) {
+    if snapshot.tasks.is_empty() {
+        kit::empty_state(
+            ui,
+            "Nenhuma tarefa no tópico Tasks na janela — despache pela tela 3.6 ou \
+             via orquestrador/agente; o ciclo PENDING→ASSIGNED→RUNNING→DONE aparece aqui.",
+        );
+        return;
+    }
+    let now = now_unix_ns();
+    egui::Grid::new("topology_tasks_grid")
+        .striped(true)
+        .show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Task ID",
+                    "Estado",
+                    "Agente",
+                    "Modelo",
+                    "Prioridade",
+                    "Retry",
+                    "Idade",
+                ],
+            );
+            for task in &snapshot.tasks {
+                let status = task_status_label(task.status);
+                if !filter.is_empty()
+                    && !matches(&[
+                        &task.task_id,
+                        status,
+                        &task.assigned_agent,
+                        &task.model_name,
+                    ])
+                {
+                    continue;
+                }
+                let is_selected = selected.as_deref() == Some(task.task_id.as_str());
+                let short_id: String = task.task_id.chars().take(8).collect();
+                if ui
+                    .selectable_label(is_selected, egui::RichText::new(&short_id).monospace())
+                    .clicked()
+                {
+                    *selected = Some(task.task_id.clone());
+                }
+                ui.label(
+                    egui::RichText::new(status)
+                        .monospace()
+                        .color(task_status_color(task.status)),
+                );
+                ui.label(if task.assigned_agent.is_empty() {
+                    "—"
+                } else {
+                    &task.assigned_agent
+                });
+                ui.label(if task.model_name.is_empty() {
+                    "—"
+                } else {
+                    &task.model_name
+                });
+                kit::num_cell(ui, &task.priority.to_string());
+                kit::num_cell(ui, &task.retry_count.to_string());
+                let age = now.saturating_sub(task.created_at_ns) / 1_000_000_000;
+                kit::num_cell(ui, &format!("{age} s"));
+                ui.end_row();
+            }
+        });
+}
+
+/// Barra de log de tarefas: `TaskOutput` ao vivo (mais recentes primeiro),
+/// com prévia de 96 chars; seleção na aba Tarefas filtra este log.
+fn task_log_bar(ui: &mut egui::Ui, snapshot: &DdsSnapshot, selected: &mut Option<String>) {
+    if snapshot.task_outputs.is_empty() {
+        return;
+    }
+    ui.add_space(theme::SPACE_MD);
+    kit::section_label(ui, "Log de tarefas · tópico TaskOutput (janela atual)");
+    if let Some(task_id) = selected.clone() {
+        ui.horizontal(|ui| {
+            let short: String = task_id.chars().take(8).collect();
+            ui.label(
+                egui::RichText::new(format!("FILTRADO: {short}"))
+                    .monospace()
+                    .small()
+                    .color(theme::PRIMARY_FIXED_DIM),
+            );
+            if ui
+                .add(egui::Button::new(
+                    egui::RichText::new("limpar filtro").monospace().small(),
+                ))
+                .clicked()
+            {
+                *selected = None;
+            }
+        });
+    }
+    let rows: Vec<&crate::dds_observe::TaskOutputRow> = snapshot
+        .task_outputs
+        .iter()
+        .filter(|row| selected.as_ref().is_none_or(|id| row.task_id == *id))
+        .collect();
+    egui::Grid::new("topology_tasklog_grid")
+        .striped(true)
+        .show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Task ID",
+                    "Seq",
+                    "Agente",
+                    "Final",
+                    "Tokens",
+                    "Conteúdo (96 chars)",
+                ],
+            );
+            for row in rows.iter().rev().take(12) {
+                let short: String = row.task_id.chars().take(8).collect();
+                kit::mono_cell(ui, &short);
+                kit::num_cell(ui, &row.seq_num.to_string());
+                ui.label(&row.agent_id);
+                ui.label(if row.is_final { "✔" } else { "…" });
+                kit::num_cell(ui, &row.token_count.to_string());
+                kit::mono_cell(ui, &preview96(&row.content));
+                ui.end_row();
+            }
+        });
+    if rows.len() > 12 {
+        ui.label(
+            egui::RichText::new(format!(
+                "+{} amostra(s) mais antigas na janela",
+                rows.len() - 12
+            ))
+            .small()
+            .weak(),
+        );
+    }
+}
 
 /// Aba Agentes DDS (fonte contínua: descoberta/AgentRegistry).
 fn agents_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
@@ -527,6 +900,44 @@ fn agents_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
         });
 }
 
+/// Aba Server Status (inferência viva — descoberta contínua).
+fn servers_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
+    if discovery.servers.is_empty() {
+        kit::empty_state(
+            ui,
+            "Nenhum servidor anunciando ServerStatus no domínio — o llama-server \
+             precisa ser iniciado com --enable-dds para publicar presença.",
+        );
+        return;
+    }
+    egui::Grid::new("topology_servers_grid")
+        .striped(true)
+        .show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Server ID",
+                    "Modelo carregado",
+                    "Slots idle",
+                    "Slots proc.",
+                    "Pronto",
+                ],
+            );
+            for server in &discovery.servers {
+                kit::mono_cell(ui, &server.server_id);
+                ui.label(&server.model_loaded);
+                kit::num_cell(ui, &server.slots_idle.to_string());
+                kit::num_cell(ui, &server.slots_processing.to_string());
+                ui.label(
+                    egui::RichText::new(if server.ready { "● sim" } else { "◌ não" })
+                        .monospace()
+                        .color(if server.ready { theme::OK } else { theme::WARN }),
+                );
+                ui.end_row();
+            }
+        });
+}
+
 /// Aba Tool Calls (janela de observação; governança requester/nível).
 fn tools_tab(
     ui: &mut egui::Ui,
@@ -553,6 +964,7 @@ fn tools_tab(
                     "Solicitante",
                     "Nível",
                     "Status",
+                    "Duração",
                     "Resultado (prévia)",
                 ],
             );
@@ -583,6 +995,14 @@ fn tools_tab(
                     _ => theme::ON_SURFACE_VARIANT,
                 };
                 ui.label(egui::RichText::new(status).monospace().color(status_color));
+                kit::num_cell(
+                    ui,
+                    &if tool.duration_ms > 0 {
+                        format!("{} ms", tool.duration_ms)
+                    } else {
+                        String::from("aberta")
+                    },
+                );
                 ui.label(egui::RichText::new(&tool.result_preview).small().weak());
                 ui.end_row();
             }
@@ -610,7 +1030,7 @@ fn metrics_tab(
                 }
                 kit::mono_cell(ui, &metric.source);
                 ui.label(&metric.name);
-                ui.label(egui::RichText::new(format!("{:.3}", metric.value)).monospace());
+                kit::num_cell(ui, &format!("{:.3}", metric.value));
                 ui.end_row();
             }
         });
@@ -688,7 +1108,7 @@ fn installations_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
                         .small()
                         .color(color),
                 );
-                ui.label(format!("{} s", node.age_secs(now)));
+                kit::num_cell(ui, &format!("{} s", node.age_secs(now)));
                 ui.label(if node.token_required { "sim" } else { "não" });
                 ui.end_row();
             }

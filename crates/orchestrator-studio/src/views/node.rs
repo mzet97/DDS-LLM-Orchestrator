@@ -7,6 +7,7 @@ use crate::discovery::DiscoveryState;
 use crate::kit;
 use crate::origin::optional_token;
 use crate::panel_header::panel_header;
+use crate::protected::ProtectedGuard;
 use crate::state::AppState;
 use crate::theme;
 use eframe::egui;
@@ -36,6 +37,7 @@ pub fn show(
     node_url: &mut String,
     node_token: &mut String,
     discovery: &DiscoveryState,
+    guard: &ProtectedGuard,
 ) {
     panel_header(
         ui,
@@ -44,6 +46,21 @@ pub fn show(
         "Daemon local por máquina · protocolo RPC + log de operações · token \
          Bearer em memória volátil (zero disco / zero persistência)",
     );
+    // DoD PRD: chip do alvo único (mesma URL da descoberta em todas as telas).
+    let chip_target = discovery.selected_url().unwrap_or_else(|| node_url.clone());
+    kit::target_chip(
+        ui,
+        &chip_target,
+        if state.node().is_some() {
+            "conectado"
+        } else if state.busy() {
+            "conectando…"
+        } else {
+            "sem leitura"
+        },
+        state.node().is_some(),
+    );
+    ui.add_space(theme::SPACE_SM);
     // Drena o worker de leitura do nó (thread + mpsc — REQ/T-820-19).
     state.poll();
 
@@ -107,14 +124,14 @@ pub fn show(
         kit::metric_card(
             &mut cols[0],
             "Protocolo do binário",
-            protocol,
+            protocol.clone(),
             "GET /version (compatibilidade §31)",
             theme::PRIMARY_FIXED_DIM,
         );
         kit::metric_card(
             &mut cols[1],
             "Operações registradas",
-            ops_count,
+            ops_count.clone(),
             "GET /operations (log do nó)",
             theme::PRIMARY_FIXED_DIM,
         );
@@ -136,6 +153,69 @@ pub fn show(
             } else {
                 theme::STALE
             },
+        );
+    });
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Faixa de status (PRD 3.2): estado · protocolo · RTT medido ·
+    //    operações · modo protegido — tudo real (RTT = duração do probe) ──
+    let rtt = state
+        .rtt_ms()
+        .map(|ms| ms.to_string())
+        .unwrap_or_else(|| String::from("—"));
+    let rtt_ema = state
+        .rtt_ema_ms()
+        .map(|ema| format!("{ema:.0}"))
+        .unwrap_or_else(|| String::from("—"));
+    ui.horizontal_wrapped(|ui| {
+        let connected = state.node().is_some();
+        ui.label(
+            egui::RichText::new(if connected {
+                "● CONECTADO"
+            } else if state.busy() {
+                "◐ CONECTANDO"
+            } else {
+                "◌ SEM LEITURA"
+            })
+            .monospace()
+            .small()
+            .color(if connected {
+                theme::OK
+            } else if state.busy() {
+                theme::WARN
+            } else {
+                theme::STALE
+            }),
+        );
+        ui.separator();
+        ui.label(
+            egui::RichText::new(format!("PROTOCOLO v{protocol}"))
+                .monospace()
+                .small(),
+        );
+        ui.separator();
+        ui.label(
+            egui::RichText::new(format!("RTT {rtt} ms · EMA {rtt_ema} ms"))
+                .monospace()
+                .small()
+                .color(theme::PRIMARY_FIXED_DIM),
+        );
+        ui.separator();
+        ui.label(
+            egui::RichText::new(format!("{} OPERAÇÕES", ops_count))
+                .monospace()
+                .small(),
+        );
+        ui.separator();
+        ui.label(
+            egui::RichText::new(if guard.armed {
+                "MODO ARMADO (GRAVAÇÃO ATIVA)"
+            } else {
+                "MODO DESARMADO (LEITURA SOMENTE)"
+            })
+            .monospace()
+            .small()
+            .color(if guard.armed { theme::ERROR } else { theme::OK }),
         );
     });
     ui.add_space(theme::SPACE_MD);
@@ -169,68 +249,89 @@ pub fn show(
     // ── Log de operações aplicadas + inspetor ──
     if let Some(node) = state.node() {
         if !node.operations.is_empty() {
-            ui.collapsing(
-                format!(
-                    "Log de Operações Aplicadas · {} registrada(s)",
+            kit::section_label(
+                ui,
+                &format!(
+                    "LOG DE OPERAÇÕES APLICADAS · {} REGISTRADA(S)",
                     node.operations.len()
                 ),
-                |ui| {
-                    let mut selected: Option<usize> = ui
-                        .ctx()
-                        .data(|data| data.get_temp(egui::Id::new("node-op-selected")));
-                    egui::Grid::new("node_ops_grid")
-                        .striped(true)
+            );
+            ui.label(
+                egui::RichText::new(
+                    "O nó não carimba horário/retorno por operação (OpRecord = id + op) — \
+                     colunas de timestamp/latência não existem no contrato e ficam de fora.",
+                )
+                .small()
+                .weak(),
+            );
+            ui.add_space(theme::SPACE_XS);
+            let mut selected: Option<usize> = ui
+                .ctx()
+                .data(|data| data.get_temp(egui::Id::new("node-op-selected")));
+            egui::Grid::new("node_ops_grid")
+                .striped(true)
+                .show(ui, |ui| {
+                    kit::grid_header(ui, &["Op ID", "Tipo", "Resumo / alvo"]);
+                    for (index, record) in node.operations.iter().enumerate() {
+                        let is_selected = selected == Some(index);
+                        if ui
+                            .selectable_label(
+                                is_selected,
+                                egui::RichText::new(&record.id.0).monospace(),
+                            )
+                            .clicked()
+                        {
+                            selected = Some(index);
+                        }
+                        ui.label(op_kind(&record.op));
+                        ui.label(op_summary(&record.op));
+                        ui.end_row();
+                    }
+                });
+            ui.ctx()
+                .data_mut(|data| data.insert_temp(egui::Id::new("node-op-selected"), selected));
+            if let Some(index) = selected {
+                if let Some(record) = node.operations.get(index) {
+                    ui.add_space(theme::SPACE_SM);
+                    kit::section_label(ui, "INSPETOR DE OPERAÇÃO RPC");
+                    let raw_json = serde_json::to_string_pretty(&record.op)
+                        .unwrap_or_else(|_| format!("{:#?}", record.op));
+                    egui::Frame::NONE
+                        .fill(theme::SURFACE_LOW)
+                        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+                        .inner_margin(theme::SPACE_MD)
+                        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
                         .show(ui, |ui| {
-                            kit::grid_header(ui, &["Op ID", "Tipo", "Alvo / contexto"]);
-                            for (index, record) in node.operations.iter().enumerate() {
-                                let is_selected = selected == Some(index);
-                                if ui
-                                    .selectable_label(
-                                        is_selected,
-                                        egui::RichText::new(&record.id.0).monospace(),
-                                    )
-                                    .clicked()
-                                {
-                                    selected = Some(index);
-                                }
-                                ui.label(op_kind(&record.op));
-                                ui.label(op_summary(&record.op));
-                                ui.end_row();
-                            }
-                        });
-                    ui.ctx().data_mut(|data| {
-                        data.insert_temp(egui::Id::new("node-op-selected"), selected)
-                    });
-                    if let Some(index) = selected {
-                        if let Some(record) = node.operations.get(index) {
-                            ui.add_space(theme::SPACE_SM);
-                            kit::section_label(ui, "INSPETOR DE OPERAÇÃO RPC");
-                            egui::Frame::NONE
-                                .fill(theme::SURFACE_LOW)
-                                .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
-                                .inner_margin(theme::SPACE_MD)
-                                .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
-                                .show(ui, |ui| {
-                                    ui.set_min_width(ui.available_width());
-                                    ui.label(
-                                        egui::RichText::new(format!(
-                                            "operation_id: {}",
-                                            record.id.0
-                                        ))
+                            ui.set_min_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!("operation_id: {}", record.id.0))
                                         .monospace()
                                         .small()
                                         .color(theme::PRIMARY_FIXED_DIM),
-                                    );
-                                    ui.label(
-                                        egui::RichText::new(format!("{:#?}", record.op))
-                                            .monospace()
-                                            .small(),
-                                    );
-                                });
-                        }
-                    }
-                },
-            );
+                                );
+                                if ui
+                                    .add(egui::Button::new(
+                                        egui::RichText::new("COPIAR RAW").monospace().small(),
+                                    ))
+                                    .clicked()
+                                {
+                                    ui.ctx().copy_text(raw_json.clone());
+                                    crate::studio_log::info(format!(
+                                        "nó: operação {} copiada como JSON",
+                                        record.id.0
+                                    ));
+                                }
+                            });
+                            ui.add(
+                                egui::TextEdit::multiline(&mut raw_json.clone())
+                                    .font(egui::TextStyle::Monospace)
+                                    .desired_rows(4)
+                                    .interactive(false),
+                            );
+                        });
+                }
+            }
         }
     }
 }

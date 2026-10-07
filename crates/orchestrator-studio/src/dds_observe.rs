@@ -15,11 +15,28 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use dds_contract::generated::dds_llm_orchestrator::{
-    AgentState, DiscoveryEvent, StudioNodePresence, SystemMetric, ToolCallRequest,
+    AgentState, DiscoveryEvent, StudioNodePresence, SystemMetric, Task, TaskOutput, ToolCallRequest,
 };
 use dds_dataspace::DataSpace;
 use futures::StreamExt;
 use thiserror::Error;
+
+/// Cap de retenção de payloads íntegros (arguments/result/content) — o
+/// suficiente para o inspetor da 3.13/3.11 sem inflar o snapshot.
+const PAYLOAD_CAP: usize = 8 * 1024;
+
+fn capped(text: &str) -> String {
+    if text.len() <= PAYLOAD_CAP {
+        text.to_owned()
+    } else {
+        let cut = text
+            .char_indices()
+            .nth(PAYLOAD_CAP)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
+        format!("{}…", &text[..cut])
+    }
+}
 
 /// Linha de topologia exibida na GUI.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +59,41 @@ pub struct ToolRow {
     pub security_level: i32,
     /// Prévia do resultado truncada (a íntegra fica no fio).
     pub result_preview: String,
+    /// Payload de chamada íntegro do fio (cap 8 KB) — inspetor 3.13.
+    pub arguments_json: String,
+    /// Resultado íntegro do fio (cap 8 KB) — inspetor 3.13.
+    pub result_json: String,
+    /// Duração real da chamada: `completed_at_ns − created_at_ns`
+    /// (0 enquanto aberta — completed_at_ns = 0).
+    pub duration_ms: u64,
+}
+
+/// Tarefa viva no tópico `Tasks` (aba "TAREFAS DDS" da 3.11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskRow {
+    pub task_id: String,
+    pub client_id: String,
+    pub assigned_agent: String,
+    pub model_name: String,
+    /// Ciclo canônico: 0=PENDING, 1=ASSIGNED, 2=RUNNING, 3=DONE, 4=FAILED.
+    pub status: i32,
+    pub priority: i32,
+    pub retry_count: u32,
+    pub created_at_ns: u64,
+    pub completed_at_ns: u64,
+}
+
+/// Chunk de saída no tópico `TaskOutput` (barra de log de tarefas da 3.11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskOutputRow {
+    pub task_id: String,
+    pub seq_num: u32,
+    pub agent_id: String,
+    pub is_final: bool,
+    pub token_count: u32,
+    pub emitted_at_ns: u64,
+    /// Conteúdo íntegro (cap 8 KB) — prévia de 96 chars na tabela.
+    pub content: String,
 }
 
 /// Métrica de sistema exibida na GUI.
@@ -140,6 +192,57 @@ pub fn tool_row(call: &ToolCallRequest) -> ToolRow {
         requester_id: call.requester_id.clone(),
         security_level: call.security_level,
         result_preview: preview(&call.result_json, 80),
+        arguments_json: capped(&call.arguments_json),
+        result_json: capped(&call.result_json),
+        duration_ms: if call.completed_at_ns > call.created_at_ns {
+            (call.completed_at_ns - call.created_at_ns) / 1_000_000
+        } else {
+            0
+        },
+    }
+}
+
+/// Mapeamento puro: `Task` do fio → linha da GUI (aba TAREFAS DDS).
+#[must_use]
+pub fn task_row(task: &Task) -> TaskRow {
+    TaskRow {
+        task_id: task.task_id.clone(),
+        client_id: task.client_id.clone(),
+        assigned_agent: task.assigned_agent.clone(),
+        model_name: task.model_name.clone(),
+        status: task.status,
+        priority: task.priority,
+        retry_count: task.retry_count,
+        created_at_ns: task.created_at_ns,
+        completed_at_ns: task.completed_at_ns,
+    }
+}
+
+/// Mapeamento puro: `TaskOutput` do fio → linha da GUI (log de tarefas).
+#[must_use]
+pub fn task_output_row(output: &TaskOutput) -> TaskOutputRow {
+    TaskOutputRow {
+        task_id: output.task_id.clone(),
+        seq_num: output.seq_num,
+        agent_id: output.agent_id.clone(),
+        is_final: output.is_final,
+        token_count: output.token_count,
+        emitted_at_ns: output.emitted_at_ns,
+        content: capped(&output.content),
+    }
+}
+
+/// Rótulo do ciclo de vida da tarefa (`orch-common::TaskStatus` canônico:
+/// PENDING=0 → ASSIGNED=1 → RUNNING=2 → DONE=3 / FAILED=4).
+#[must_use]
+pub fn task_status_label(status: i32) -> &'static str {
+    match status {
+        0 => "PENDING",
+        1 => "ASSIGNED",
+        2 => "RUNNING",
+        3 => "DONE",
+        4 => "FAILED",
+        _ => "desconhecido",
     }
 }
 
@@ -200,21 +303,25 @@ pub fn status_label(status: i32) -> &'static str {
     }
 }
 
-/// Rótulo do nível de segurança (contrato `SecurityLevel`: 0=PUBLIC,
-/// 1=INTERNAL — só esses dois confirmados no IDL; demais aparecem crus).
+/// Rótulo do nível de segurança — vocabulário do PRD v1.0 (tela 3.13),
+/// que sobrescreve o nome do enum no IDL (`SecurityLevel`): N0 leitura,
+/// N1 execução isolada, N2 mutação no host.
 #[must_use]
 pub fn security_level_label(level: i32) -> String {
     match level {
-        0 => String::from("0 · public"),
-        1 => String::from("1 · internal"),
-        other => format!("{other} · ?"),
+        0 => String::from("N0 READ_ONLY"),
+        1 => String::from("N1 SANDBOX_EXEC"),
+        2 => String::from("N2 HOST_MUTATION"),
+        other => format!("N{other} ?"),
     }
 }
 
-/// Foto do domínio: agentes, tool calls, métricas, descoberta e nós Studio
-/// drenados na mesma janela.
+/// Foto do domínio: tarefas, saídas, agentes, tool calls, métricas,
+/// descoberta e nós Studio drenados na mesma janela.
 #[derive(Debug, Clone, Default)]
 pub struct DdsSnapshot {
+    pub tasks: Vec<TaskRow>,
+    pub task_outputs: Vec<TaskOutputRow>,
     pub agents: Vec<AgentRow>,
     pub tools: Vec<ToolRow>,
     pub metrics: Vec<MetricRow>,
@@ -228,7 +335,7 @@ fn sorted<K: Ord, V>(rows: HashMap<K, V>) -> Vec<V> {
     rows.into_iter().map(|(_, value)| value).collect()
 }
 
-/// Observa o domínio uma janela: um `DataSpace`, cinco drenos concorrentes.
+/// Observa o domínio uma janela: um `DataSpace`, sete drenos concorrentes.
 ///
 /// `DataSpace::new` exige contexto Tokio (WaitSet compartilhado) — por isso
 /// nasce dentro do `block_on`, nunca fora dele.
@@ -236,7 +343,15 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
     let rt = runtime(domain)?;
     rt.block_on(async {
         let space = dataspace(domain)?;
-        let (agents, tools, metrics, discoveries, studio_nodes) = tokio::join!(
+        let (tasks, task_outputs, agents, tools, metrics, discoveries, studio_nodes) = tokio::join!(
+            drain(space.stream_tasks(), window, |task: &Task| task
+                .task_id
+                .clone()),
+            drain(
+                space.stream_task_outputs(),
+                window,
+                |output: &TaskOutput| (output.task_id.clone(), output.seq_num)
+            ),
             drain(space.stream_agent_states(), window, |state: &AgentState| {
                 state.agent_id.clone()
             }),
@@ -263,6 +378,8 @@ pub fn observe(domain: u32, window: Duration) -> Result<DdsSnapshot, ObserveErro
             ),
         );
         Ok(DdsSnapshot {
+            tasks: sorted(tasks).iter().map(task_row).collect(),
+            task_outputs: sorted(task_outputs).iter().map(task_output_row).collect(),
             agents: sorted(agents).iter().map(agent_row).collect(),
             tools: sorted(tools).iter().map(tool_row).collect(),
             metrics: sorted(metrics).iter().map(metric_row).collect(),
@@ -284,8 +401,9 @@ pub struct DdsState {
     pub error: String,
     /// `true` enquanto a coleta roda em background (`poll` drena).
     pub busy: bool,
-    /// Aba ativa do painel de coleções (0=agentes, 1=tools, 2=métricas,
-    /// 3=descoberta, 4=instalações) — estado de apresentação da view.
+    /// Aba ativa do painel de coleções (0=tarefas, 1=agentes, 2=servers,
+    /// 3=tools, 4=métricas, 5=descoberta, 6=instalações) — estado de
+    /// apresentação da view.
     pub tab: u8,
     /// Filtro por substring aplicado às tabelas de coleções.
     pub filter: String,
@@ -293,6 +411,10 @@ pub struct DdsState {
     pub tools_filter: Option<i32>,
     /// Call ID selecionada no inspetor da tela 3.13.
     pub tools_selected: Option<String>,
+    /// Tarefa selecionada na aba TAREFAS DDS (foca o log de TaskOutput).
+    pub task_selected: Option<String>,
+    /// Nó/agente selecionado no mesh (card "ASSINANTE SELECIONADO").
+    pub mesh_selected: Option<String>,
     receiver: Option<mpsc::Receiver<ObserveMsg>>,
 }
 
@@ -316,6 +438,8 @@ impl DdsState {
             filter: String::new(),
             tools_filter: None,
             tools_selected: None,
+            task_selected: None,
+            mesh_selected: None,
             receiver: None,
         }
     }
@@ -413,8 +537,91 @@ mod tests {
                 requester_id: String::new(),
                 security_level: 0,
                 result_preview: String::new(),
+                arguments_json: String::new(),
+                result_json: String::new(),
+                duration_ms: 0,
             }
         );
+    }
+
+    /// PRD 3.13: duração real = completed−created, e 0 enquanto aberta.
+    #[test]
+    fn tool_row_derives_duration_from_wire_timestamps() {
+        let call = ToolCallRequest {
+            call_id: String::from("c-3"),
+            created_at_ns: 1_000_000_000,
+            completed_at_ns: 2_500_000_000,
+            ..ToolCallRequest::default()
+        };
+        assert_eq!(tool_row(&call).duration_ms, 1_500);
+    }
+
+    /// PRD 3.13: payloads íntegros atravessam o mapeamento (cap 8 KB).
+    #[test]
+    fn tool_row_keeps_full_payloads_capped() {
+        let args = format!("{{\"path\":\"{}\"}}", "x".repeat(9_000));
+        let call = ToolCallRequest {
+            call_id: String::from("c-4"),
+            arguments_json: args.clone(),
+            result_json: String::from("{\"ok\":true}"),
+            ..ToolCallRequest::default()
+        };
+        let row = tool_row(&call);
+        assert_eq!(row.result_json, "{\"ok\":true}");
+        assert!(row.arguments_json.len() < args.len());
+        assert!(row.arguments_json.ends_with('…'));
+    }
+
+    #[test]
+    fn task_row_maps_contract_fields() {
+        let task = Task {
+            task_id: String::from("t-8f21a4"),
+            client_id: String::from("studio"),
+            assigned_agent: String::from("agent-1"),
+            model_name: String::from("qwen3"),
+            status: 2,
+            priority: 5,
+            retry_count: 1,
+            created_at_ns: 100,
+            completed_at_ns: 0,
+            ..Task::default()
+        };
+
+        let row = task_row(&task);
+        assert_eq!(row.task_id, "t-8f21a4");
+        assert_eq!(row.status, 2);
+        assert_eq!(task_status_label(row.status), "RUNNING");
+        assert_eq!(task_status_label(3), "DONE");
+        assert_eq!(task_status_label(4), "FAILED");
+        assert_eq!(task_status_label(9), "desconhecido");
+    }
+
+    #[test]
+    fn task_output_row_maps_contract_fields() {
+        let output = TaskOutput {
+            task_id: String::from("t-1"),
+            seq_num: 2,
+            agent_id: String::from("agent-1"),
+            is_final: false,
+            token_count: 42,
+            emitted_at_ns: 999,
+            content: String::from("resposta parcial"),
+            ..TaskOutput::default()
+        };
+
+        let row = task_output_row(&output);
+        assert_eq!(row.seq_num, 2);
+        assert_eq!(row.token_count, 42);
+        assert_eq!(row.content, "resposta parcial");
+    }
+
+    /// PRD 3.13: vocabulário de nível da GUI (N0/N1/N2).
+    #[test]
+    fn security_level_labels_follow_prd() {
+        assert_eq!(security_level_label(0), "N0 READ_ONLY");
+        assert_eq!(security_level_label(1), "N1 SANDBOX_EXEC");
+        assert_eq!(security_level_label(2), "N2 HOST_MUTATION");
+        assert_eq!(security_level_label(7), "N7 ?");
     }
 
     /// T-890-06: requester/nível/result previa atravessam o mapeamento,

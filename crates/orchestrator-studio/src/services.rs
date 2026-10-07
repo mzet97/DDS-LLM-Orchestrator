@@ -142,6 +142,9 @@ pub struct ServicesPanel {
     /// Log de auditoria das atuações aplicadas pela GUI (tela 3.8), mais
     /// recente por último.
     pub audit: Vec<AuditEntry>,
+    /// `true` quando a leitura em curso foi um clique em "Ler plano" (a
+    /// auditoria registra GETs manuais, não a auto-carga — PRD 3.8).
+    pub audit_manual_list: bool,
     receiver: Option<mpsc::Receiver<ServicesMsg>>,
 }
 
@@ -158,6 +161,7 @@ impl ServicesPanel {
             busy: false,
             last_sync: None,
             audit: Vec::new(),
+            audit_manual_list: false,
             receiver: None,
         }
     }
@@ -270,6 +274,16 @@ impl ServicesPanel {
             match msg {
                 ServicesMsg::Listed(result) => match result {
                     Ok(list) => {
+                        // PRD 3.8: leitura manual também entra na auditoria
+                        // (terminal GET+POST — só quando foi clique, não na
+                        // auto-carga de 5 s).
+                        if self.audit_manual_list {
+                            self.audit_manual_list = false;
+                            self.audit.push(AuditEntry {
+                                action: String::from("GET /services (Ler plano)"),
+                                outcome: format!("ok · {} unidade(s)", list.len()),
+                            });
+                        }
                         self.list = list;
                         self.error.clear();
                         self.last_sync = Some(std::time::Instant::now());

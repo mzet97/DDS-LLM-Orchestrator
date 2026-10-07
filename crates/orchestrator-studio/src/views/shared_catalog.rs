@@ -28,6 +28,24 @@ pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
         "Autoridade em um nó; snapshot + eventos incrementais; publicação com \
          revisão condicional (conflito 409 OCC nunca é silencioso)",
     );
+    // DoD PRD: chip do alvo único (shared.url segue a seleção da descoberta).
+    kit::target_chip(
+        ui,
+        if shared.url.is_empty() {
+            "—"
+        } else {
+            shared.url.as_str()
+        },
+        if shared.busy {
+            "lendo snapshot…"
+        } else if shared.snapshot.is_some() {
+            "snapshot carregado"
+        } else {
+            "sem leitura"
+        },
+        shared.snapshot.is_some(),
+    );
+    ui.add_space(theme::SPACE_SM);
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     shared.poll();
 
@@ -264,7 +282,7 @@ pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
                         }
                         kit::mono_cell(ui, &item.id.0);
                         kit::mono_cell(ui, kind);
-                        ui.label(format!("r{}", item.revision.0));
+                        kit::num_cell(ui, &format!("r{}", item.revision.0));
                         let flat = item.value.replace(['\n', '\r'], " ");
                         let preview: String = flat.chars().take(64).collect();
                         let preview = if flat.chars().count() > 64 {

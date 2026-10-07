@@ -22,6 +22,11 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
         "Dois planos: descoberta DDS (ServerStatus — presença) × endpoint HTTP \
          (chat) · envio pode levar até 120 s (REQ/T-820-19)",
     );
+    // DoD PRD: chip do alvo único (mesma URL da descoberta nas 14 telas).
+    if let Some(target) = discovery.selected_url() {
+        kit::target_chip(ui, &target, "alvo da descoberta", true);
+        ui.add_space(theme::SPACE_SM);
+    }
 
     // ── Seção 1: servidores descobertos no domínio (cards) ──
     kit::section_label(
@@ -154,6 +159,35 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
         ui.add(egui::DragValue::new(&mut infer.max_tokens).range(1..=8192));
         ui.label("timeout: até 120 s (REQ/T-820-19)");
         ui.end_row();
+    });
+
+    // ── Monitor de geração (PRD 3.3): timer vivo + fila real do domínio ──
+    ui.horizontal_wrapped(|ui| {
+        if let Some(started) = infer.pending_since {
+            let elapsed = started.elapsed().as_secs_f32();
+            ui.label(
+                egui::RichText::new(format!("◐ GERANDO · {elapsed:.1}s"))
+                    .monospace()
+                    .small()
+                    .color(theme::WARN),
+            );
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(100));
+        }
+        if let Some(server) = discovery.servers.first() {
+            ui.separator();
+            ui.label(
+                egui::RichText::new(format!(
+                    "FILA: {} idle · {} processing · {}",
+                    server.slots_idle,
+                    server.slots_processing,
+                    if server.ready { "PRONTO" } else { "OCUPADO" }
+                ))
+                .monospace()
+                .small()
+                .color(if server.ready { theme::OK } else { theme::WARN }),
+            );
+        }
     });
     ui.separator();
 

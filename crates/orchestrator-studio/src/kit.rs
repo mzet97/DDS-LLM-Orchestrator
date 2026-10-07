@@ -54,6 +54,23 @@ pub fn warn_banner(ui: &mut egui::Ui, message: &str) {
         });
 }
 
+/// Banner de ação destrutiva pendente (PRD 3.8): vermelho — gravação no nó
+/// aguardando o 2º passo; mesmo formato do `warn_banner`.
+pub fn danger_banner(ui: &mut egui::Ui, message: &str) {
+    let bg = theme::tint(theme::ERROR, 10);
+    egui::Frame::NONE
+        .fill(bg)
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+        .inner_margin(theme::SPACE_MD)
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(format!("⚠ {message}"))
+                    .color(theme::ERROR)
+                    .strong(),
+            );
+        });
+}
+
 /// Estado vazio honesto: ícone ◌ + instrução.
 pub fn empty_state(ui: &mut egui::Ui, message: &str) {
     ui.horizontal(|ui| {
@@ -82,6 +99,20 @@ pub fn mono_cell(ui: &mut egui::Ui, text: &str) {
             .monospace()
             .color(theme::ON_SURFACE_VARIANT),
     );
+}
+
+/// Célula numérica alinhada à direita (NFR do PRD v1.0: toda coluna
+/// numérica das tabelas alinh à direita, mono). A largura mínima
+/// reservada torna o alinhamento visível mesmo em colunas estreitas.
+pub fn num_cell(ui: &mut egui::Ui, text: &str) {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        ui.set_min_width(72.0);
+        ui.label(
+            egui::RichText::new(text)
+                .monospace()
+                .color(theme::ON_SURFACE_VARIANT),
+        );
+    });
 }
 
 /// Rótulo de seção interna da tela (ex.: "SEÇÃO A — FONTE 1: DDS"):

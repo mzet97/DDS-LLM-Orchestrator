@@ -11,6 +11,43 @@ use serde::Deserialize;
 use std::sync::mpsc;
 use thiserror::Error;
 
+/// Decomposição da latência do `/sync` (campos reais T1–T6 do backend,
+/// convertidos para ms): fila no agente × geração LLM × transporte ×
+/// serialização — o card "TOTAL = FILA + GERAÇÃO + …" da tela 3.6.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LatencyBreakdown {
+    pub queue_ms: u64,
+    pub inference_ms: u64,
+    pub transport_ms: u64,
+    pub serial_ms: u64,
+}
+
+impl LatencyBreakdown {
+    /// Constrói a partir dos seis campos ns do `/sync` (0 = ausente).
+    #[must_use]
+    pub fn from_ns(
+        t_serialization_ns: u64,
+        t_transport_send_ns: u64,
+        t_agent_queue_ns: u64,
+        t_inference_ns: u64,
+        t_transport_return_ns: u64,
+        t_deserialization_ns: u64,
+    ) -> Self {
+        Self {
+            queue_ms: t_agent_queue_ns / 1_000_000,
+            inference_ms: t_inference_ns / 1_000_000,
+            transport_ms: (t_transport_send_ns + t_transport_return_ns) / 1_000_000,
+            serial_ms: (t_serialization_ns + t_deserialization_ns) / 1_000_000,
+        }
+    }
+
+    /// `true` se algum componente foi reportado (resposta antiga → None).
+    #[must_use]
+    pub fn is_meaningful(&self) -> bool {
+        self.queue_ms > 0 || self.inference_ms > 0 || self.transport_ms > 0 || self.serial_ms > 0
+    }
+}
+
 /// Resultado do despacho síncrono.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DispatchOutcome {
@@ -21,6 +58,8 @@ pub enum DispatchOutcome {
         latency_ms: u64,
         /// Conteúdo da resposta quando o backend o retorna.
         content: Option<String>,
+        /// Decomposição real da latência (T1–T6) quando o backend reporta.
+        breakdown: Option<LatencyBreakdown>,
     },
     /// Tarefa falha com o motivo do backend.
     Failed { task_id: String, error: String },
@@ -35,6 +74,9 @@ pub struct DispatchRecord {
     pub ok: bool,
     /// Prévia da resposta ou motivo da falha.
     pub detail: String,
+    /// Decomposição fila × geração (colunas do histórico 3.6).
+    pub queue_ms: Option<u64>,
+    pub inference_ms: Option<u64>,
 }
 
 /// Erros do despacho (fronteira GUI ↔ orquestrador).
@@ -93,18 +135,41 @@ pub fn dispatch_sync(
         error: Option<String>,
         #[serde(default)]
         content: Option<String>,
+        // Decomposição T1–T6 (T-850-04/T6) — 0 quando o backend não reporta.
+        #[serde(default)]
+        t_serialization_ns: u64,
+        #[serde(default)]
+        t_transport_send_ns: u64,
+        #[serde(default)]
+        t_agent_queue_ns: u64,
+        #[serde(default)]
+        t_inference_ns: u64,
+        #[serde(default)]
+        t_transport_return_ns: u64,
+        #[serde(default)]
+        t_deserialization_ns: u64,
     }
     let outcome: Outcome =
         serde_json::from_value(value).map_err(|err| DispatchError::Unreachable {
             url: String::from(url),
             detail: err.to_string(),
         })?;
+    let breakdown = LatencyBreakdown::from_ns(
+        outcome.t_serialization_ns,
+        outcome.t_transport_send_ns,
+        outcome.t_agent_queue_ns,
+        outcome.t_inference_ns,
+        outcome.t_transport_return_ns,
+        outcome.t_deserialization_ns,
+    );
+    let breakdown = breakdown.is_meaningful().then_some(breakdown);
     match outcome.status.as_str() {
         "completed" => Ok(DispatchOutcome::Completed {
             task_id: outcome.task_id,
             assigned_agent: outcome.assigned_agent,
             latency_ms: outcome.latency_ms,
             content: outcome.content,
+            breakdown,
         }),
         "failed" => Ok(DispatchOutcome::Failed {
             task_id: outcome.task_id,
@@ -187,6 +252,7 @@ impl DispatchState {
                         assigned_agent,
                         latency_ms,
                         content,
+                        breakdown,
                     }) => {
                         self.result = format!(
                             "concluída {task_id} agente={} latência={latency_ms}ms",
@@ -198,12 +264,15 @@ impl DispatchState {
                             latency_ms: Some(latency_ms),
                             ok: true,
                             detail: content.clone().unwrap_or_default(),
+                            queue_ms: breakdown.map(|b| b.queue_ms),
+                            inference_ms: breakdown.map(|b| b.inference_ms),
                         });
                         self.last = Some(DispatchOutcome::Completed {
                             task_id,
                             assigned_agent,
                             latency_ms,
                             content,
+                            breakdown,
                         });
                     }
                     Ok(DispatchOutcome::Failed { task_id, error }) => {
@@ -214,6 +283,8 @@ impl DispatchState {
                             latency_ms: None,
                             ok: false,
                             detail: error.clone(),
+                            queue_ms: None,
+                            inference_ms: None,
                         });
                         self.last = Some(DispatchOutcome::Failed { task_id, error });
                     }
@@ -225,6 +296,8 @@ impl DispatchState {
                             latency_ms: None,
                             ok: false,
                             detail: err.clone(),
+                            queue_ms: None,
+                            inference_ms: None,
                         });
                     }
                 }
