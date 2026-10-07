@@ -237,9 +237,7 @@ impl InferenceState {
                             self.stats.push(TurnStats {
                                 elapsed_ms,
                                 prompt_tokens: usage.as_ref().and_then(|u| u.prompt_tokens),
-                                completion_tokens: usage
-                                    .as_ref()
-                                    .and_then(|u| u.completion_tokens),
+                                completion_tokens: usage.as_ref().and_then(|u| u.completion_tokens),
                             });
                             self.reply = content;
                             self.prompt.clear();

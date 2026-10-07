@@ -289,6 +289,10 @@ pub struct DdsState {
     pub tab: u8,
     /// Filtro por substring aplicado às tabelas de coleções.
     pub filter: String,
+    /// Filtro de status da tela 3.13 (None = todos os status).
+    pub tools_filter: Option<i32>,
+    /// Call ID selecionada no inspetor da tela 3.13.
+    pub tools_selected: Option<String>,
     receiver: Option<mpsc::Receiver<ObserveMsg>>,
 }
 
@@ -310,6 +314,8 @@ impl DdsState {
             busy: false,
             tab: 0,
             filter: String::new(),
+            tools_filter: None,
+            tools_selected: None,
             receiver: None,
         }
     }

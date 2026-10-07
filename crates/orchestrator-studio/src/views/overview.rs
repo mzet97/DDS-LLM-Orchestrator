@@ -147,10 +147,8 @@ pub fn show(
         let refresh_orch = ui.button("Atualizar orquestrador (HTTP)");
         if reload.clicked() || read_plan.clicked() {
             if let Some(target) = discovery.selected_url() {
-                let token = crate::discovery::token_for_url(
-                    &target,
-                    std::env::var("HOME").ok().as_deref(),
-                );
+                let token =
+                    crate::discovery::token_for_url(&target, std::env::var("HOME").ok().as_deref());
                 if reload.clicked() {
                     state.refresh_from_node_with_token(&target, token.as_deref());
                 }
@@ -291,11 +289,7 @@ pub fn show(
                         });
                     });
                     // Filete à esquerda com a cor do estado.
-                    let stripe_color = if tile.stale {
-                        theme::STALE
-                    } else {
-                        color
-                    };
+                    let stripe_color = if tile.stale { theme::STALE } else { color };
                     ui.painter().rect_filled(
                         ui.max_rect().with_max_x(ui.max_rect().left() + 3.0),
                         0.0,

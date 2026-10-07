@@ -1,63 +1,160 @@
-//! Painel de Logs: eventos do Studio (descoberta, auto-carga, observação)
-//! em buffer circular — comportamento analisável dentro da própria GUI.
+//! Painel 3.14 Logs da GUI (FIFO Ring Buffer 500): KPIs de ocupação, busca
+//! por substring, filtros por nível com contagem, auto-scroll, limpeza e
+//! exportação `.log` — os mesmos eventos seguem espelhados no stderr.
 
-use crate::panel_header;
-use crate::studio_log;
+use crate::kit;
+use crate::panel_header::panel_header;
+use crate::studio_log::{self, LogsPanel};
 use crate::theme;
 use eframe::egui;
 
-pub fn show(ui: &mut egui::Ui) {
-    panel_header::panel_header(
+/// Níveis fixos do buffer (mesma ordem do enum de push).
+const LEVELS: [&str; 3] = ["INFO", "WARN", "ERRO"];
+
+fn level_color(level: &str) -> egui::Color32 {
+    match level {
+        "ERRO" => theme::ERROR,
+        "WARN" => theme::WARN,
+        _ => theme::OK,
+    }
+}
+
+pub fn show(ui: &mut egui::Ui, panel: &mut LogsPanel) {
+    panel_header(
         ui,
         "SEC 3.14 · LOGS DA GUI — FIFO RING BUFFER 500",
         "Logs",
-        "Eventos internos da GUI (descoberta, alvo, auto-carga, observação) espelhados no stderr",
+        "Eventos internos da GUI (descoberta, alvo, auto-carga, observação) \
+         espelhados no stderr · FIFO: eventos antigos são descartados",
     );
     let entries = studio_log::entries();
     let info_count = entries.iter().filter(|e| e.level == "INFO").count();
     let warn_count = entries.iter().filter(|e| e.level == "WARN").count();
     let error_count = entries.iter().filter(|e| e.level == "ERRO").count();
 
-    ui.heading(format!(
-        "FIFO Ring Buffer [500] — {}/500 slots",
-        entries.len()
-    ));
-    ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new(format!("● INFO {info_count}"))
-                .color(egui::Color32::from_rgb(140, 210, 170)),
+    // ── KPIs (mockup 3.14): ocupação · severidade · sink stderr ──
+    ui.columns(3, |cols| {
+        kit::metric_card(
+            &mut cols[0],
+            "Ocupação do ring buffer",
+            format!("{}/500", entries.len()),
+            if entries.len() >= 500 {
+                "FIFO evictando eventos antigos"
+            } else {
+                "com espaço"
+            },
+            theme::PRIMARY_FIXED_DIM,
         );
-        ui.label(egui::RichText::new(format!("◐ WARN {warn_count}")).color(theme::WARN));
-        ui.label(egui::RichText::new(format!("● ERRO {error_count}")).color(theme::ERROR));
+        kit::metric_card(
+            &mut cols[1],
+            "Severidade",
+            format!("{error_count} erro(s) ativos"),
+            &format!("{info_count} INFO · {warn_count} WARN"),
+            if error_count > 0 {
+                theme::ERROR
+            } else if warn_count > 0 {
+                theme::WARN
+            } else {
+                theme::OK
+            },
+        );
+        kit::metric_card(
+            &mut cols[2],
+            "Sink stderr",
+            "SINC".to_owned(),
+            "mesmos eventos em /dev/stderr [fd 2] · sem drop",
+            theme::OK,
+        );
     });
-    ui.label(
-        "Eventos de descoberta, seleção de alvo, auto-carga e observação. \
-         Os mesmos eventos vão para o stderr do processo.",
-    );
-    ui.separator();
-    egui::ScrollArea::vertical()
-        .auto_shrink([false, false])
-        .stick_to_bottom(true)
-        .show(ui, |ui| {
-            if entries.is_empty() {
-                ui.label("(nenhum evento ainda)");
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Toolbar: filtros com contagem + busca + ações ──
+    ui.horizontal(|ui| {
+        if ui
+            .selectable_label(
+                panel.filter_level.is_none(),
+                egui::RichText::new(format!("Todos ({})", entries.len()))
+                    .monospace()
+                    .small(),
+            )
+            .clicked()
+        {
+            panel.filter_level = None;
+        }
+        for level in LEVELS {
+            let count = entries.iter().filter(|e| e.level == level).count();
+            if ui
+                .selectable_label(
+                    panel.filter_level == Some(level),
+                    egui::RichText::new(format!("{level} ({count})"))
+                        .monospace()
+                        .small()
+                        .color(level_color(level)),
+                )
+                .clicked()
+            {
+                panel.filter_level = Some(level);
             }
-            egui::Grid::new("studio_logs").show(ui, |ui| {
-                ui.strong("hora");
-                ui.strong("nível");
-                ui.strong("evento");
+        }
+        ui.separator();
+        ui.checkbox(&mut panel.auto_scroll, "Auto-scroll");
+        if ui.button("Limpar buffer").clicked() {
+            studio_log::clear();
+        }
+        if ui.button("Exportar (.log)").clicked() {
+            match studio_log::export() {
+                Ok(path) => studio_log::info(format!("logs exportados em {}", path.display())),
+                Err(err) => studio_log::error(format!("falha ao exportar logs: {err}")),
+            }
+        }
+    });
+    ui.add(
+        egui::TextEdit::singleline(&mut panel.search)
+            .hint_text("filtro rápido (ex: ECONNREFUSED, lease, 409, orchestrator, .62)…")
+            .desired_width(420.0)
+            .font(egui::TextStyle::Monospace),
+    );
+    ui.add_space(theme::SPACE_SM);
+
+    // ── Tabela: # | hora | nível (badge colorido) | evento ──
+    let search = panel.search.trim().to_lowercase();
+    let visible: Vec<(usize, &studio_log::LogEntry)> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, entry)| {
+            let level_ok = panel.filter_level.is_none_or(|level| entry.level == level);
+            let search_ok = search.is_empty() || entry.message.to_lowercase().contains(&search);
+            level_ok && search_ok
+        })
+        .collect();
+    let scroll = egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .max_height(420.0)
+        .stick_to_bottom(panel.auto_scroll);
+    scroll.show(ui, |ui| {
+        if visible.is_empty() {
+            kit::empty_state(ui, "(nenhum evento no filtro atual)");
+            return;
+        }
+        egui::Grid::new("studio_logs").show(ui, |ui| {
+            kit::grid_header(ui, &["#", "Timestamp", "Nível", "Evento / mensagem"]);
+            for (index, entry) in visible {
+                ui.label(
+                    egui::RichText::new(index.to_string())
+                        .monospace()
+                        .small()
+                        .color(theme::OUTLINE),
+                );
+                kit::mono_cell(ui, &entry.timestamp);
+                ui.label(
+                    egui::RichText::new(entry.level)
+                        .monospace()
+                        .small()
+                        .color(level_color(entry.level)),
+                );
+                ui.label(&entry.message);
                 ui.end_row();
-                for entry in &entries {
-                    ui.monospace(&entry.timestamp);
-                    let color = match entry.level {
-                        "ERRO" => egui::Color32::RED,
-                        "WARN" => egui::Color32::YELLOW,
-                        _ => egui::Color32::from_rgb(140, 210, 170),
-                    };
-                    ui.label(egui::RichText::new(entry.level).color(color));
-                    ui.label(&entry.message);
-                    ui.end_row();
-                }
-            });
+            }
         });
+    });
 }

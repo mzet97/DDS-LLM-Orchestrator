@@ -98,7 +98,13 @@ pub fn section_label(ui: &mut egui::Ui, text: &str) {
 
 /// Card de métrica (mockups 3.11/3.7/3.14): rótulo mono uppercase, valor
 /// grande no accent e subtexto real; ocupa a largura disponível da coluna.
-pub fn metric_card(ui: &mut egui::Ui, label: &str, value: String, sub: &str, accent: egui::Color32) {
+pub fn metric_card(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: String,
+    sub: &str,
+    accent: egui::Color32,
+) {
     egui::Frame::NONE
         .fill(theme::SURFACE_CONTAINER)
         .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
@@ -139,9 +145,11 @@ pub fn accent_card<R>(
             add_contents(ui)
         });
     // Filete de 3px colado na borda esquerda do card (fora do padding).
-    let stripe = response.response.rect.with_max_x(response.response.rect.left() + 3.0);
-    ui.painter()
-        .rect_filled(stripe, 0.0, accent);
+    let stripe = response
+        .response
+        .rect
+        .with_max_x(response.response.rect.left() + 3.0);
+    ui.painter().rect_filled(stripe, 0.0, accent);
     response.inner
 }
 
@@ -161,8 +169,11 @@ pub fn target_chip(ui: &mut egui::Ui, url: &str, state: &str, ok: bool) {
         egui::CornerRadius::same(theme::RADIUS_SM as u8),
         theme::tint(theme::PRIMARY_CONTAINER, 10),
     );
-    ui.painter()
-        .galley(rect.center() - galley.size() / 2.0, galley, theme::PRIMARY_FIXED_DIM);
+    ui.painter().galley(
+        rect.center() - galley.size() / 2.0,
+        galley,
+        theme::PRIMARY_FIXED_DIM,
+    );
     if !ok {
         ui.label(
             egui::RichText::new(state)

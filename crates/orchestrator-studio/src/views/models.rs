@@ -159,7 +159,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         kit::metric_card(
             &mut cols[3],
             "Pipeline de hash",
-            if state.is_busy() { "1".to_owned() } else { "0".to_owned() },
+            if state.is_busy() {
+                "1".to_owned()
+            } else {
+                "0".to_owned()
+            },
             if state.is_busy() {
                 "verificação em andamento"
             } else {
@@ -175,7 +179,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
     ui.add_space(theme::SPACE_MD);
 
     if state.list.is_empty() && !state.is_busy() {
-        kit::empty_state(ui, "Nenhum .gguf listado. Ajuste o diretório e clique em Inventariar.");
+        kit::empty_state(
+            ui,
+            "Nenhum .gguf listado. Ajuste o diretório e clique em Inventariar.",
+        );
         return;
     }
 
@@ -188,7 +195,10 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         ];
         for (id, label) in filters {
             if ui
-                .selectable_label(state.filter == id, egui::RichText::new(label).monospace().small())
+                .selectable_label(
+                    state.filter == id,
+                    egui::RichText::new(label).monospace().small(),
+                )
                 .clicked()
             {
                 state.filter = id;
@@ -226,9 +236,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
                     artifact.size_bytes as f64 / 1_048_576.0
                 ));
                 let calculated = if artifact.sha256_hex.is_empty() {
-                    egui::RichText::new("calculando…").small().color(theme::WARN)
+                    egui::RichText::new("calculando…")
+                        .small()
+                        .color(theme::WARN)
                 } else {
-                    egui::RichText::new(&artifact.sha256_hex).monospace().small()
+                    egui::RichText::new(&artifact.sha256_hex)
+                        .monospace()
+                        .small()
                 };
                 ui.label(calculated);
                 let expected = state

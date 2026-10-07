@@ -115,6 +115,8 @@ pub struct StepResult {
     pub step: &'static str,
     pub ok: bool,
     pub detail: String,
+    /// Duração medida da etapa (tela 3.4 — wizard com tempos reais).
+    pub duration_ms: u64,
 }
 
 enum LaunchMsg {
@@ -220,38 +222,56 @@ impl Default for LaunchState {
     }
 }
 
-/// Execução real do plano, passo a passo, fora da thread de UI.
+/// Executa o plano real com cronômetro por etapa (wizard 3.4 com tempos
+/// medidos — nada estimado).
 fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
+    use std::time::Instant;
     let mut steps = Vec::with_capacity(4);
+    let timed = |step: StepResult, started: Instant| {
+        let mut step = step;
+        step.duration_ms = started.elapsed().as_millis() as u64;
+        step
+    };
     let fail = |step: &'static str, detail: String| StepResult {
         step,
         ok: false,
         detail,
+        duration_ms: 0,
     };
     let done = |step: &'static str, detail: String| StepResult {
         step,
         ok: true,
         detail,
+        duration_ms: 0,
     };
+
+    let t0 = Instant::now();
     match actuate(
         &plan.node_url,
         &plan.service,
         true,
         &fresh_operation_id(&plan.service),
     ) {
-        Ok(out) if out.active || !out.acted => steps.push(done(
-            "atuar start",
-            format!("wanted=true active={} acted={}", out.active, out.acted),
+        Ok(out) if out.active || !out.acted => steps.push(timed(
+            done(
+                "atuar start",
+                format!("wanted=true active={} acted={}", out.active, out.acted),
+            ),
+            t0,
         )),
-        Ok(out) => steps.push(done(
-            "atuar start",
-            format!("registrado; active={} (aguardando)", out.active),
+        Ok(out) => steps.push(timed(
+            done(
+                "atuar start",
+                format!("registrado; active={} (aguardando)", out.active),
+            ),
+            t0,
         )),
         Err(err) => {
-            steps.push(fail("atuar start", err.to_string()));
+            steps.push(timed(fail("atuar start", err.to_string()), t0));
             return steps;
         }
     }
+    let t1 = Instant::now();
     let mut active = false;
     for _ in 0..60 {
         match list_services(&plan.node_url) {
@@ -265,37 +285,51 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
             }
             Ok(_) => std::thread::sleep(std::time::Duration::from_secs(1)),
             Err(err) => {
-                steps.push(fail("aguardar ativo", err.to_string()));
+                steps.push(timed(fail("aguardar ativo", err.to_string()), t1));
                 return steps;
             }
         }
     }
     if !active {
-        steps.push(fail(
-            "aguardar ativo",
-            String::from("unidade não ficou ativa em 60s"),
+        steps.push(timed(
+            fail(
+                "aguardar ativo",
+                String::from("unidade não ficou ativa em 60s"),
+            ),
+            t1,
         ));
         return steps;
     }
-    steps.push(done("aguardar ativo", String::from("active=true")));
+    steps.push(timed(
+        done("aguardar ativo", String::from("active=true")),
+        t1,
+    ));
+    let t2 = Instant::now();
     let model = match list_models(&plan.llama_url) {
         Ok(models) if !models.is_empty() => {
             let id = models[0].id.clone();
-            steps.push(done("listar modelos", format!("primeiro anunciado: {id}")));
+            steps.push(timed(
+                done("listar modelos", format!("primeiro anunciado: {id}")),
+                t2,
+            ));
             id
         }
         Ok(_) => {
-            steps.push(fail(
-                "listar modelos",
-                String::from("servidor sem modelos anunciados"),
+            steps.push(timed(
+                fail(
+                    "listar modelos",
+                    String::from("servidor sem modelos anunciados"),
+                ),
+                t2,
             ));
             return steps;
         }
         Err(err) => {
-            steps.push(fail("listar modelos", err.to_string()));
+            steps.push(timed(fail("listar modelos", err.to_string()), t2));
             return steps;
         }
     };
+    let t3 = Instant::now();
     match chat_completion(
         &plan.llama_url,
         &ChatRequest {
@@ -309,8 +343,8 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
             max_tokens: 32,
         },
     ) {
-        Ok(reply) => steps.push(done("prova de geração", reply)),
-        Err(err) => steps.push(fail("prova de geração", err.to_string())),
+        Ok(reply) => steps.push(timed(done("prova de geração", reply), t3)),
+        Err(err) => steps.push(timed(fail("prova de geração", err.to_string()), t3)),
     }
     steps
 }
@@ -366,11 +400,13 @@ mod tests {
                     step: "atuar start",
                     ok: true,
                     detail: String::from("ok"),
+                    duration_ms: 0,
                 },
                 StepResult {
                     step: "prova de geração",
                     ok: true,
                     detail: String::from("INFERENCIA_OK"),
+                    duration_ms: 0,
                 },
             ]
         });
@@ -396,6 +432,7 @@ mod tests {
                 step: "atuar start",
                 ok: false,
                 detail: String::from("conexão recusada"),
+                duration_ms: 0,
             }]
         });
 

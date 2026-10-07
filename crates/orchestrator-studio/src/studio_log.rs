@@ -75,6 +75,45 @@ pub fn entries() -> Vec<LogEntry> {
         .unwrap_or_default()
 }
 
+/// Estado de apresentação do painel de Logs (tela 3.14): filtro por nível,
+/// busca por substring e auto-scroll.
+#[derive(Debug, Default)]
+pub struct LogsPanel {
+    pub filter_level: Option<&'static str>,
+    pub search: String,
+    pub auto_scroll: bool,
+}
+
+impl LogsPanel {
+    /// Padrão com auto-scroll ligado (tail de console).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            auto_scroll: true,
+            ..Self::default()
+        }
+    }
+}
+
+/// Limpa o ring buffer (ação explícita do operador na tela 3.14).
+pub fn clear() {
+    if let Ok(mut entries) = ENTRIES.lock() {
+        entries.clear();
+    }
+}
+
+/// Exporta os eventos atuais em `.log` (tmp do usuário); devolve o caminho.
+pub fn export() -> std::io::Result<std::path::PathBuf> {
+    let path = std::env::temp_dir().join("studio-logs.log");
+    let content = entries()
+        .into_iter()
+        .map(|entry| format!("[{}] {} {}", entry.timestamp, entry.level, entry.message))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, content + "\n")?;
+    Ok(path)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

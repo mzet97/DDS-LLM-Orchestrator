@@ -268,6 +268,10 @@ pub struct SharedCatalog {
     pub token: String,
     /// `true` enquanto há HTTP em background (`poll` drena e libera).
     pub busy: bool,
+    /// Filtro por kind (prefixo do id) da tabela — tela 3.9.
+    pub kind_filter: Option<String>,
+    /// Feed das últimas mutações acompanhadas (tela 3.9; mais novo no fim).
+    pub feed: Vec<String>,
     receiver: Option<mpsc::Receiver<CatalogMsg>>,
 }
 
@@ -462,6 +466,10 @@ impl SharedCatalog {
                         FollowOutcome::Deleted(events) => {
                             let removed: Vec<DefinitionId> =
                                 events.iter().map(|event| event.id.clone()).collect();
+                            for event in &events {
+                                self.feed
+                                    .push(format!("r{} · TOMBSTONE · {}", event.seq, event.id.0));
+                            }
                             if let Some(snapshot) = &mut self.snapshot {
                                 // Id excluído ganha tombstone no nó: nunca
                                 // volta, então toda linha com o id sai.
@@ -481,6 +489,9 @@ impl SharedCatalog {
                                 let cursor = fresh.cursor.0;
                                 self.snapshot = Some(fresh);
                                 self.cursor = cursor;
+                                self.feed.push(format!(
+                                    "{count} evento(s) aplicado(s) · snapshot r{cursor}"
+                                ));
                                 self.notice = format!(
                                     "{count} novo(s) evento(s) aplicado(s) (cursor {cursor})"
                                 );
@@ -513,6 +524,11 @@ impl SharedCatalog {
         if finished {
             self.receiver = None;
             self.busy = false;
+        }
+        // Feed é um log curto: mantém só as últimas 16 entradas.
+        if self.feed.len() > 16 {
+            let drop = self.feed.len() - 16;
+            self.feed.drain(0..drop);
         }
     }
 }

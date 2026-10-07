@@ -24,14 +24,17 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
     );
 
     // ── Seção 1: servidores descobertos no domínio (cards) ──
-    kit::section_label(ui, &format!(
-        "SERVIDORES DESCOBERTOS NO DOMÍNIO (SERVERSTATUS) · {}",
-        if discovery.servers.is_empty() {
-            "NENHUM"
-        } else {
-            "AO VIVO"
-        }
-    ));
+    kit::section_label(
+        ui,
+        &format!(
+            "SERVIDORES DESCOBERTOS NO DOMÍNIO (SERVERSTATUS) · {}",
+            if discovery.servers.is_empty() {
+                "NENHUM"
+            } else {
+                "AO VIVO"
+            }
+        ),
+    );
     if discovery.servers.is_empty() {
         kit::empty_state(
             ui,
@@ -58,7 +61,11 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
                     kit::mono_cell(ui, &server.server_id);
                     kit::badge(
                         ui,
-                        if server.ready { "PRONTO" } else { "NÃO PRONTO" },
+                        if server.ready {
+                            "PRONTO"
+                        } else {
+                            "NÃO PRONTO"
+                        },
                         accent,
                     );
                 });
@@ -82,11 +89,13 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
             });
         }
         ui.label(
-            egui::RichText::new("Nota: o ServerStatus NÃO carrega a URL HTTP — o \
+            egui::RichText::new(
+                "Nota: o ServerStatus NÃO carrega a URL HTTP — o \
                  endpoint do chat é manual (abaixo). Visto no domínio ≠ \
-                 conectado para conversar.")
-                .small()
-                .weak(),
+                 conectado para conversar.",
+            )
+            .small()
+            .weak(),
         );
     }
     ui.add_space(theme::SPACE_MD);
@@ -162,7 +171,9 @@ pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &Discovery
             for message in &infer.history {
                 match message.role {
                     Role::System => {
-                        ui.label(egui::RichText::new(format!("sistema: {}", message.content)).weak());
+                        ui.label(
+                            egui::RichText::new(format!("sistema: {}", message.content)).weak(),
+                        );
                     }
                     Role::User => {
                         ui.label(

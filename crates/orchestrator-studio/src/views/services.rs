@@ -15,7 +15,11 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     panel.poll();
 
-    let target = if panel.url.is_empty() { "—" } else { panel.url.as_str() };
+    let target = if panel.url.is_empty() {
+        "—"
+    } else {
+        panel.url.as_str()
+    };
     panel_header(
         ui,
         "SEC 3.8 · SERVIÇOS DO SISTEMA (SYSTEMD) · DAEMON CONTROL",
@@ -85,11 +89,7 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                 }
                 if let Some(refusal) = &guard.last_refusal {
                     if !armed {
-                        ui.label(
-                            egui::RichText::new(refusal)
-                                .small()
-                                .color(theme::WARN),
-                        );
+                        ui.label(egui::RichText::new(refusal).small().color(theme::WARN));
                     }
                 }
             });
@@ -159,7 +159,13 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                 .show(ui, |ui| {
                     kit::grid_header(
                         ui,
-                        &["Unidade (Serviço)", "Pretendido", "Efetivo", "Divergência / Diff", "Comandos Remotos"],
+                        &[
+                            "Unidade (Serviço)",
+                            "Pretendido",
+                            "Efetivo",
+                            "Divergência / Diff",
+                            "Comandos Remotos",
+                        ],
                     );
                     let mut pending: Option<(String, u8)> = None; // 0=iniciar 1=parar 2=reiniciar
                     for row in &panel.list {
@@ -171,13 +177,11 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                         let active = if row.active { "on" } else { "off" };
                         kit::mono_cell(ui, &row.service);
                         ui.label(wanted);
-                        ui.label(
-                            egui::RichText::new(active).color(if row.active {
-                                theme::OK
-                            } else {
-                                theme::STALE
-                            }),
-                        );
+                        ui.label(egui::RichText::new(active).color(if row.active {
+                            theme::OK
+                        } else {
+                            theme::STALE
+                        }));
                         // Divergência honesta com o par pretendido×efetivo.
                         match row.wanted {
                             Some(w) if w != row.active => {
@@ -239,8 +243,7 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                                 if action == 2 {
                                     panel.pending_restart = Some(service);
                                 } else {
-                                    panel.pending_action =
-                                        Some((service, action == 0));
+                                    panel.pending_action = Some((service, action == 0));
                                 }
                             }
                             ProtectedOutcome::Refused(_) => {}
@@ -299,13 +302,10 @@ pub fn show(ui: &mut egui::Ui, panel: &mut ServicesPanel, guard: &mut ProtectedG
                 // Mais recente primeiro (terminal).
                 for entry in panel.audit.iter().rev().take(10) {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "→ {} · {}",
-                            entry.action, entry.outcome
-                        ))
-                        .monospace()
-                        .small()
-                        .color(theme::ON_SURFACE_VARIANT),
+                        egui::RichText::new(format!("→ {} · {}", entry.action, entry.outcome))
+                            .monospace()
+                            .small()
+                            .color(theme::ON_SURFACE_VARIANT),
                     );
                 }
             });

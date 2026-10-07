@@ -299,7 +299,11 @@ fn metrics(ui: &mut egui::Ui, state: &mut WorkflowState) {
             } else {
                 "nenhum".to_owned()
             },
-            if state.busy { "executando…" } else { "ver exceções abaixo" },
+            if state.busy {
+                "executando…"
+            } else {
+                "ver exceções abaixo"
+            },
             if state.error.is_some() {
                 theme::ERROR
             } else {
@@ -361,12 +365,11 @@ fn stage_cards(ui: &mut egui::Ui, state: &mut WorkflowState) {
                             .monospace()
                             .small(),
                         );
-                        ui.label(egui::RichText::new(format!(
-                            "latência: {} ms",
-                            stage.latency_ms
-                        ))
-                        .monospace()
-                        .small());
+                        ui.label(
+                            egui::RichText::new(format!("latência: {} ms", stage.latency_ms))
+                                .monospace()
+                                .small(),
+                        );
                         ui.label(
                             egui::RichText::new(format!(
                                 "prévia do buffer (96): {}",
@@ -400,10 +403,13 @@ fn audit_table(ui: &mut egui::Ui, state: &mut WorkflowState) {
     if state.stages.is_empty() {
         return;
     }
-    kit::section_label(ui, &format!(
-        "Auditoria de estágios DDS · {}/3 ENTREGUES",
-        state.stages.len()
-    ));
+    kit::section_label(
+        ui,
+        &format!(
+            "Auditoria de estágios DDS · {}/3 ENTREGUES",
+            state.stages.len()
+        ),
+    );
     egui::Grid::new("workflow_stages")
         .striped(true)
         .show(ui, |ui| {
@@ -413,10 +419,7 @@ fn audit_table(ui: &mut egui::Ui, state: &mut WorkflowState) {
             );
             for stage in &state.stages {
                 ui.label(egui::RichText::new(&stage.stage).strong());
-                kit::mono_cell(
-                    ui,
-                    &stage.task_id.chars().take(8).collect::<String>(),
-                );
+                kit::mono_cell(ui, &stage.task_id.chars().take(8).collect::<String>());
                 ui.label(format!("{} ms", stage.latency_ms));
                 ui.label(egui::RichText::new(&stage.preview).small().weak());
                 ui.end_row();
@@ -425,12 +428,10 @@ fn audit_table(ui: &mut egui::Ui, state: &mut WorkflowState) {
     if let Some(total_ms) = state.total_ms {
         if state.error.is_none() {
             ui.label(
-                egui::RichText::new(format!(
-                    "total: {total_ms} ms (3 estágios encadeados)"
-                ))
-                .monospace()
-                .small()
-                .color(theme::OK),
+                egui::RichText::new(format!("total: {total_ms} ms (3 estágios encadeados)"))
+                    .monospace()
+                    .small()
+                    .color(theme::OK),
             );
         }
     }
@@ -444,7 +445,9 @@ fn exceptions(ui: &mut egui::Ui, state: &mut WorkflowState) {
     if let Some(error) = &state.error {
         kit::error_banner(
             ui,
-            &format!("{error} — o pipeline para no primeiro estágio que falha (sem retry silencioso)"),
+            &format!(
+                "{error} — o pipeline para no primeiro estágio que falha (sem retry silencioso)"
+            ),
         );
     } else if state.busy {
         ui.label(

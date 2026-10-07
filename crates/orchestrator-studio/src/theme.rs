@@ -64,10 +64,12 @@ pub const RADIUS_SM: f32 = 2.0;
 pub const RADIUS_MD: f32 = 4.0;
 pub const RADIUS_LG: f32 = 8.0;
 
-/// Tinta translúcida para fundo de badge (10% da cor, per DESIGN.md).
+/// Tinta translúcida para fundo de badge (escala 0–25 ≈ 0–100% de alpha;
+/// valores maiores são saturados em 255 — nunca overflow).
 #[must_use]
 pub fn tint(color: Color32, alpha10: u8) -> Color32 {
-    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha10 * 10)
+    let alpha = (u16::from(alpha10) * 10).min(255) as u8;
+    Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
 /// Aplica o tema completo ao contexto: Visuals + FontDefinitions + TextStyles.

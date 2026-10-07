@@ -51,6 +51,7 @@ async fn completed_returns_agent_and_latency() {
             task_id: String::from("t-1"),
             assigned_agent: Some(String::from("agent-teste")),
             latency_ms: 1234,
+            content: None,
         }
     );
 }

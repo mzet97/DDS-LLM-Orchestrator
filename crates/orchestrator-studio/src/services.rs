@@ -231,7 +231,8 @@ impl ServicesPanel {
         let service_owned = service.to_string();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let stop = actuate(&url, &service_owned, false, &stop_id).map_err(|err| err.to_string());
+            let stop =
+                actuate(&url, &service_owned, false, &stop_id).map_err(|err| err.to_string());
             let start = if stop.is_ok() {
                 Some(actuate(&url, &service_owned, true, &start_id).map_err(|err| err.to_string()))
             } else {
@@ -354,7 +355,11 @@ impl ServicesPanel {
                     action: String::from(route),
                     outcome: format!(
                         "{} · acted={} active={}",
-                        if out.acted { "aplicada" } else { "já convergido" },
+                        if out.acted {
+                            "aplicada"
+                        } else {
+                            "já convergido"
+                        },
                         out.acted,
                         out.active
                     ),

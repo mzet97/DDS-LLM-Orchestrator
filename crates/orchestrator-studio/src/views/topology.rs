@@ -6,7 +6,7 @@
 //! satélites) e painel de 5 abas com as coleções drenadas + filtro.
 //! Só dados reais: nada de GUID/RTT/throughput inventado.
 
-use crate::dds_observe::{DdsState, DdsSnapshot};
+use crate::dds_observe::{DdsSnapshot, DdsState};
 use crate::discovery::DiscoveryState;
 use crate::kit;
 use crate::machines::{now_unix_ns, ProbeState};
@@ -31,10 +31,7 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
     dds.poll();
     panel_header(
         ui,
-        &format!(
-            "SEC 3.11 · TOPOLOGIA DE REDE DDS · DOMÍNIO {}",
-            dds.domain
-        ),
+        &format!("SEC 3.11 · TOPOLOGIA DE REDE DDS · DOMÍNIO {}", dds.domain),
         "Topologia DDS & Enxame Distribuído",
         "Observação passiva (ownership 0, leitura — nunca take) · QoS do contrato: \
          Reliable + Transient Local nos tópicos de presença",
@@ -117,7 +114,11 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
         + snapshot.discoveries.len()
         + snapshot.studio_nodes.len();
     let node_ids: Vec<&str> = discovery.nodes.iter().map(|n| n.node_id.as_str()).collect();
-    let agent_ids: Vec<&str> = discovery.agents.iter().map(|a| a.agent_id.as_str()).collect();
+    let agent_ids: Vec<&str> = discovery
+        .agents
+        .iter()
+        .map(|a| a.agent_id.as_str())
+        .collect();
     let first_server = discovery
         .servers
         .first()
@@ -188,10 +189,7 @@ pub fn show(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
         for (index, name) in TABS.iter().enumerate() {
             let active = dds.tab as usize == index;
             if ui
-                .selectable_label(
-                    active,
-                    egui::RichText::new(*name).monospace().small(),
-                )
+                .selectable_label(active, egui::RichText::new(*name).monospace().small())
                 .clicked()
             {
                 dds.tab = index as u8;
@@ -332,8 +330,8 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
         let radius = (rect.width() * 0.30).clamp(120.0, 260.0);
         for (index, (node_id, alive, age)) in nodes.iter().take(count).enumerate() {
             // Arco superior: -160°…-20° (esq.→dir.).
-            let angle = (-160.0 + (140.0 / (count as f32 - 1.0).max(1.0)) * index as f32)
-                .to_radians();
+            let angle =
+                (-160.0 + (140.0 / (count as f32 - 1.0).max(1.0)) * index as f32).to_radians();
             let pos = center + egui::vec2(angle.cos() * radius, angle.sin() * radius);
             let box_rect = egui::Rect::from_center_size(pos, egui::vec2(132.0, 34.0));
             let accent = if *alive { theme::OK } else { theme::STALE };
@@ -415,10 +413,8 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &DdsState, discovery: &DiscoveryState) {
             theme::OUTLINE,
         );
         for agent in agents {
-            let box_rect = egui::Rect::from_min_size(
-                egui::pos2(column_left, top),
-                egui::vec2(148.0, 16.0),
-            );
+            let box_rect =
+                egui::Rect::from_min_size(egui::pos2(column_left, top), egui::vec2(148.0, 16.0));
             painter.rect_filled(
                 box_rect,
                 egui::CornerRadius::same(2),
@@ -505,7 +501,16 @@ fn agents_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
     egui::Grid::new("topology_agents_grid")
         .striped(true)
         .show(ui, |ui| {
-            kit::grid_header(ui, &["Identificação", "Modelo", "Slots", "Latência EMA", "Heartbeat"]);
+            kit::grid_header(
+                ui,
+                &[
+                    "Identificação",
+                    "Modelo",
+                    "Slots",
+                    "Latência EMA",
+                    "Heartbeat",
+                ],
+            );
             for agent in &discovery.agents {
                 kit::mono_cell(ui, &agent.agent_id);
                 ui.label(&agent.model);
@@ -542,7 +547,14 @@ fn tools_tab(
         .show(ui, |ui| {
             kit::grid_header(
                 ui,
-                &["Call ID", "Ferramenta", "Solicitante", "Nível", "Status", "Resultado (prévia)"],
+                &[
+                    "Call ID",
+                    "Ferramenta",
+                    "Solicitante",
+                    "Nível",
+                    "Status",
+                    "Resultado (prévia)",
+                ],
             );
             for tool in &snapshot.tools {
                 let status = crate::dds_observe::status_label(tool.status);
@@ -561,20 +573,17 @@ fn tools_tab(
                 kit::mono_cell(ui, &short_id);
                 ui.label(&tool.tool_name);
                 ui.label(&tool.requester_id);
-                kit::mono_cell(ui, &crate::dds_observe::security_level_label(tool.security_level));
+                kit::mono_cell(
+                    ui,
+                    &crate::dds_observe::security_level_label(tool.security_level),
+                );
                 let status_color = match tool.status {
                     2 | 5 => theme::ERROR,
                     4 => theme::OK,
                     _ => theme::ON_SURFACE_VARIANT,
                 };
-                ui.label(
-                    egui::RichText::new(status).monospace().color(status_color),
-                );
-                ui.label(
-                    egui::RichText::new(&tool.result_preview)
-                        .small()
-                        .weak(),
-                );
+                ui.label(egui::RichText::new(status).monospace().color(status_color));
+                ui.label(egui::RichText::new(&tool.result_preview).small().weak());
                 ui.end_row();
             }
         });
@@ -596,16 +605,12 @@ fn metrics_tab(
         .show(ui, |ui| {
             kit::grid_header(ui, &["Origem", "Métrica (unidade)", "Valor"]);
             for metric in &snapshot.metrics {
-                if !filter.is_empty()
-                    && !matches(&[&metric.source, &metric.name])
-                {
+                if !filter.is_empty() && !matches(&[&metric.source, &metric.name]) {
                     continue;
                 }
                 kit::mono_cell(ui, &metric.source);
                 ui.label(&metric.name);
-                ui.label(
-                    egui::RichText::new(format!("{:.3}", metric.value)).monospace(),
-                );
+                ui.label(egui::RichText::new(format!("{:.3}", metric.value)).monospace());
                 ui.end_row();
             }
         });
@@ -656,7 +661,13 @@ fn installations_tab(ui: &mut egui::Ui, discovery: &DiscoveryState) {
         .show(ui, |ui| {
             kit::grid_header(
                 ui,
-                &["Node ID", "URL", "Estado do probe", "Idade HB", "Token exigido"],
+                &[
+                    "Node ID",
+                    "URL",
+                    "Estado do probe",
+                    "Idade HB",
+                    "Token exigido",
+                ],
             );
             for node in &discovery.nodes {
                 kit::mono_cell(ui, &node.node_id);

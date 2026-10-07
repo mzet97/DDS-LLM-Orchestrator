@@ -66,7 +66,10 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
     ui.add_space(theme::SPACE_MD);
 
     // ── Seção A: AgentRegistry ao vivo (descoberta contínua) ──
-    kit::section_label(ui, "SEÇÃO A — AGENTES ATIVOS NO DOMÍNIO DDS · TÓPICO: AGENTREGISTRY");
+    kit::section_label(
+        ui,
+        "SEÇÃO A — AGENTES ATIVOS NO DOMÍNIO DDS · TÓPICO: AGENTREGISTRY",
+    );
     ui.horizontal(|ui| {
         kit::badge(
             ui,
@@ -93,7 +96,13 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
             .show(ui, |ui| {
                 kit::grid_header(
                     ui,
-                    &["Identificação", "Modelo", "Slots", "Latência EMA", "Heartbeat (poda 30 s)"],
+                    &[
+                        "Identificação",
+                        "Modelo",
+                        "Slots",
+                        "Latência EMA",
+                        "Heartbeat (poda 30 s)",
+                    ],
                 );
                 for agent in &discovery.agents {
                     kit::mono_cell(ui, &agent.agent_id);
@@ -102,9 +111,16 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
                     ui.label(format!("{:.0} ms", agent.ema_latency_ms));
                     let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
                     ui.label(
-                        egui::RichText::new(format!("{age} s atrás · {}s/30s", 30_u64.saturating_sub(age)))
-                            .monospace()
-                            .color(if age <= 5 { theme::OK } else { theme::WARN }),
+                        egui::RichText::new(format!(
+                            "{age} s atrás · {}s/30s",
+                            30_u64.saturating_sub(age)
+                        ))
+                        .monospace()
+                        .color(if age <= 5 {
+                            theme::OK
+                        } else {
+                            theme::WARN
+                        }),
                     );
                     ui.end_row();
                 }
@@ -113,7 +129,10 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
     ui.add_space(theme::SPACE_LG);
 
     // ── Seção B: orquestrador HTTP (telemetria auxiliar) ──
-    kit::section_label(ui, "SEÇÃO B — MÉTRICAS DE EXECUÇÃO DO ORQUESTRADOR HTTP (AUXILIAR)");
+    kit::section_label(
+        ui,
+        "SEÇÃO B — MÉTRICAS DE EXECUÇÃO DO ORQUESTRADOR HTTP (AUXILIAR)",
+    );
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19, T-830-01).
     agents.poll();
     ui.horizontal(|ui| {
@@ -142,78 +161,73 @@ pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoverySt
     if agents.list.is_empty() {
         kit::empty_state(ui, "Nenhum agente listado. Clique Atualizar orquestrador.");
     } else {
-        egui::Grid::new("agents_grid")
-            .striped(true)
-            .show(ui, |ui| {
-                kit::grid_header(
-                    ui,
-                    &[
-                        "Agente",
-                        "Modelo vinculado",
-                        "Host",
-                        "Concluídas",
-                        "Falhas",
-                        "Taxa de sucesso",
-                        "Latência EMA",
-                    ],
-                );
-                for agent in &agents.list {
-                    kit::mono_cell(ui, &agent.agent_id);
-                    ui.label(&agent.model);
-                    ui.label(&agent.hostname);
-                    ui.label(agent.completed_total.to_string());
-                    ui.label(
-                        egui::RichText::new(agent.failed_total.to_string()).color(
-                            if agent.failed_total > 0 {
-                                theme::WARN
-                            } else {
-                                theme::ON_SURFACE_VARIANT
-                            },
-                        ),
-                    );
-                    match success_rate(agent.completed_total, agent.failed_total) {
-                        Some(rate) => {
-                            ui.label(
-                                egui::RichText::new(format!("{rate:.2}%"))
-                                    .monospace()
-                                    .color(if rate >= 99.0 {
-                                        theme::OK
-                                    } else if rate >= 90.0 {
-                                        theme::WARN
-                                    } else {
-                                        theme::ERROR
-                                    }),
-                            );
-                        }
-                        None => {
-                            ui.label("—");
-                        }
+        egui::Grid::new("agents_grid").striped(true).show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &[
+                    "Agente",
+                    "Modelo vinculado",
+                    "Host",
+                    "Concluídas",
+                    "Falhas",
+                    "Taxa de sucesso",
+                    "Latência EMA",
+                ],
+            );
+            for agent in &agents.list {
+                kit::mono_cell(ui, &agent.agent_id);
+                ui.label(&agent.model);
+                ui.label(&agent.hostname);
+                ui.label(agent.completed_total.to_string());
+                ui.label(egui::RichText::new(agent.failed_total.to_string()).color(
+                    if agent.failed_total > 0 {
+                        theme::WARN
+                    } else {
+                        theme::ON_SURFACE_VARIANT
+                    },
+                ));
+                match success_rate(agent.completed_total, agent.failed_total) {
+                    Some(rate) => {
+                        ui.label(
+                            egui::RichText::new(format!("{rate:.2}%"))
+                                .monospace()
+                                .color(if rate >= 99.0 {
+                                    theme::OK
+                                } else if rate >= 90.0 {
+                                    theme::WARN
+                                } else {
+                                    theme::ERROR
+                                }),
+                        );
                     }
-                    ui.label(format!("{:.1} ms", agent.ema_latency_ms));
-                    ui.end_row();
+                    None => {
+                        ui.label("—");
+                    }
                 }
-                // Linha agregada do enxame (derivação honesta dos totais).
-                let completed: u64 = agents.list.iter().map(|a| a.completed_total).sum();
-                let failed: u64 = agents.list.iter().map(|a| a.failed_total).sum();
-                let ema_avg = if agents.list.is_empty() {
-                    0.0
-                } else {
-                    agents.list.iter().map(|a| a.ema_latency_ms).sum::<f32>()
-                        / agents.list.len() as f32
-                };
+                ui.label(format!("{:.1} ms", agent.ema_latency_ms));
                 ui.end_row();
-                ui.strong("Total agregado (enxame)");
-                ui.label("");
-                ui.label("");
-                ui.strong(completed.to_string());
-                ui.strong(failed.to_string());
-                ui.strong(
-                    success_rate(completed, failed)
-                        .map(|rate| format!("{rate:.2}%"))
-                        .unwrap_or_else(|| "—".to_owned()),
-                );
-                ui.strong(format!("{ema_avg:.1} ms"));
-                ui.end_row();
-            });
+            }
+            // Linha agregada do enxame (derivação honesta dos totais).
+            let completed: u64 = agents.list.iter().map(|a| a.completed_total).sum();
+            let failed: u64 = agents.list.iter().map(|a| a.failed_total).sum();
+            let ema_avg = if agents.list.is_empty() {
+                0.0
+            } else {
+                agents.list.iter().map(|a| a.ema_latency_ms).sum::<f32>() / agents.list.len() as f32
+            };
+            ui.end_row();
+            ui.strong("Total agregado (enxame)");
+            ui.label("");
+            ui.label("");
+            ui.strong(completed.to_string());
+            ui.strong(failed.to_string());
+            ui.strong(
+                success_rate(completed, failed)
+                    .map(|rate| format!("{rate:.2}%"))
+                    .unwrap_or_else(|| "—".to_owned()),
+            );
+            ui.strong(format!("{ema_avg:.1} ms"));
+            ui.end_row();
+        });
     }
 }

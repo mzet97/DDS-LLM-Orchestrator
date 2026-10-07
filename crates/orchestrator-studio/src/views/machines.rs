@@ -56,7 +56,11 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
             &format!("PARTICIPANTES ATIVOS: {}", discovery.nodes.len()),
             theme::PRIMARY_FIXED_DIM,
         );
-        kit::badge(ui, "CICLO DE VARREDURA: 5s (contínua)", theme::ON_SURFACE_VARIANT);
+        kit::badge(
+            ui,
+            "CICLO DE VARREDURA: 5s (contínua)",
+            theme::ON_SURFACE_VARIANT,
+        );
         let force = ui.button("Forçar probe (todos os nós)");
         if force.clicked() {
             let urls: Vec<String> = discovery.nodes.iter().map(|n| n.url.clone()).collect();
@@ -130,11 +134,7 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                         (None, false) => (theme::STALE, "◌"),
                     };
                     ui.horizontal(|ui| {
-                        ui.label(
-                            egui::RichText::new(state_dot)
-                                .color(state_color)
-                                .size(14.0),
-                        );
+                        ui.label(egui::RichText::new(state_dot).color(state_color).size(14.0));
                         kit::mono_cell(ui, &node.node_id);
                         if selected {
                             kit::badge(ui, "ALVO PRIMÁRIO", theme::PRIMARY_FIXED_DIM);
@@ -177,7 +177,10 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                         None => (String::from("—"), theme::STALE),
                     };
                     ui.label(
-                        egui::RichText::new(auth_text).monospace().small().color(auth_color),
+                        egui::RichText::new(auth_text)
+                            .monospace()
+                            .small()
+                            .color(auth_color),
                     );
 
                     // Coluna 5: heartbeat + ações.
@@ -193,9 +196,7 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                             if selected {
                                 ui.add_enabled(
                                     false,
-                                    egui::Button::new(
-                                        egui::RichText::new("Alvo Atual").small(),
-                                    ),
+                                    egui::Button::new(egui::RichText::new("Alvo Atual").small()),
                                 );
                             } else if ui.button("Definir Alvo").clicked() {
                                 discovery.selected = Some(index);
@@ -208,9 +209,7 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                                 &node.probe,
                                 Some(p) if p.state == ProbeState::AuthPending
                             );
-                            if needs_token
-                                && ui.button("Inserir token…").clicked()
-                            {
+                            if needs_token && ui.button("Inserir token…").clicked() {
                                 machines.modal_url = Some(node.url.clone());
                                 machines.modal_token = String::new();
                             }
@@ -268,10 +267,12 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                     }
                 }
                 ui.label(
-                    egui::RichText::new(format!("● {auth_failures} falha(s) de AUTENTICAÇÃO (HTTP 401)"))
-                        .monospace()
-                        .small()
-                        .color(theme::AUTH),
+                    egui::RichText::new(format!(
+                        "● {auth_failures} falha(s) de AUTENTICAÇÃO (HTTP 401)"
+                    ))
+                    .monospace()
+                    .small()
+                    .color(theme::AUTH),
                 );
                 ui.label(
                     egui::RichText::new(format!("● {offline} nó(s) OFFLINE (rede/porta)"))
@@ -330,9 +331,7 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                 }
             });
             ui.label("token da autoridade:");
-            ui.add(
-                egui::TextEdit::singleline(&mut machines.authority_token).password(true),
-            );
+            ui.add(egui::TextEdit::singleline(&mut machines.authority_token).password(true));
         });
         if !machines.notice.is_empty() {
             ui.label(egui::RichText::new(&machines.notice).small().weak());
@@ -393,7 +392,12 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                 .show(ui, |ui| {
                     kit::grid_header(
                         ui,
-                        &["Identificador Persistido", "URL Base / Porta", "Modo Auth", "Comandos"],
+                        &[
+                            "Identificador Persistido",
+                            "URL Base / Porta",
+                            "Modo Auth",
+                            "Comandos",
+                        ],
                     );
                     for machine in &list {
                         ui.vertical(|ui| {
@@ -459,8 +463,7 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                     let confirm = ui.add_enabled(
                         !machines.modal_token.trim().is_empty(),
                         egui::Button::new(
-                            egui::RichText::new("Validar & Comutar Alvo")
-                                .color(theme::ON_PRIMARY),
+                            egui::RichText::new("Validar & Comutar Alvo").color(theme::ON_PRIMARY),
                         )
                         .fill(theme::PRIMARY_CONTAINER),
                     );
@@ -469,9 +472,7 @@ pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut Dis
                         machines.remember_token(&url, &token);
                         machines.probe_url(&url);
                         // Comuta o alvo único da GUI para este nó.
-                        if let Some(index) =
-                            discovery.nodes.iter().position(|n| n.url == url)
-                        {
+                        if let Some(index) = discovery.nodes.iter().position(|n| n.url == url) {
                             discovery.selected = Some(index);
                         }
                         crate::studio_log::info(format!(

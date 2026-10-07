@@ -1,28 +1,41 @@
-//! Painel subir inferência: plano legível → aplicar → prova real (§9.3, P2).
+//! Painel 3.4 Subir Inferência (runner local §9.3, P2): parâmetros da
+//! unidade própria do nó, CLI preview copiável, wizard de etapas com
+//! duração MEDIDA por passo e atalho para o chat (3.3).
 
+use crate::kit;
 use crate::launch::{Device, LaunchState};
-use crate::panel_header;
+use crate::panel_header::panel_header;
+use crate::theme;
 use eframe::egui;
 
-pub fn show(ui: &mut egui::Ui, launch: &mut LaunchState, known_services: &[String]) {
-    panel_header::panel_header(
+/// `go_chat` vira `true` quando o operador pede "Abrir no Chat (3.3)".
+pub fn show(
+    ui: &mut egui::Ui,
+    launch: &mut LaunchState,
+    known_services: &[String],
+    go_chat: &mut bool,
+) {
+    panel_header(
         ui,
-        "SEC 3.4 · SUBIR INFERÊNCIA — RUNNER LOCAL",
+        "SEC 3.4 · SUBIR INFERÊNCIA · RUNNER LOCAL",
         "Subir inferência",
-        "Runner local do llama-server: etapas com estado por passo",
+        "Sobe a unidade PRÓPRIA do nó (start de unidade existente — nada é \
+         criado no host) e comprova com geração real no llama-server",
     );
     launch.poll();
-    ui.heading("Subir inferência (máquina local)");
     if launch.running {
         ui.ctx().request_repaint();
     }
+
+    // ── Parâmetros de inicialização ──
+    kit::section_label(ui, "PARÂMETROS DE INICIALIZAÇÃO");
     ui.horizontal(|ui| {
         ui.label("Unidade do nó:");
         egui::ComboBox::from_id_salt("launch-service")
             .selected_text(if launch.plan.service.is_empty() {
-                "escolha…"
+                "escolha…".to_owned()
             } else {
-                &launch.plan.service
+                launch.plan.service.clone()
             })
             .show_ui(ui, |ui| {
                 for name in known_services {
@@ -30,11 +43,15 @@ pub fn show(ui: &mut egui::Ui, launch: &mut LaunchState, known_services: &[Strin
                 }
             });
         if known_services.is_empty() {
-            ui.label("lista vazia — abra Serviços e clique Ler plano primeiro.");
+            ui.label(
+                egui::RichText::new("lista vazia — abra Serviços e clique Ler plano primeiro.")
+                    .small()
+                    .color(theme::WARN),
+            );
         }
     });
     ui.horizontal(|ui| {
-        ui.label("llama-server:");
+        ui.label("llama-server (HTTP):");
         ui.text_edit_singleline(&mut launch.plan.llama_url);
         ui.label("dispositivo:");
         ui.selectable_value(&mut launch.plan.device, Device::Gpu, "GPU");
@@ -51,35 +68,110 @@ pub fn show(ui: &mut egui::Ui, launch: &mut LaunchState, known_services: &[Strin
         if ui.text_edit_singleline(&mut slots).changed() {
             launch.plan.slots = slots.parse().unwrap_or(launch.plan.slots);
         }
-    });
-    ui.horizontal(|ui| {
         ui.label("rota DDS:");
         ui.text_edit_singleline(&mut launch.plan.dds_route);
     });
     ui.horizontal(|ui| {
-        ui.label("prova:");
+        ui.label("prompt da prova:");
         ui.text_edit_singleline(&mut launch.plan.proof_prompt);
     });
-    ui.collapsing("Plano (leia antes de aplicar)", |ui| {
-        ui.monospace(launch.plan.preview());
-    });
+    ui.add_space(theme::SPACE_SM);
+
+    // ── CLI preview (copiável) ──
+    kit::section_label(ui, "PLANO — LEIA ANTES DE APLICAR (CLI PREVIEW)");
+    let preview = launch.plan.preview();
+    egui::Frame::NONE
+        .fill(theme::SURFACE_LOW)
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
+        .inner_margin(theme::SPACE_MD)
+        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                if ui.button("Copiar").clicked() {
+                    ui.ctx().copy_text(preview.clone());
+                    crate::studio_log::info("subir: CLI preview copiado");
+                }
+                ui.label(
+                    egui::RichText::new("NADA é criado no nó: só start de unidade própria.")
+                        .small()
+                        .color(theme::WARN),
+                );
+            });
+            ui.label(egui::RichText::new(&preview).monospace().small());
+        });
+    ui.add_space(theme::SPACE_MD);
+
     if !launch.error.is_empty() {
-        ui.label(&launch.error);
+        kit::error_banner(ui, &launch.error);
     }
+
+    // ── Ação + atalho para o chat ──
     ui.horizontal(|ui| {
-        if ui.button("Aplicar e comprovar").clicked() {
+        let apply = ui.add_enabled(
+            !launch.running && !launch.plan.service.is_empty(),
+            egui::Button::new(
+                egui::RichText::new(if launch.running {
+                    "◐ aplicando… a UI segue livre"
+                } else {
+                    "Aplicar e Comprovar"
+                })
+                .monospace()
+                .color(theme::ON_PRIMARY),
+            )
+            .fill(theme::PRIMARY_CONTAINER),
+        );
+        if apply.clicked() {
             launch.start(known_services);
         }
-        if launch.running {
-            ui.spinner();
-            ui.label("aplicando… a UI segue livre");
+        if ui.button("Abrir no Chat (3.3)").clicked() {
+            *go_chat = true;
         }
     });
-    for step in &launch.steps {
-        let mark = if step.ok { "✔" } else { "✘" };
-        ui.monospace(format!("[{}] {} — {}", mark, step.step, step.detail));
-    }
-    if launch.proved() {
-        ui.strong("Inferência comprovada com geração real.");
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Wizard de etapas com duração medida ──
+    if !launch.steps.is_empty() {
+        let done_count = launch.steps.iter().filter(|step| step.ok).count();
+        let total_ms: u64 = launch.steps.iter().map(|step| step.duration_ms).sum();
+        kit::section_label(
+            ui,
+            &format!(
+                "ETAPAS DE INICIALIZAÇÃO · {}/{} CONCLUÍDAS · {} ms",
+                done_count,
+                launch.steps.len(),
+                total_ms
+            ),
+        );
+        for step in &launch.steps {
+            let (mark, color) = if step.ok {
+                ("✔", theme::OK)
+            } else {
+                ("✘", theme::ERROR)
+            };
+            kit::accent_card(ui, color, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(mark).monospace().strong().color(color));
+                    ui.strong(step.step);
+                    ui.label(
+                        egui::RichText::new(format!("· {} ms", step.duration_ms))
+                            .monospace()
+                            .small()
+                            .color(theme::OUTLINE),
+                    );
+                });
+                ui.label(egui::RichText::new(&step.detail).small().weak());
+            });
+        }
+        if launch.proved() {
+            ui.label(
+                egui::RichText::new("● INFERÊNCIA COMPROVADA COM GERAÇÃO REAL")
+                    .monospace()
+                    .strong()
+                    .color(theme::OK),
+            );
+        }
+    } else if !launch.running {
+        kit::empty_state(ui, "nenhuma execução ainda — escolha a unidade e aplique.");
     }
 }

@@ -161,6 +161,9 @@ struct StudioApp {
     auto_reload: bool,
     /// Instante da última auto-carga (None = nenhuma ainda).
     last_autoload: Option<std::time::Instant>,
+    /// Estado de apresentação do painel de Logs (tela 3.14).
+    logs_panel: orchestrator_studio::studio_log::LogsPanel,
+    go_chat: bool,
 }
 
 /// Hash curto do git da árvore (build.rs; "dev" fora de repositório).
@@ -206,6 +209,8 @@ impl StudioApp {
             autoloaded_target: None,
             #[cfg(feature = "dds")]
             dds_observed: false,
+            logs_panel: orchestrator_studio::studio_log::LogsPanel::new(),
+            go_chat: false,
             auto_reload: true,
             last_autoload: None,
             discovery: {
@@ -287,7 +292,11 @@ impl eframe::App for StudioApp {
                             self.auto_reload = !self.auto_reload;
                             orchestrator_studio::studio_log::info(format!(
                                 "auto-carga contínua: {}",
-                                if self.auto_reload { "ligada" } else { "desligada" }
+                                if self.auto_reload {
+                                    "ligada"
+                                } else {
+                                    "desligada"
+                                }
                             ));
                         }
                         // chip NÓ ALVO (3.1/3.10): URL + estado de conexão
@@ -412,7 +421,8 @@ impl eframe::App for StudioApp {
         // Auto-carga contínua (toggle do header, mockup "Auto-Carga (5s)"):
         // re-leituras periódicas do alvo — cada refresh é no-op enquanto busy.
         if self.auto_reload {
-            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(1));
             if self
                 .last_autoload
                 .is_none_or(|at| at.elapsed().as_secs() >= 5)
@@ -554,6 +564,7 @@ impl eframe::App for StudioApp {
                         &mut self.state,
                         &mut self.node_url,
                         &mut self.node_token,
+                        &self.discovery,
                     );
                 }
                 Section::Inference => orchestrator_studio::views::inference::show(
@@ -568,7 +579,12 @@ impl eframe::App for StudioApp {
                         .iter()
                         .map(|item| item.service.clone())
                         .collect();
-                    orchestrator_studio::views::launch::show(ui, &mut self.launch, &known);
+                    orchestrator_studio::views::launch::show(
+                        ui,
+                        &mut self.launch,
+                        &known,
+                        &mut self.go_chat,
+                    );
                 }
                 Section::Agents => {
                     orchestrator_studio::views::agents::show(ui, &mut self.agents, &self.discovery)
@@ -591,17 +607,17 @@ impl eframe::App for StudioApp {
                     orchestrator_studio::views::dispatch::show(ui, &mut self.dispatch)
                 }
                 #[cfg(feature = "dds")]
-                Section::Topology => orchestrator_studio::views::topology::show(
-                    ui,
-                    &mut self.dds,
-                    &self.discovery,
-                ),
+                Section::Topology => {
+                    orchestrator_studio::views::topology::show(ui, &mut self.dds, &self.discovery)
+                }
                 Section::Workflow => {
                     orchestrator_studio::views::workflow::show(ui, &mut self.workflow)
                 }
                 #[cfg(feature = "dds")]
-                Section::Tools => orchestrator_studio::views::tools::show(ui, &mut self.dds),
-                Section::Logs => orchestrator_studio::views::logs::show(ui),
+                Section::Tools => {
+                    orchestrator_studio::views::tools::show(ui, &mut self.dds, &self.protected)
+                }
+                Section::Logs => orchestrator_studio::views::logs::show(ui, &mut self.logs_panel),
                 #[cfg(not(feature = "dds"))]
                 Section::Topology => {
                     ui.heading("Topologia DDS");
@@ -610,6 +626,10 @@ impl eframe::App for StudioApp {
                     );
                 }
             });
+            if self.go_chat {
+                self.go_chat = false;
+                self.section = Section::Inference;
+            }
         });
     }
 }

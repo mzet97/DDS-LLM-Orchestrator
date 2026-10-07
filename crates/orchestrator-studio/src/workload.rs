@@ -19,9 +19,22 @@ pub enum DispatchOutcome {
         task_id: String,
         assigned_agent: Option<String>,
         latency_ms: u64,
+        /// Conteúdo da resposta quando o backend o retorna.
+        content: Option<String>,
     },
     /// Tarefa falha com o motivo do backend.
     Failed { task_id: String, error: String },
+}
+
+/// Entrada do histórico de despachos da sessão (tela 3.6).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DispatchRecord {
+    pub task_id: String,
+    pub agent: Option<String>,
+    pub latency_ms: Option<u64>,
+    pub ok: bool,
+    /// Prévia da resposta ou motivo da falha.
+    pub detail: String,
 }
 
 /// Erros do despacho (fronteira GUI ↔ orquestrador).
@@ -78,6 +91,8 @@ pub fn dispatch_sync(
         latency_ms: u64,
         #[serde(default)]
         error: Option<String>,
+        #[serde(default)]
+        content: Option<String>,
     }
     let outcome: Outcome =
         serde_json::from_value(value).map_err(|err| DispatchError::Unreachable {
@@ -89,6 +104,7 @@ pub fn dispatch_sync(
             task_id: outcome.task_id,
             assigned_agent: outcome.assigned_agent,
             latency_ms: outcome.latency_ms,
+            content: outcome.content,
         }),
         "failed" => Ok(DispatchOutcome::Failed {
             task_id: outcome.task_id,
@@ -115,6 +131,10 @@ pub struct DispatchState {
     pub model: String,
     pub prompt: String,
     pub result: String,
+    /// Último desfecho estruturado (card de resultado, tela 3.6).
+    pub last: Option<DispatchOutcome>,
+    /// Histórico dos despachos da SESSÃO (mais recente por último).
+    pub history: Vec<DispatchRecord>,
     /// `true` enquanto o despacho roda em background (`poll` drena).
     pub busy: bool,
     receiver: Option<mpsc::Receiver<DispatchMsg>>,
@@ -129,6 +149,8 @@ impl DispatchState {
             model: String::from("qwen3.5-0.8b"),
             prompt: String::new(),
             result: String::new(),
+            last: None,
+            history: Vec::new(),
             busy: false,
             receiver: None,
         }
@@ -164,17 +186,46 @@ impl DispatchState {
                         task_id,
                         assigned_agent,
                         latency_ms,
+                        content,
                     }) => {
                         self.result = format!(
                             "concluída {task_id} agente={} latência={latency_ms}ms",
                             assigned_agent.as_deref().unwrap_or("?")
                         );
+                        self.history.push(DispatchRecord {
+                            task_id: task_id.clone(),
+                            agent: assigned_agent.clone(),
+                            latency_ms: Some(latency_ms),
+                            ok: true,
+                            detail: content.clone().unwrap_or_default(),
+                        });
+                        self.last = Some(DispatchOutcome::Completed {
+                            task_id,
+                            assigned_agent,
+                            latency_ms,
+                            content,
+                        });
                     }
                     Ok(DispatchOutcome::Failed { task_id, error }) => {
                         self.result = format!("falha {task_id}: {error}");
+                        self.history.push(DispatchRecord {
+                            task_id: task_id.clone(),
+                            agent: None,
+                            latency_ms: None,
+                            ok: false,
+                            detail: error.clone(),
+                        });
+                        self.last = Some(DispatchOutcome::Failed { task_id, error });
                     }
                     Err(err) => {
                         self.result = format!("erro de despacho: {err}");
+                        self.history.push(DispatchRecord {
+                            task_id: String::new(),
+                            agent: None,
+                            latency_ms: None,
+                            ok: false,
+                            detail: err.clone(),
+                        });
                     }
                 }
                 finished = true;
@@ -183,6 +234,11 @@ impl DispatchState {
         if finished {
             self.receiver = None;
             self.busy = false;
+        }
+        // Histórico é da sessão: mantém os últimos 20.
+        if self.history.len() > 20 {
+            let drop = self.history.len() - 20;
+            self.history.drain(0..drop);
         }
     }
 }
