@@ -2,11 +2,18 @@
 
 use crate::agents::AgentsState;
 use crate::discovery::DiscoveryState;
+use crate::panel_header;
 use eframe::egui;
 
 /// Agentes vivos no DOMÍNIO (DDS, descoberta automática) + tabela HTTP do
 /// orquestrador (quando houver um rodando).
 pub fn show(ui: &mut egui::Ui, agents: &mut AgentsState, discovery: &DiscoveryState) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.5 · AGENTES — DDS × ORQUESTRADOR HTTP",
+        "Agentes",
+        "Topologia híbrida: agentes DDS em barramento peer-to-peer autônomo; telemetria HTTP do orquestrador é auxiliar",
+    );
     // Agentes do AgentRegistry — sempre populados pela descoberta, sem
     // depender de orquestrador HTTP no ar.
     ui.collapsing("Agentes no domínio (DDS, ao vivo)", |ui| {

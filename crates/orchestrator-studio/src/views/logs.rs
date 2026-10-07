@@ -1,11 +1,18 @@
 //! Painel de Logs: eventos do Studio (descoberta, auto-carga, observação)
 //! em buffer circular — comportamento analisável dentro da própria GUI.
 
+use crate::panel_header;
 use crate::studio_log;
 use crate::theme;
 use eframe::egui;
 
 pub fn show(ui: &mut egui::Ui) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.14 · LOGS DA GUI — FIFO RING BUFFER 500",
+        "Logs",
+        "Eventos internos da GUI (descoberta, alvo, auto-carga, observação) espelhados no stderr",
+    );
     let entries = studio_log::entries();
     let info_count = entries.iter().filter(|e| e.level == "INFO").count();
     let warn_count = entries.iter().filter(|e| e.level == "WARN").count();

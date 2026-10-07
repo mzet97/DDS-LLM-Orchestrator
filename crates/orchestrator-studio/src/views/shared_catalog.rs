@@ -2,11 +2,18 @@
 //! Token da autoridade (T-840-03a) fica só na memória da GUI.
 
 use crate::catalog_remote::SharedCatalog;
+use crate::panel_header;
 use eframe::egui;
 
 /// URL, token (password), formulário (id/valor/base), publicar/excluir e
 /// tabela do snapshot.
 pub fn show(ui: &mut egui::Ui, shared: &mut SharedCatalog) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.9 · CATÁLOGO COMPARTILHADO — MULTI-HOST",
+        "Catálogo compartilhado",
+        "Autoridade em um nó; snapshot + eventos incrementais; publicação com revisão condicional (409 em conflito)",
+    );
     // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     shared.poll();
     ui.collapsing("Catálogo compartilhado (autoridade no nó)", |ui| {

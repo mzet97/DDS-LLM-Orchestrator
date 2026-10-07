@@ -1,9 +1,16 @@
 //! Painel subir inferência: plano legível → aplicar → prova real (§9.3, P2).
 
 use crate::launch::{Device, LaunchState};
+use crate::panel_header;
 use eframe::egui;
 
 pub fn show(ui: &mut egui::Ui, launch: &mut LaunchState, known_services: &[String]) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.4 · SUBIR INFERÊNCIA — RUNNER LOCAL",
+        "Subir inferência",
+        "Runner local do llama-server: etapas com estado por passo",
+    );
     launch.poll();
     ui.heading("Subir inferência (máquina local)");
     if launch.running {

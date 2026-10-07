@@ -19,6 +19,7 @@ pub mod machines;
 pub mod models;
 pub mod origin;
 pub mod overview;
+pub mod panel_header;
 pub mod protected;
 pub mod services;
 pub mod state;

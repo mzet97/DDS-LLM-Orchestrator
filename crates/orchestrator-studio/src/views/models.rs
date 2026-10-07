@@ -1,9 +1,16 @@
 //! Painel de modelos: inventário assíncrono (P4 local).
 
 use crate::models::{ManifestStatus, ModelsState};
+use crate::panel_header;
 use eframe::egui;
 
 pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.7 · MODELOS GGUF — INVENTÁRIO SHA-256",
+        "Modelos GGUF",
+        "Inventário de artefatos no disco + verificação SHA-256 contra manifesto congelado (hash async com cancelamento)",
+    );
     state.poll();
     ui.heading("Modelos (arquivos GGUF em disco)");
     ui.horizontal(|ui| {

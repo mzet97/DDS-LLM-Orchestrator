@@ -1,6 +1,7 @@
 //! Painel da origem remota: conexão ao nó + tabela de operações.
 
 use crate::origin::optional_token;
+use crate::panel_header;
 use crate::state::AppState;
 use eframe::egui;
 use studio_node::protocol::AdminOp;
@@ -23,6 +24,12 @@ pub fn show(
     node_url: &mut String,
     node_token: &mut String,
 ) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.2 · NÓ STUDIO-NODE",
+        "Nó studio-node",
+        "Daemon local por máquina (porta 4317) · protocolo RPC + log de operações · token Bearer em memória volátil",
+    );
     // Drena o worker de leitura do nó (thread + mpsc — REQ/T-820-19).
     state.poll();
     ui.horizontal(|ui| {

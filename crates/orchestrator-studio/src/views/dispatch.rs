@@ -1,10 +1,17 @@
 //! Painel de despacho: tarefa real via orquestrador.
 
+use crate::panel_header;
 use crate::workload::DispatchState;
 use eframe::egui;
 
 /// URL, modelo, prompt, botão de despacho e desfecho em texto.
 pub fn show(ui: &mut egui::Ui, dispatch: &mut DispatchState) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.6 · DESPACHO — TASK SÍNCRONA HTTP :8080",
+        "Despacho",
+        "Task síncrona direto ao orquestrador: resposta com agente executor, latência e motivo de falha tipado",
+    );
     // Drena o worker de despacho (thread + mpsc — REQ/T-820-19).
     dispatch.poll();
     ui.collapsing("Despacho (tarefa real via orquestrador)", |ui| {

@@ -3,10 +3,17 @@
 use crate::discovery::DiscoveryState;
 use crate::inference::{InferenceState, Role};
 use crate::kit;
+use crate::panel_header;
 use eframe::egui;
 
 /// Servidor, modelos, parâmetros, prompt e transcript da sessão.
 pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &DiscoveryState) {
+    panel_header::panel_header(
+        ui,
+        "SEC 3.3 · INFERÊNCIA — CHAT LLAMA-SERVER",
+        "Inferência",
+        "Chat multi-turn contra o llama-server via HTTP · dois planos: descoberta DDS (ServerStatus) × endpoint HTTP manual · timeout até 120s",
+    );
     // Servidores de inferência VIVOS no domínio (ServerStatus — descoberta
     // automática). Nota honesta: o contrato não carrega a URL HTTP do
     // servidor (só id/modelo/slots); a URL do formulário segue manual.
