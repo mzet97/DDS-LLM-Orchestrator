@@ -516,3 +516,78 @@ confirmados no IDL — READ_ONLY/SANDBOX/HOST_MUTATION do mockup descartados).
   em ~1 s, alvo .61 auto-carregado com token.
 - **Validação visual:** captura da tela real (Spectacle) confirma sidebar
   numerada, 6 contadores e mesh renderizando; detalhe por tela cabe ao autor.
+
+## T-890-UX2 — ADEQUAÇÃO AO PRD v1.0 + DESIGNS STITCH ATUAIS (2026-10-06)
+
+**Gatilho:** autor reprovou a 1ª rodada ("ainda está anos distante da
+interface que passei") e aprovou o **PRD v1.0** (Outubro 2026), que PROMOVE
+a requisito features antes descartadas como invenção de mockup (RTT, wizard
+5 etapas, níveis N0/N1/N2, decomposição fila×geração, inspetores
+request/response e de logs). Fonte de verdade revisada: projeto Stitch
+`5206793100045730557` (atualizado 2026-10-07 — MAIS NOVO que os HTMLs
+locais; 14 PNGs 2048px espelhados via MCP `get_screen`, analisados por
+visão). Fatos de código que viabilizaram tudo GUI-side, sem tocar backend:
+`/api/v1/chat/completions/sync` JÁ devolve T1–T6 (`t_agent_queue_ns`/
+`t_inference_ns`/transportes/serialização); `DataSpace` expõe
+`stream_tasks`/`stream_task_outputs`; `ToolCallRequest` carrega
+`arguments_json`+`result_json` íntegros + timestamps de duração.
+
+**Retratação parcial da T-890-UX:** os rótulos de nível 0=PUBLIC/1=INTERNAL
+foram substituídos pelo vocabulário do PRD (`N0 READ_ONLY`/`N1 SANDBOX_EXEC`/
+`N2 HOST_MUTATION`) — o PRD sobrescreve a cautela de contrato na GUI.
+RTT deixou de ser "invenção": é a duração medida do probe HTTP (EMA α=0,3).
+Continuam FORA por não existirem: GUID/participante RTPS, socket fd, Git
+SHA/LLVM do processo, VRAM/temperatura, fila de 1024 slots, backoff
+exponencial, timestamp/retorno por OpRecord (o nó não carimba — dito na
+tela 3.2).
+
+- **`cdd8b56` (ETAPA A — coletores):** `ToolRow` += `arguments_json`/
+  `result_json` (cap 8 KB) + `duration_ms` (completed−created); NOVOS
+  `TaskRow`/`TaskOutputRow` drenados por `stream_tasks`/
+  `stream_task_outputs` (7 drenos concorrentes na mesma janela);
+  `workload` captura T1–T6 → `LatencyBreakdown{queue,inference,transport,
+  serial}`; hash com **taxa MB/s medida + ETA + cancelamento
+  intra-arquivo** (`hash_file_with_progress`, flag por bloco); `LogEntry`
+  += `source`/`payload`/`origin` (file:line via `#[track_caller]`)/
+  `thread`/`offset_ms`/`slot` + **backtrace force-capturado em ERRO**;
+  `AppState` mede RTT do probe (+EMA); `InferenceState.pending_since`.
+- **3.11:** aba 0 = **TAREFAS DDS** (ciclo PENDING→ASSIGNED→RUNNING→DONE/
+  FAILED, prioridade/retry/idade; ID 8-hex), **log de tarefas** no rodapé
+  (TaskOutput, prévia 96, filtro pela tarefa selecionada), **chips de
+  filtro por tópico canônico com contagem** (6 tópicos → aba), mesh com
+  cards **clicáveis** → card **ASSINANTE SELECIONADO** (dados reais +
+  tópicos que publica por papel), aba nova **Server Status** (7 abas).
+- **3.13:** cards N0/N1/N2 + **TAXA REQ/s** (janela) + **BLOQUEIOS**;
+  colunas DURAÇÃO (real) e POLÍTICA DE DECISÃO; inspetor **REQUEST
+  (arguments_json) × RESPONSE (result_json)** lado a lado + COPIAR RAW.
+- **3.14:** colunas SUBSISTEMA/OFFSET/SLOT # + **inspetor lateral**
+  (thread, fonte file:line, mensagem crua, stack trace, contexto JSON).
+- **3.6:** card **TOTAL = FILA + GERAÇÃO + TRANSPORTE + SERIAL** (ms reais
+  do `/sync`) com barra proporcional; histórico += FILA/GERAÇÃO.
+- **3.2:** faixa CONECTADO · PROTOCOLO · **RTT medido+EMA** · OPERAÇÕES ·
+  MODO; inspetor de op com JSON + **COPIAR RAW**; nota honesta sobre
+  OpRecord sem timestamp.
+- **3.4:** wizard nas **5 etapas canônicas do PRD** (① unidade&binário ②
+  spawn systemd ③ processo vivo ④ modelo&KV ⑤ prova+ServerStatus ao vivo
+  via chip da descoberta); **console de saídas reais** das operações.
+- **3.10:** pill CICLO DE VARREDURA com **contagem real** (5 s − heartbeat
+  mais fresco) + badge RTPS MULTICAST 239.255.0.1:7400.
+- **3.3:** **GERANDO · N.Ns** vivo (repaint 100 ms) + **FILA real** do
+  ServerStatus (idle/processing/PRONTO).
+- **3.12:** estágios canônicos **A · Triagem & Fatos / B · Síntese LLM /
+  C · Validação & Formatação** (cards, auditoria).
+- **3.8:** confirmação em 2 passos agora **VERMELHA** (âncoras literais
+  preservadas); **GETs manuais de "Ler plano" entram na auditoria**.
+- **NFR/DoD:** `kit::num_cell` (right-to-left + mono) aplicado às colunas
+  numéricas de TODAS as tabelas; **chip do alvo único em todas as telas**
+  (Nó/Catálogo/Despacho/Inferência/Subir + header global).
+- **Gates:** fmt + clippy **0/0 nas duas features**; workspace **507
+  passed / 2 ignored** (dds; default 85/0); **kittest_ux2 4 novos**
+  (tarefas+log TaskOutput com injeção, inspetor req/resp, subsistema/slot
+  dos logs, decomposição T1–T6) — `#![cfg(feature="dds")]` como
+  `dds_live.rs`. Binário glibc dinâmico + ddsc estático 23,8 MB em
+  `~/.local/bin/studio` (musl segue só para hosts remotos — openssl-sys
+  não cross-compila sem vendor); boot validado no lab (3 nós + 2 agentes
+  + inferência, alvo .61 auto, log no formato novo `studio[INFO][GUI]`);
+  captura em `logs/studio_ux2_topologia_2026-10-06.png` — análise visual
+  sem defeitos (sem sobreposição/corte).
