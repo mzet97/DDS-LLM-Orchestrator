@@ -591,3 +591,31 @@ tela 3.2).
   + inferência, alvo .61 auto, log no formato novo `studio[INFO][GUI]`);
   captura em `logs/studio_ux2_topologia_2026-10-06.png` — análise visual
   sem defeitos (sem sobreposição/corte).
+
+## T-890-UX3 — REFORMA VISUAL (2026-10-07, commit `0a8a72a`)
+
+**Gatilho:** autor reprovou a UX2 ("ainda está a mesma merda") MESMO com o
+binário novo confirmado em execução (cmp + /proc/exe + hash no header) — o
+diagnóstico por comparativo lado a lado (captura real × PNG 2048px do
+Stitch) mostrou que UX1/UX2 entregaram a INFORMAÇÃO, não o DESIGN: números
+de métrica ~13px vs 36–40px do mockup, cards sem borda, badges retangulares
+sem preenchimento, cabeçalho de tabela sem faixa, sidebar sem estado
+selecionado, densidade 2× maior que o mockup.
+
+**Execução (100% estilo — nenhum texto/dado/âncora mudou):**
+`theme.rs` (escala tipográfica 20/14/13/12/12.5, espaçamentos 16/24/32,
+raios 4/6/10+PILL, hover ciano, janela 1500×950) · `kit.rs` (metric_card
+HERO 32px+borda, badge PILL tinta18+borda, grid_header em faixas, novo
+`kit::table` zebra+28px, `primary_button`/`pill_chip`) · `panel_header`
+faixa hero com filete ciano · `main.rs` sidebar selecionado = barra ciano +
+tinta, topbar em pills · mesh com cards de assinante 148×38 + dot de status
+· 20 grids → `kit::table`.
+
+**Autovalidação visual (NOVA — imposta nesta fase):** captura real × design
+3.11 composta e analisada por visão ANTES de entregar. Ciclo 1: 75%
+(sidebar discreta, faixa pequena, mesh pobre) → ciclo 2 corrigiu os 3
+resíduos e a verificação final confirmou todos os itens (dashboard lê como
+desenhado). Comparativo arquivado em `logs/studio_ux3_vs_design_2026-10-07.png`.
+
+**Gates:** 101/0 (dds) · 85/0 (default) · clippy 0/0 ×2 · âncoras kittest
+intactas. Binário instalado e rodando (boot validado no lab).
