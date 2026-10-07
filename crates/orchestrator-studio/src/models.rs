@@ -221,6 +221,10 @@ pub struct ModelsState {
     pub manifest: Option<ModelsManifest>,
     pub manifest_path: String,
     pub manifest_error: String,
+    /// Filtro da tabela (tela 3.7): 0=todos, 1=divergentes, 2=pendentes.
+    pub filter: u8,
+    /// Aviso curto da última ação (ex.: caminho do relatório exportado).
+    pub notice: String,
     receiver: Option<mpsc::Receiver<HashMsg>>,
     cancel: Option<Arc<AtomicBool>>,
 }
@@ -277,8 +281,49 @@ impl ModelsState {
             manifest: None,
             manifest_path: default_manifest_path(),
             manifest_error: String::new(),
+            filter: 0,
+            notice: String::new(),
             receiver: None,
             cancel: None,
+        }
+    }
+
+    /// Exporta o relatório do inventário (JSON) no diretório de modelos —
+    /// arquivo, tamanho, sha calculado e status frente ao manifesto.
+    pub fn export_report(&mut self) {
+        if self.list.is_empty() {
+            self.notice = String::from("nada a exportar — inventarie primeiro");
+            return;
+        }
+        let report: Vec<serde_json::Value> = self
+            .list
+            .iter()
+            .map(|artifact| {
+                serde_json::json!({
+                    "file": artifact.file_name,
+                    "size_bytes": artifact.size_bytes,
+                    "sha256": artifact.sha256_hex,
+                    "manifest_status": artifact.manifest_status.label(),
+                })
+            })
+            .collect();
+        let path = if self.dir.as_os_str().is_empty() {
+            std::path::PathBuf::from("studio-models-report.json")
+        } else {
+            self.dir.join("studio-models-report.json")
+        };
+        match serde_json::to_string_pretty(&report) {
+            Ok(json) => match std::fs::write(&path, json) {
+                Ok(()) => {
+                    self.notice = format!("relatório exportado: {}", path.display());
+                }
+                Err(err) => {
+                    self.notice = format!("falha ao exportar: {err}");
+                }
+            },
+            Err(err) => {
+                self.notice = format!("falha ao serializar: {err}");
+            }
         }
     }
 

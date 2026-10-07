@@ -59,6 +59,7 @@ fn chat(model: &str) -> ChatRequest {
             content: String::from("diga OK"),
         }],
         temperature: 0.7,
+        top_p: 0.95,
         max_tokens: 11,
     }
 }
@@ -93,6 +94,7 @@ async fn parameters_cross_the_wire_and_content_returns() {
     let bodies = captured.lock().expect("captura acessivel");
     assert_eq!(bodies.len(), 1);
     assert_eq!(bodies[0]["temperature"], serde_json::json!(0.7));
+    assert_eq!(bodies[0]["top_p"], serde_json::json!(0.95));
     assert_eq!(bodies[0]["max_tokens"], serde_json::json!(11));
     assert_eq!(bodies[0]["model"], serde_json::json!("m"));
     assert_eq!(

@@ -1,22 +1,35 @@
-//! Painel de modelos: inventário assíncrono (P4 local).
+//! Painel 3.7 Modelos GGUF (inventário SHA-256): filtros por status, 4 cards
+//! de resumo, colunas separadas de checksum calculado × manifesto e
+//! exportação de relatório local. P4 local; nada é criado nem deletado.
 
+use crate::kit;
 use crate::models::{ManifestStatus, ModelsState};
-use crate::panel_header;
+use crate::panel_header::panel_header;
+use crate::theme;
 use eframe::egui;
 
 pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
-    panel_header::panel_header(
+    panel_header(
         ui,
         "SEC 3.7 · MODELOS GGUF — INVENTÁRIO SHA-256",
         "Modelos GGUF",
-        "Inventário de artefatos no disco + verificação SHA-256 contra manifesto congelado (hash async com cancelamento)",
+        "Inventário de artefatos no disco + verificação SHA-256 contra \
+         manifesto congelado (hash async com cancelamento) · leitura apenas",
     );
     state.poll();
-    ui.heading("Modelos (arquivos GGUF em disco)");
+
+    // ── Toolbar: diretório + ações (âncoras dos kittest preservadas) ──
     ui.horizontal(|ui| {
         let mut dir = state.dir.display().to_string();
-        ui.label("Diretório:");
-        if ui.text_edit_singleline(&mut dir).changed() {
+        ui.label("Diretório de modelos:");
+        if ui
+            .add(
+                egui::TextEdit::singleline(&mut dir)
+                    .desired_width(320.0)
+                    .hint_text("STUDIO_MODELS_DIR ou $HOME/tese/models"),
+            )
+            .changed()
+        {
             state.dir = dir.into();
         }
         if ui.button("Inventariar").clicked() && !state.is_busy() {
@@ -25,87 +38,231 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         if state.is_busy() && ui.button("Cancelar hash").clicked() {
             state.cancel();
         }
+        if ui.button("Exportar relatório").clicked() {
+            state.export_report();
+        }
     });
-    if state.is_busy() {
-        ui.ctx().request_repaint();
-    }
-    if let Some(progress) = &state.hashing {
-        ui.add(
-            egui::ProgressBar::new(progress.done as f32 / progress.total.max(1) as f32)
-                .text(format!(
-                    "hash SHA-256 {}/{} — {}",
-                    progress.done, progress.total, progress.current
-                ))
-                .show_percentage(),
-        );
-    }
-    ui.label("P4 local; nada é criado.");
-    if state.dir.as_os_str().is_empty() {
-        ui.label("Nenhum diretório padrão: defina STUDIO_MODELS_DIR (ou edite o campo acima).");
-    }
-    if !state.error.is_empty() {
-        ui.label(&state.error);
-    }
-
-    // T-890-08 (G-09..11): cruzamento GGUF × manifesto congelado.
-    ui.separator();
-    ui.heading("Manifesto congelado (GGUF × SHA-256)");
     ui.horizontal(|ui| {
-        ui.label("manifesto:");
+        ui.label("Manifesto (SHA-256 congelado):");
         ui.add(
             egui::TextEdit::singleline(&mut state.manifest_path)
-                .desired_width(420.0)
+                .desired_width(380.0)
                 .hint_text("benchmarks/orchestration/locks/models-manifest.json"),
         );
         if ui.button("Carregar manifesto").clicked() {
             state.load_manifest();
         }
     });
+    if state.is_busy() {
+        ui.ctx().request_repaint();
+    }
+    if !state.notice.is_empty() {
+        ui.label(egui::RichText::new(&state.notice).small().color(theme::OK));
+    }
+    if !state.error.is_empty() {
+        kit::error_banner(ui, &state.error);
+    }
+    if state.dir.as_os_str().is_empty() {
+        kit::empty_state(
+            ui,
+            "Nenhum diretório padrão: defina STUDIO_MODELS_DIR (ou edite o campo acima).",
+        );
+    }
+
+    // ── Progresso rico: arquivo corrente + n/total (sem números inventados) ──
+    if let Some(progress) = &state.hashing {
+        kit::progress_line(
+            ui,
+            "CALCULANDO SHA-256:",
+            progress.done as f32 / progress.total.max(1) as f32,
+            &format!(
+                "{}/{} verificados · corrente: {}",
+                progress.done, progress.total, progress.current
+            ),
+        );
+    }
+
+    // Estado do manifesto (âncora literal: "manifesto carregado: N registro(s)").
     match (&state.manifest, state.manifest_error.is_empty()) {
         (Some(manifest), true) => {
-            ui.label(format!(
-                "manifesto carregado: {} registro(s)",
-                manifest.len()
-            ));
+            ui.label(
+                egui::RichText::new(format!(
+                    "manifesto carregado: {} registro(s)",
+                    manifest.len()
+                ))
+                .monospace()
+                .small()
+                .color(theme::OK),
+            );
         }
         (None, true) => {
-            ui.label("Sem manifesto carregado: os SHAs ficam sem cruzamento.");
+            ui.label(
+                egui::RichText::new("Sem manifesto carregado: os SHAs ficam sem cruzamento.")
+                    .monospace()
+                    .small()
+                    .color(theme::STALE),
+            );
         }
         _ => {
-            ui.colored_label(egui::Color32::RED, &state.manifest_error);
+            kit::error_banner(ui, &state.manifest_error);
         }
     }
+    ui.add_space(theme::SPACE_MD);
+
+    // ── 4 cards de resumo (mockup 3.7) ──
+    let total_bytes: u64 = state.list.iter().map(|item| item.size_bytes).sum();
+    let ok_count = state
+        .list
+        .iter()
+        .filter(|item| item.manifest_status == ManifestStatus::Ok)
+        .count();
+    let deviant_count = state
+        .list
+        .iter()
+        .filter(|item| item.manifest_status == ManifestStatus::Desviado)
+        .count();
+    let pending_count = state
+        .list
+        .iter()
+        .filter(|item| item.manifest_status == ManifestStatus::Pendente)
+        .count();
+    ui.columns(4, |cols| {
+        kit::metric_card(
+            &mut cols[0],
+            "Volume mapeado",
+            format!("{:.1} GiB", total_bytes as f64 / 1_073_741_824.0),
+            &format!("{} arquivo(s) .gguf", state.list.len()),
+            theme::PRIMARY_FIXED_DIM,
+        );
+        kit::metric_card(
+            &mut cols[1],
+            "Verificados OK",
+            ok_count.to_string(),
+            "SHA confere com o manifesto",
+            theme::OK,
+        );
+        kit::metric_card(
+            &mut cols[2],
+            "Divergências (hash)",
+            deviant_count.to_string(),
+            if deviant_count > 0 {
+                "DESVIADO — não é o congelado"
+            } else {
+                "nenhuma divergência"
+            },
+            if deviant_count > 0 {
+                theme::ERROR
+            } else {
+                theme::OK
+            },
+        );
+        kit::metric_card(
+            &mut cols[3],
+            "Pipeline de hash",
+            if state.is_busy() { "1".to_owned() } else { "0".to_owned() },
+            if state.is_busy() {
+                "verificação em andamento"
+            } else {
+                "ocioso"
+            },
+            if state.is_busy() {
+                theme::WARN
+            } else {
+                theme::STALE
+            },
+        );
+    });
+    ui.add_space(theme::SPACE_MD);
+
     if state.list.is_empty() && !state.is_busy() {
-        ui.label("Nenhum .gguf listado. Ajuste o diretório e clique em Inventariar.");
+        kit::empty_state(ui, "Nenhum .gguf listado. Ajuste o diretório e clique em Inventariar.");
         return;
     }
+
+    // ── Filtros por status (mockup 3.7) ──
+    ui.horizontal(|ui| {
+        let filters: [(u8, String); 3] = [
+            (0, format!("Todos ({})", state.list.len())),
+            (1, format!("Divergentes ({deviant_count})")),
+            (2, format!("Pendentes ({pending_count})")),
+        ];
+        for (id, label) in filters {
+            if ui
+                .selectable_label(state.filter == id, egui::RichText::new(label).monospace().small())
+                .clicked()
+            {
+                state.filter = id;
+            }
+        }
+    });
+    ui.add_space(theme::SPACE_SM);
+
+    // ── Tabela: checksum calculado × manifesto em colunas separadas ──
     egui::Grid::new("models-artifacts")
         .striped(true)
         .show(ui, |ui| {
-            ui.label("Arquivo");
-            ui.label("Tamanho");
-            ui.label("SHA-256 (duplo clique seleciona)");
-            ui.label("manifesto");
-            ui.end_row();
+            kit::grid_header(
+                ui,
+                &[
+                    "Arquivo",
+                    "Tamanho",
+                    "Checksum SHA-256 calculado",
+                    "Checksum do manifesto",
+                    "Status",
+                ],
+            );
             for artifact in &state.list {
-                ui.label(&artifact.file_name);
+                let visible = match state.filter {
+                    1 => artifact.manifest_status == ManifestStatus::Desviado,
+                    2 => artifact.manifest_status == ManifestStatus::Pendente,
+                    _ => true,
+                };
+                if !visible {
+                    continue;
+                }
+                kit::mono_cell(ui, &artifact.file_name);
                 ui.label(format!(
                     "{:.1} MiB",
                     artifact.size_bytes as f64 / 1_048_576.0
                 ));
-                ui.label(if artifact.sha256_hex.is_empty() {
-                    "calculando…"
+                let calculated = if artifact.sha256_hex.is_empty() {
+                    egui::RichText::new("calculando…").small().color(theme::WARN)
                 } else {
-                    &artifact.sha256_hex
-                });
-                let status_color = match artifact.manifest_status {
-                    ManifestStatus::Ok => egui::Color32::from_rgb(80, 200, 120),
-                    ManifestStatus::Desviado => egui::Color32::RED,
-                    ManifestStatus::Pendente | ManifestStatus::SemRegistro => {
-                        ui.visuals().weak_text_color()
-                    }
+                    egui::RichText::new(&artifact.sha256_hex).monospace().small()
                 };
-                ui.label(egui::RichText::new(artifact.manifest_status.label()).color(status_color));
+                ui.label(calculated);
+                let expected = state
+                    .manifest
+                    .as_ref()
+                    .and_then(|manifest| manifest.expected(&artifact.file_name));
+                match expected {
+                    Some(sha) => {
+                        let short: String = sha.chars().take(16).collect();
+                        ui.label(
+                            egui::RichText::new(format!("{short}…"))
+                                .monospace()
+                                .small()
+                                .color(theme::ON_SURFACE_VARIANT),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("— sem registro")
+                                .small()
+                                .color(theme::STALE),
+                        );
+                    }
+                }
+                let status_color = match artifact.manifest_status {
+                    ManifestStatus::Ok => theme::OK,
+                    ManifestStatus::Desviado => theme::ERROR,
+                    ManifestStatus::Pendente | ManifestStatus::SemRegistro => theme::STALE,
+                };
+                ui.label(
+                    egui::RichText::new(artifact.manifest_status.label())
+                        .monospace()
+                        .color(status_color),
+                );
                 ui.end_row();
             }
         });
@@ -114,10 +271,14 @@ pub fn show(ui: &mut egui::Ui, state: &mut ModelsState) {
         .iter()
         .filter(|item| !item.sha256_hex.is_empty())
         .count();
-    ui.label(format!(
-        "{} arquivo(s), {} com SHA-256, total {:.1} GiB. Leitura apenas: nada é deletado.",
-        state.list.len(),
-        hashed,
-        state.list.iter().map(|item| item.size_bytes).sum::<u64>() as f64 / 1_073_741_824.0
-    ));
+    ui.label(
+        egui::RichText::new(format!(
+            "{} arquivo(s), {} com SHA-256, total {:.1} GiB. Leitura apenas: nada é deletado.",
+            state.list.len(),
+            hashed,
+            total_bytes as f64 / 1_073_741_824.0
+        ))
+        .small()
+        .weak(),
+    );
 }

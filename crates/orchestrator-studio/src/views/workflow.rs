@@ -1,4 +1,6 @@
-//! Painel "Workflow": formulário, grade de estágios e corrida A→B→C real.
+//! Painel 3.12 Workflow (pipeline A→B→C): formulário, métricas cumulativas,
+//! três cards de estágio com conectores (estado por estágio), tabela de
+//! auditoria e painel de exceção com o erro REAL do estágio que falhou.
 //!
 //! Com a feature `dds`, o corredor injetado em [`WorkflowState::start`]
 //! replica o `run_seq` do `wf-run` (mesmos prompts congelados e montagem via
@@ -6,6 +8,11 @@
 //! GUI: a thread de UI nunca bloqueia). Sem `dds`, o painel informa como
 //! habilitar.
 
+#[cfg(feature = "dds")]
+use crate::kit;
+use crate::panel_header::panel_header;
+#[cfg(feature = "dds")]
+use crate::theme;
 use crate::workflow::WorkflowState;
 #[cfg(feature = "dds")]
 use crate::workflow::{StageOut, WorkflowConfig, WorkflowEvent};
@@ -15,24 +22,34 @@ use eframe::egui;
 #[cfg(feature = "dds")]
 pub fn show(ui: &mut egui::Ui, state: &mut WorkflowState) {
     state.poll();
-    ui.heading("Workflow A→B→C (wf-run na GUI)");
-    ui.label(
-        "Executa a cadeia sequencial canônica pelo data space: cada estágio é \
-         uma task DDS real reivindicada por agentes vivos no domínio.",
+    panel_header(
+        ui,
+        "SEC 3.12 · WORKFLOW PIPELINE A→B→C · CADEIA DDS",
+        "Workflow (A→B→C)",
+        "Cadeia sequencial canônica pelo data space: cada estágio é uma task \
+         DDS real reivindicada por agentes vivos · tópico Tasks · saída Tasks/TaskOutput",
     );
-    ui.separator();
+
     let run_clicked = form(ui, state);
     if run_clicked && !state.busy && !state.config.entry.trim().is_empty() {
         let config = state.config.clone();
         state.start(move |id, tx| run_chain(id, config, tx));
     }
-    results(ui, state);
+    metrics(ui, state);
+    stage_cards(ui, state);
+    audit_table(ui, state);
+    exceptions(ui, state);
 }
 
 /// Sem DDS: orientação (a máquina de estado continua testável).
 #[cfg(not(feature = "dds"))]
 pub fn show(ui: &mut egui::Ui, state: &mut WorkflowState) {
-    ui.heading("Workflow A→B→C (wf-run na GUI)");
+    panel_header(
+        ui,
+        "SEC 3.12 · WORKFLOW PIPELINE A→B→C · CADEIA DDS",
+        "Workflow (A→B→C)",
+        "Cadeia sequencial canônica pelo data space",
+    );
     ui.label(
         "Requer a feature `dds` na compilação do Studio (cargo build \
          --features dds) e agentes vivos no domínio informado.",
@@ -48,6 +65,7 @@ fn ui_available(state: &WorkflowState) -> bool {
 /// Formulário; devolve `true` quando o botão Executar foi clicado.
 #[cfg(feature = "dds")]
 fn form(ui: &mut egui::Ui, state: &mut WorkflowState) -> bool {
+    kit::section_label(ui, "Configuração do Pipeline de Orquestração DDS");
     egui::Grid::new("workflow_form").show(ui, |ui| {
         ui.label("domínio DDS:");
         ui.add(egui::DragValue::new(&mut state.config.domain).range(0..=u32::MAX));
@@ -71,9 +89,15 @@ fn form(ui: &mut egui::Ui, state: &mut WorkflowState) -> bool {
         let label = if state.busy {
             "executando…"
         } else {
-            "Executar A→B→C"
+            "Executar Workflow (A→B→C)"
         };
-        run_clicked = ui.button(label).clicked();
+        run_clicked = ui
+            .add(egui::Button::new(
+                egui::RichText::new(label)
+                    .monospace()
+                    .color(theme::ON_PRIMARY),
+            ))
+            .clicked();
     });
     run_clicked
 }
@@ -172,35 +196,267 @@ async fn chain(
     }
 }
 
+/// Estado visual de um estágio (derivação honesta do estado real).
 #[cfg(feature = "dds")]
-fn results(ui: &mut egui::Ui, state: &mut WorkflowState) {
-    if state.busy {
-        ui.label("executando estágios…");
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StageVisual {
+    Pendente,
+    Executando,
+    Concluido,
+    Falhou,
+}
+
+#[cfg(feature = "dds")]
+fn stage_of<'a>(stages: &'a [StageOut], name: &str) -> Option<&'a StageOut> {
+    stages.iter().find(|stage| stage.stage == name)
+}
+
+#[cfg(feature = "dds")]
+fn stage_visual(state: &WorkflowState, name: &str) -> StageVisual {
+    if stage_of(&state.stages, name).is_some() {
+        return StageVisual::Concluido;
     }
     if let Some(error) = &state.error {
-        ui.colored_label(egui::Color32::RED, format!("erro: {error}"));
+        if error.contains(&format!("estágio {name}")) {
+            return StageVisual::Falhou;
+        }
     }
-    if state.stages.is_empty() && !state.busy {
-        ui.label("Nenhum estágio ainda. Preencha a entrada e execute.");
-        return;
+    if state.busy {
+        // Primeiro estágio sem card = o que está executando agora.
+        let first_missing = ["A", "B", "C"]
+            .iter()
+            .find(|candidate| stage_of(&state.stages, candidate).is_none());
+        if first_missing == Some(&name) {
+            return StageVisual::Executando;
+        }
     }
-    egui::Grid::new("workflow_stages").show(ui, |ui| {
-        ui.strong("estágio");
-        ui.strong("task");
-        ui.strong("latência ms");
-        ui.strong("conteúdo (prévia)");
-        ui.end_row();
-        for stage in &state.stages {
-            ui.label(&stage.stage);
-            ui.monospace(stage.task_id.chars().take(8).collect::<String>());
-            ui.label(stage.latency_ms.to_string());
-            ui.label(&stage.preview);
-            ui.end_row();
+    StageVisual::Pendente
+}
+
+/// Faixa de 4 métricas do pipeline (mockup 3.12).
+#[cfg(feature = "dds")]
+fn metrics(ui: &mut egui::Ui, state: &mut WorkflowState) {
+    ui.add_space(theme::SPACE_MD);
+    let breakdown = ["A", "B", "C"]
+        .iter()
+        .map(|name| {
+            stage_of(&state.stages, name)
+                .map(|stage| stage.latency_ms.to_string())
+                .unwrap_or_else(|| "—".to_owned())
+        })
+        .collect::<Vec<_>>()
+        .join(" + ");
+    let pipeline_state = if state.busy {
+        ("Em execução", theme::WARN)
+    } else if state.error.is_some() {
+        ("Falhou", theme::ERROR)
+    } else if state.total_ms.is_some() {
+        ("Concluído com sucesso", theme::OK)
+    } else {
+        ("Aguardando execução", theme::STALE)
+    };
+    let delivered = state.stages.len();
+    ui.columns(4, |cols| {
+        kit::metric_card(
+            &mut cols[0],
+            "Tempo total cumulativo",
+            state
+                .total_ms
+                .map(|ms| format!("{ms} ms"))
+                .unwrap_or_else(|| "—".to_owned()),
+            &format!("A {breakdown} ms"),
+            theme::PRIMARY_FIXED_DIM,
+        );
+        kit::metric_card(
+            &mut cols[1],
+            "Estado do pipeline",
+            pipeline_state.0.to_owned(),
+            if state.busy {
+                "estágios em andamento"
+            } else {
+                "sem retry silencioso"
+            },
+            pipeline_state.1,
+        );
+        kit::metric_card(
+            &mut cols[2],
+            "Saída final",
+            format!("{delivered}/3 entregues"),
+            "tópico Tasks/TaskOutput",
+            if delivered == 3 {
+                theme::OK
+            } else if delivered > 0 {
+                theme::WARN
+            } else {
+                theme::STALE
+            },
+        );
+        kit::metric_card(
+            &mut cols[3],
+            "Último erro",
+            if state.error.is_some() {
+                "sim".to_owned()
+            } else {
+                "nenhum".to_owned()
+            },
+            if state.busy { "executando…" } else { "ver exceções abaixo" },
+            if state.error.is_some() {
+                theme::ERROR
+            } else {
+                theme::OK
+            },
+        );
+    });
+    ui.add_space(theme::SPACE_MD);
+}
+
+/// Cadeia distribuída: 3 cards de estágio com conectores (mockup 3.12).
+#[cfg(feature = "dds")]
+fn stage_cards(ui: &mut egui::Ui, state: &mut WorkflowState) {
+    kit::section_label(ui, "Cadeia distribuída em execução (A → B → C)");
+    let visuals: [(String, StageVisual); 3] = [
+        (String::from("A"), stage_visual(state, "A")),
+        (String::from("B"), stage_visual(state, "B")),
+        (String::from("C"), stage_visual(state, "C")),
+    ];
+    // Conectores A→B→C com o estágio de origem concluído destacado.
+    let connector = |from: StageVisual| -> (egui::Color32, &'static str) {
+        match from {
+            StageVisual::Concluido => (theme::OK, "●——▶"),
+            StageVisual::Falhou => (theme::ERROR, "●——✖"),
+            _ => (theme::STALE, "◌——▶"),
+        }
+    };
+    ui.horizontal(|ui| {
+        for (index, (name, visual)) in visuals.iter().enumerate() {
+            if index > 0 {
+                let (_, previous) = visuals[index - 1].clone();
+                let (color, symbol) = connector(previous);
+                ui.label(
+                    egui::RichText::new(symbol)
+                        .monospace()
+                        .color(color)
+                        .size(16.0),
+                );
+            }
+            let (accent, state_label) = match visual {
+                StageVisual::Concluido => (theme::OK, "● CONCLUÍDO"),
+                StageVisual::Executando => (theme::WARN, "◐ EXECUTANDO"),
+                StageVisual::Falhou => (theme::ERROR, "✖ FALHOU"),
+                StageVisual::Pendente => (theme::STALE, "◌ PENDENTE"),
+            };
+            kit::accent_card(ui, accent, |ui| {
+                ui.set_min_width(230.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(name).strong().size(16.0));
+                    kit::badge(ui, state_label, accent);
+                });
+                match stage_of(&state.stages, name) {
+                    Some(stage) => {
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "task {}",
+                                stage.task_id.chars().take(8).collect::<String>()
+                            ))
+                            .monospace()
+                            .small(),
+                        );
+                        ui.label(egui::RichText::new(format!(
+                            "latência: {} ms",
+                            stage.latency_ms
+                        ))
+                        .monospace()
+                        .small());
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "prévia do buffer (96): {}",
+                                if stage.preview.is_empty() {
+                                    "—"
+                                } else {
+                                    &stage.preview
+                                }
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                    }
+                    None => {
+                        ui.label(
+                            egui::RichText::new("aguardando o estágio anterior…")
+                                .small()
+                                .weak(),
+                        );
+                    }
+                }
+            });
         }
     });
+    ui.add_space(theme::SPACE_MD);
+}
+
+/// Tabela de auditoria dos frames entregues (mesma fonte dos cards).
+#[cfg(feature = "dds")]
+fn audit_table(ui: &mut egui::Ui, state: &mut WorkflowState) {
+    if state.stages.is_empty() {
+        return;
+    }
+    kit::section_label(ui, &format!(
+        "Auditoria de estágios DDS · {}/3 ENTREGUES",
+        state.stages.len()
+    ));
+    egui::Grid::new("workflow_stages")
+        .striped(true)
+        .show(ui, |ui| {
+            kit::grid_header(
+                ui,
+                &["Estágio", "Task ID", "Latência", "Buffer (prévia 96 chars)"],
+            );
+            for stage in &state.stages {
+                ui.label(egui::RichText::new(&stage.stage).strong());
+                kit::mono_cell(
+                    ui,
+                    &stage.task_id.chars().take(8).collect::<String>(),
+                );
+                ui.label(format!("{} ms", stage.latency_ms));
+                ui.label(egui::RichText::new(&stage.preview).small().weak());
+                ui.end_row();
+            }
+        });
     if let Some(total_ms) = state.total_ms {
         if state.error.is_none() {
-            ui.label(format!("total: {total_ms} ms (3 estágios encadeados)"));
+            ui.label(
+                egui::RichText::new(format!(
+                    "total: {total_ms} ms (3 estágios encadeados)"
+                ))
+                .monospace()
+                .small()
+                .color(theme::OK),
+            );
         }
+    }
+    ui.add_space(theme::SPACE_MD);
+}
+
+/// Tratamento de exceções: o erro REAL do estágio que falhou.
+#[cfg(feature = "dds")]
+fn exceptions(ui: &mut egui::Ui, state: &mut WorkflowState) {
+    kit::section_label(ui, "Tratamento de exceções & timeout por estágio");
+    if let Some(error) = &state.error {
+        kit::error_banner(
+            ui,
+            &format!("{error} — o pipeline para no primeiro estágio que falha (sem retry silencioso)"),
+        );
+    } else if state.busy {
+        ui.label(
+            egui::RichText::new("executando — falhas aparecem aqui com o motivo real")
+                .small()
+                .weak(),
+        );
+    } else {
+        ui.label(
+            egui::RichText::new("nenhuma exceção na última execução")
+                .small()
+                .color(theme::OK),
+        );
     }
 }

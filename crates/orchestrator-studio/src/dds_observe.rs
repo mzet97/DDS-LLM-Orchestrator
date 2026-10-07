@@ -185,6 +185,32 @@ pub fn studio_node_row(presence: &StudioNodePresence) -> StudioNodeRow {
     }
 }
 
+/// Rótulo do status canônico do contrato (`orch-common::ToolCallStatus`:
+/// PENDING=0, ALLOWED=1, DENIED=2, EXECUTING=3, COMPLETED=4, FAILED=5).
+#[must_use]
+pub fn status_label(status: i32) -> &'static str {
+    match status {
+        0 => "PENDING",
+        1 => "ALLOWED",
+        2 => "DENIED",
+        3 => "EXECUTING",
+        4 => "COMPLETED",
+        5 => "FAILED",
+        _ => "desconhecido",
+    }
+}
+
+/// Rótulo do nível de segurança (contrato `SecurityLevel`: 0=PUBLIC,
+/// 1=INTERNAL — só esses dois confirmados no IDL; demais aparecem crus).
+#[must_use]
+pub fn security_level_label(level: i32) -> String {
+    match level {
+        0 => String::from("0 · public"),
+        1 => String::from("1 · internal"),
+        other => format!("{other} · ?"),
+    }
+}
+
 /// Foto do domínio: agentes, tool calls, métricas, descoberta e nós Studio
 /// drenados na mesma janela.
 #[derive(Debug, Clone, Default)]
@@ -258,6 +284,11 @@ pub struct DdsState {
     pub error: String,
     /// `true` enquanto a coleta roda em background (`poll` drena).
     pub busy: bool,
+    /// Aba ativa do painel de coleções (0=agentes, 1=tools, 2=métricas,
+    /// 3=descoberta, 4=instalações) — estado de apresentação da view.
+    pub tab: u8,
+    /// Filtro por substring aplicado às tabelas de coleções.
+    pub filter: String,
     receiver: Option<mpsc::Receiver<ObserveMsg>>,
 }
 
@@ -277,6 +308,8 @@ impl DdsState {
             snapshot: DdsSnapshot::default(),
             error: String::new(),
             busy: false,
+            tab: 0,
+            filter: String::new(),
             receiver: None,
         }
     }

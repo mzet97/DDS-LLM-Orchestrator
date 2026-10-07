@@ -213,6 +213,10 @@ pub struct MachinesState {
     pub tokens: BTreeMap<String, String>,
     /// Último probe por `node_url` normalizado (linha da tabela).
     pub probes: BTreeMap<String, ProbeStatus>,
+    /// Modal "Definir como Alvo & Configurar Token" (3.10): URL em edição.
+    pub modal_url: Option<String>,
+    /// Token digitado no modal (SÓ memória — RNF-04).
+    pub modal_token: String,
     receiver: Option<mpsc::Receiver<MachinesMsg>>,
 }
 
@@ -237,6 +241,8 @@ impl std::fmt::Debug for MachinesState {
             )
             .field("tokens(chaves)", &self.tokens.keys().collect::<Vec<_>>())
             .field("probes", &self.probes)
+            .field("modal_url", &self.modal_url)
+            .field("modal_token_definido", &!self.modal_token.trim().is_empty())
             .field("receiver", &self.receiver.is_some())
             .finish()
     }
@@ -439,10 +445,20 @@ impl MachinesState {
     /// no arranque → nós protegidos respondem 401 → dica "token ausente" com
     /// o formulário para (re)entrar. Clique durante `busy` é ignorado.
     pub fn probe(&mut self, machine: &MachineRecord) {
+        self.probe_url(&machine.node_url);
+        if self.busy {
+            self.notice = format!("sondando {}…", machine.machine_id);
+        }
+    }
+
+    /// Sonda uma URL descoberta (mesma sonda do catálogo; usada pelo botão
+    /// "Forçar probe"/"Re-testar" da tabela 3.10). Clique durante `busy` é
+    /// ignorado.
+    pub fn probe_url(&mut self, node_url: &str) {
         if self.busy {
             return;
         }
-        let url = normalize_url(&machine.node_url);
+        let url = normalize_url(node_url);
         let token = self.tokens.get(&url).cloned();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -454,7 +470,20 @@ impl MachinesState {
         });
         self.receiver = Some(rx);
         self.busy = true;
-        self.notice = format!("sondando {}…", machine.machine_id);
+        self.notice = String::from("sondando…");
+    }
+
+    /// Guarda token de uma URL descoberta na memória local (modal 3.10
+    /// "Definir como Alvo & Configurar Token"). NUNCA vai ao catálogo nem a
+    /// disco (RNF-04).
+    pub fn remember_token(&mut self, node_url: &str, token: &str) {
+        let url = normalize_url(node_url);
+        let trimmed = token.trim();
+        if trimmed.is_empty() {
+            self.tokens.remove(&url);
+        } else {
+            self.tokens.insert(url, String::from(trimmed));
+        }
     }
 
     /// Drena o worker; chamar a cada frame enquanto `busy` (padrão

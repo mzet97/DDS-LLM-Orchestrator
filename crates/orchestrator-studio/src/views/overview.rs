@@ -1,39 +1,48 @@
-//! Painel de visão geral: cartões honestos em GRID com estado visual.
+//! Painel de visão geral (3.1): agregado honesto do sistema em um relance.
 
 use crate::agents::AgentsState;
+use crate::catalog_remote::SharedCatalog;
 use crate::discovery::DiscoveryState;
+use crate::kit;
+use crate::machines::{now_unix_ns, ProbeState};
 use crate::models::ModelsState;
 use crate::overview::{summarize, OverviewInput, TileHealth};
+use crate::panel_header::panel_header;
 use crate::services::ServicesPanel;
 use crate::state::AppState;
 use crate::theme;
 use eframe::egui;
 
-/// Paleta do painel (escura, consistente com o tema do egui dark).
+/// Paleta dos cartões (tokens do design system).
 fn health_style(health: TileHealth, stale: bool) -> (egui::Color32, &'static str) {
     if stale || health == TileHealth::Stale {
-        return (egui::Color32::from_rgb(90, 98, 110), "◌"); // apagado
+        return (theme::STALE, "◌");
     }
     match health {
-        TileHealth::Ok => (egui::Color32::from_rgb(48, 209, 88), "●"), // verde
-        TileHealth::Warn => (egui::Color32::from_rgb(255, 214, 10), "◐"), // âmbar
-        TileHealth::Stale => (egui::Color32::from_rgb(90, 98, 110), "◌"),
+        TileHealth::Ok => (theme::OK, "●"),
+        TileHealth::Warn => (theme::WARN, "◐"),
+        TileHealth::Stale => (theme::STALE, "◌"),
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn show(
     ui: &mut egui::Ui,
-    state: &AppState,
-    services: &ServicesPanel,
-    agents: &AgentsState,
+    state: &mut AppState,
+    services: &mut ServicesPanel,
+    agents: &mut AgentsState,
     models: &ModelsState,
+    shared: &mut SharedCatalog,
     proof: &str,
     discovery: &DiscoveryState,
 ) {
-    ui.add_space(theme::SPACE_XS);
-    ui.heading("Visão geral");
-    ui.weak("Fonte de cada cartão indicada; nada é inventado — apagado = ainda não lido.");
-    ui.add_space(theme::SPACE_MD);
+    panel_header(
+        ui,
+        &format!("SEC 3.1 · DOMÍNIO DDS {} · VISÃO GERAL", discovery.domain),
+        "Visão geral",
+        "Agregado somente leitura — fonte de cada cartão indicada; nada é \
+         inventado, apagado = ainda não lido.",
+    );
 
     let target = discovery.selected_url();
 
@@ -52,15 +61,12 @@ pub fn show(
             ui.horizontal(|ui| match state.node() {
                 Some(node) => {
                     ui.label(
-                        egui::RichText::new(
-                            format!(
-                                "Conectado ao studio-node v{}.{} · {} operação(ões) registradas",
-                                node.version.major,
-                                node.version.minor,
-                                node.operations.len()
-                            )
-                            .to_string(),
-                        )
+                        egui::RichText::new(format!(
+                            "Conectado ao studio-node v{}.{} · {} operação(ões) registradas",
+                            node.version.major,
+                            node.version.minor,
+                            node.operations.len()
+                        ))
                         .color(theme::OK),
                     );
                 }
@@ -70,7 +76,7 @@ pub fn show(
             });
             // QoS lease do AgentRegistry (10 s) com contagem a partir do
             // heartbeat mais recente visto pela descoberta.
-            let now = crate::machines::now_unix_ns();
+            let now = now_unix_ns();
             let freshest = discovery
                 .agents
                 .iter()
@@ -134,12 +140,41 @@ pub fn show(
         });
     ui.add_space(theme::SPACE_MD);
 
-    let target = discovery.selected_url();
+    // ── Botões de ação reais (mockup 3.1): disparam os polls existentes ──
+    ui.horizontal(|ui| {
+        let reload = ui.button("Re-carregar alvo (Nó · Serviços · Catálogo)");
+        let read_plan = ui.button("Ler plano de serviços");
+        let refresh_orch = ui.button("Atualizar orquestrador (HTTP)");
+        if reload.clicked() || read_plan.clicked() {
+            if let Some(target) = discovery.selected_url() {
+                let token = crate::discovery::token_for_url(
+                    &target,
+                    std::env::var("HOME").ok().as_deref(),
+                );
+                if reload.clicked() {
+                    state.refresh_from_node_with_token(&target, token.as_deref());
+                }
+                services.refresh();
+                if reload.clicked() {
+                    shared.refresh();
+                }
+            }
+        }
+        if refresh_orch.clicked() {
+            agents.refresh();
+        }
+    });
+    ui.add_space(theme::SPACE_MD);
+
     let hashed = models
         .list
         .iter()
         .filter(|item| !item.sha256_hex.is_empty())
         .count();
+    let (catalog_items, catalog_cursor, catalog_loaded) = match &shared.snapshot {
+        Some(snapshot) => (snapshot.items.len(), snapshot.cursor.0, true),
+        None => (0, 0, false),
+    };
     let tiles = summarize(&OverviewInput {
         node: state.node(),
         node_error: "",
@@ -154,13 +189,14 @@ pub fn show(
         discovery_agents: discovery.agents.len(),
         discovery_servers: discovery.servers.len(),
         discovery_target: target.as_deref(),
+        catalog_items,
+        catalog_cursor,
+        catalog_loaded,
+        catalog_error: &shared.notice,
     });
 
-    ui.add_space(theme::SPACE_MD);
-
-    // ── Topologia de Barramento (3.1): os 3 pilares com dados REAIS ──
+    // ── 3 pilares (mockup 3.1 seção 1): nós · agentes · inferência ──
     ui.columns(3, |cols| {
-        // Nós Studio
         cols[0].vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("●").color(theme::OK));
@@ -171,7 +207,6 @@ pub fn show(
                 ui.monospace(egui::RichText::new(node.url.clone()).small());
             }
         });
-        // AgentRegistry
         cols[1].vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("🤖").color(theme::PRIMARY_FIXED_DIM));
@@ -189,7 +224,6 @@ pub fn show(
                 );
             }
         });
-        // ServerStatus
         cols[2].vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new("⚡").color(theme::WARN));
@@ -211,17 +245,31 @@ pub fn show(
             }
         });
     });
-    ui.add_space(theme::SPACE_MD);
+    ui.add_space(theme::SPACE_LG);
 
-    // ── Despacho Operacional Imediato (3.1) ──
-    ui.collapsing("Despacho Operacional Imediato", |ui| {
-        ui.weak(
-            "Ações rápidas: abram as seções correspondentes (Topologia re-observa              o domínio; Serviços lê o plano; Nó conecta). A Visão geral é agregado              somente leitura.",
+    // ── Fontes de dados & telemetria: 6 cartões com legenda real ──
+    let ok_count = tiles
+        .iter()
+        .filter(|tile| !tile.stale && tile.health == TileHealth::Ok)
+        .count();
+    let warn_count = tiles
+        .iter()
+        .filter(|tile| !tile.stale && tile.health == TileHealth::Warn)
+        .count();
+    let stale_count = tiles.len() - ok_count - warn_count;
+    ui.horizontal(|ui| {
+        ui.strong("Fontes de Dados do Sistema");
+        ui.label(
+            egui::RichText::new(format!(
+                "● {ok_count} Ok · ◐ {warn_count} Warn · ◌ {stale_count} Stale"
+            ))
+            .monospace()
+            .small()
+            .color(theme::ON_SURFACE_VARIANT),
         );
     });
+    ui.add_space(theme::SPACE_SM);
 
-    ui.add_space(theme::SPACE_MD);
-    // Grade 2 colunas de cartões com borda colorida por estado.
     egui::Grid::new("overview_grid")
         .spacing(egui::vec2(10.0, 10.0))
         .min_col_width(300.0)
@@ -229,7 +277,6 @@ pub fn show(
             for (index, tile) in tiles.iter().enumerate() {
                 let (color, icon) = health_style(tile.health, tile.stale);
                 ui.group(|ui| {
-                    // borda do grupo com a cor do estado
                     ui.set_min_size(egui::vec2(300.0, 74.0));
                     ui.vertical(|ui| {
                         ui.horizontal(|ui| {
@@ -243,30 +290,71 @@ pub fn show(
                             egui::RichText::new(&tile.summary)
                         });
                     });
-                    if tile.stale {
-                        // filete à esquerda do grupo quando apagado
-                        ui.painter().rect_filled(
-                            ui.max_rect().with_max_x(ui.max_rect().left() + 3.0),
-                            2.0,
-                            egui::Color32::from_rgb(70, 76, 86),
-                        );
+                    // Filete à esquerda com a cor do estado.
+                    let stripe_color = if tile.stale {
+                        theme::STALE
                     } else {
-                        ui.painter().rect_filled(
-                            ui.max_rect().with_max_x(ui.max_rect().left() + 3.0),
-                            2.0,
-                            color,
-                        );
-                    }
+                        color
+                    };
+                    ui.painter().rect_filled(
+                        ui.max_rect().with_max_x(ui.max_rect().left() + 3.0),
+                        0.0,
+                        stripe_color,
+                    );
                 });
                 if index % 2 == 1 {
                     ui.end_row();
                 }
             }
-            // fecha a linha se ímpar
             if tiles.len() % 2 == 1 {
                 ui.end_row();
             }
         });
+
+    ui.add_space(theme::SPACE_LG);
+
+    // ── Instalações no domínio (mockup 3.1 seção 3, campos reais) ──
+    ui.strong("Instalações no domínio (Studio.NodePresence)");
+    ui.add_space(theme::SPACE_SM);
+    if discovery.nodes.is_empty() {
+        kit::empty_state(
+            ui,
+            &format!(
+                "Nenhuma instalação vista no domínio {} — nós com canvas DDS \
+                 publicam presença sozinhos.",
+                discovery.domain
+            ),
+        );
+    } else {
+        let now = now_unix_ns();
+        egui::Grid::new("overview_nodes_grid")
+            .striped(true)
+            .show(ui, |ui| {
+                kit::grid_header(ui, &["Node ID", "URL", "Idade HB", "Estado"]);
+                for node in &discovery.nodes {
+                    kit::mono_cell(ui, &node.node_id);
+                    kit::mono_cell(ui, &node.url);
+                    ui.label(format!("{} s", node.age_secs(now)));
+                    let (color, detail) = match &node.probe {
+                        Some(probe) => match probe.state {
+                            ProbeState::Online => (theme::OK, probe.detail.clone()),
+                            ProbeState::AuthPending => (theme::AUTH, probe.detail.clone()),
+                            ProbeState::Offline | ProbeState::Unknown => {
+                                (theme::ERROR, probe.detail.clone())
+                            }
+                        },
+                        None => (theme::STALE, String::from("sondando…")),
+                    };
+                    ui.label(
+                        egui::RichText::new(format!("● {detail}"))
+                            .monospace()
+                            .small()
+                            .color(color),
+                    );
+                    ui.end_row();
+                }
+            });
+    }
 
     ui.add_space(theme::SPACE_MD);
     ui.weak(format!(

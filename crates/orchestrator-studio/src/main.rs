@@ -89,6 +89,48 @@ impl Section {
             Self::Logs => "Logs",
         }
     }
+
+    /// Numeração do mockup (sidebar "3.1 … 3.14").
+    fn num(self) -> &'static str {
+        match self {
+            Self::Overview => "3.1",
+            Self::Node => "3.2",
+            Self::Inference => "3.3",
+            Self::Launch => "3.4",
+            Self::Agents => "3.5",
+            Self::Dispatch => "3.6",
+            Self::Models => "3.7",
+            Self::Services => "3.8",
+            Self::Shared => "3.9",
+            Self::Machines => "3.10",
+            Self::Topology => "3.11",
+            Self::Workflow => "3.12",
+            #[cfg(feature = "dds")]
+            Self::Tools => "3.13",
+            Self::Logs => "3.14",
+        }
+    }
+
+    /// Tag curta mono (badge da sidebar nos mockups: DOM/MESH/HB/…).
+    fn tag(self) -> &'static str {
+        match self {
+            Self::Overview => "DOM",
+            Self::Node => "RPC",
+            Self::Inference => "LLAMA",
+            Self::Launch => "RUN",
+            Self::Agents => "HB",
+            Self::Dispatch => ":8080",
+            Self::Models => "SHA",
+            Self::Services => "SYSTEMD",
+            Self::Shared => "REV",
+            Self::Machines => "DDS",
+            Self::Topology => "MESH",
+            Self::Workflow => "DAG",
+            #[cfg(feature = "dds")]
+            Self::Tools => "SEC",
+            Self::Logs => "500",
+        }
+    }
 }
 
 struct StudioApp {
@@ -115,12 +157,34 @@ struct StudioApp {
     /// Observação DDS inicial já disparada (Topologia/Ferramentas ao abrir).
     #[cfg(feature = "dds")]
     dds_observed: bool,
+    /// Auto-carga contínua do alvo a cada 5 s (toggle do header, mockups).
+    auto_reload: bool,
+    /// Instante da última auto-carga (None = nenhuma ainda).
+    last_autoload: Option<std::time::Instant>,
 }
+
+/// Hash curto do git da árvore (build.rs; "dev" fora de repositório).
+const GIT_HASH: &str = match option_env!("STUDIO_GIT_HASH") {
+    Some(hash) => hash,
+    None => "dev",
+};
 
 impl StudioApp {
     fn new() -> Self {
         Self {
-            section: Section::Overview,
+            // Tela inicial = Topologia DDS (decisão do autor 2026-10-06): o
+            // mapa vivo do domínio é a porta de entrada; sem a feature `dds`
+            // o fallback honesto é a Visão geral.
+            section: {
+                #[cfg(feature = "dds")]
+                {
+                    Section::Topology
+                }
+                #[cfg(not(feature = "dds"))]
+                {
+                    Section::Overview
+                }
+            },
             state: AppState::new(),
             node_url: String::from("http://127.0.0.1:4317"),
             node_token: String::new(),
@@ -142,6 +206,8 @@ impl StudioApp {
             autoloaded_target: None,
             #[cfg(feature = "dds")]
             dds_observed: false,
+            auto_reload: true,
+            last_autoload: None,
             discovery: {
                 let domain = std::env::var("STUDIO_DDS_DOMAIN")
                     .ok()
@@ -169,12 +235,61 @@ impl eframe::App for StudioApp {
                 ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                     ui.strong("DDS Orchestrator Studio");
                     ui.label(
-                        egui::RichText::new("v1.0")
+                        egui::RichText::new(format!("v1.0-{GIT_HASH}"))
                             .monospace()
                             .small()
                             .color(orchestrator_studio::theme::OUTLINE),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // chip de modo protegido (mockup: último à direita)
+                        let armed = self.protected.armed;
+                        let chip_text = if armed {
+                            "🛡 MODO PROTEGIDO: ARMADO (clique p/ desarmar)"
+                        } else {
+                            "🛡 MODO PROTEGIDO: DESARMADO (clique p/ armar)"
+                        };
+                        let chip_color = if armed {
+                            orchestrator_studio::theme::ERROR
+                        } else {
+                            orchestrator_studio::theme::ON_SURFACE_VARIANT
+                        };
+                        let chip = ui.add(egui::Button::new(
+                            egui::RichText::new(chip_text)
+                                .monospace()
+                                .small()
+                                .color(chip_color),
+                        ));
+                        if chip.clicked() {
+                            self.protected.set_armed(!armed);
+                        }
+                        if let Some(refusal) = &self.protected.last_refusal {
+                            if armed {
+                                ui.label(
+                                    egui::RichText::new(refusal)
+                                        .small()
+                                        .color(orchestrator_studio::theme::ERROR),
+                                );
+                            }
+                        }
+                        // toggle Auto-Carga (5s): re-leituras periódicas do alvo
+                        let auto = ui.selectable_label(
+                            self.auto_reload,
+                            egui::RichText::new("Auto-Carga (5s)")
+                                .monospace()
+                                .small()
+                                .color(if self.auto_reload {
+                                    orchestrator_studio::theme::PRIMARY_FIXED_DIM
+                                } else {
+                                    orchestrator_studio::theme::STALE
+                                }),
+                        );
+                        if auto.clicked() {
+                            self.auto_reload = !self.auto_reload;
+                            orchestrator_studio::studio_log::info(format!(
+                                "auto-carga contínua: {}",
+                                if self.auto_reload { "ligada" } else { "desligada" }
+                            ));
+                        }
                         // chip NÓ ALVO (3.1/3.10): URL + estado de conexão
                         if let Some(target) = self.discovery.selected_url() {
                             let connected = self.state.node().is_some();
@@ -249,36 +364,6 @@ impl eframe::App for StudioApp {
                             egui::FontId::monospace(10.0),
                             orchestrator_studio::theme::ON_SURFACE_VARIANT,
                         );
-                        // chip de modo protegido
-                        let armed = self.protected.armed;
-                        let chip_text = if armed {
-                            "🛡 MODO PROTEGIDO: ARMADO (clique p/ desarmar)"
-                        } else {
-                            "🛡 MODO PROTEGIDO: DESARMADO (clique p/ armar)"
-                        };
-                        let chip_color = if armed {
-                            orchestrator_studio::theme::ERROR
-                        } else {
-                            orchestrator_studio::theme::ON_SURFACE_VARIANT
-                        };
-                        let chip = ui.add(egui::Button::new(
-                            egui::RichText::new(chip_text)
-                                .monospace()
-                                .small()
-                                .color(chip_color),
-                        ));
-                        if chip.clicked() {
-                            self.protected.set_armed(!armed);
-                        }
-                        if let Some(refusal) = &self.protected.last_refusal {
-                            if armed {
-                                ui.label(
-                                    egui::RichText::new(refusal)
-                                        .small()
-                                        .color(orchestrator_studio::theme::ERROR),
-                                );
-                            }
-                        }
                     });
                 });
             });
@@ -287,6 +372,9 @@ impl eframe::App for StudioApp {
         // online; manual: combobox no painel Máquinas) propaga para TODOS os
         // painéis que falam com um studio-node — trocar uma vez, muda tudo.
         self.discovery.poll();
+        // Drena a leitura do nó alvo em QUALQUER tela (o header e a barra de
+        // status dependem dela — antes só a view Nó drenava).
+        self.state.poll();
         if self.discovery.autoselect_first_online() {
             orchestrator_studio::studio_log::info(format!(
                 "alvo automático: {}",
@@ -318,6 +406,28 @@ impl eframe::App for StudioApp {
                     .refresh_from_node_with_token(&target, token.as_deref());
                 self.services.refresh();
                 self.shared.refresh();
+            }
+        }
+
+        // Auto-carga contínua (toggle do header, mockup "Auto-Carga (5s)"):
+        // re-leituras periódicas do alvo — cada refresh é no-op enquanto busy.
+        if self.auto_reload {
+            ui.ctx().request_repaint_after(std::time::Duration::from_secs(1));
+            if self
+                .last_autoload
+                .is_none_or(|at| at.elapsed().as_secs() >= 5)
+            {
+                self.last_autoload = Some(std::time::Instant::now());
+                if let Some(target) = self.discovery.selected_url() {
+                    let token = orchestrator_studio::discovery::token_for_url(
+                        &target,
+                        std::env::var("HOME").ok().as_deref(),
+                    );
+                    self.state
+                        .refresh_from_node_with_token(&target, token.as_deref());
+                    self.services.refresh();
+                    self.shared.refresh();
+                }
             }
         }
 
@@ -381,9 +491,12 @@ impl eframe::App for StudioApp {
                     for section in *sections {
                         let busy = matches!(section, Section::Models) && self.models.is_busy();
                         let label = if busy {
-                            format!("{} …", section.label())
+                            format!("{} {}", section.num(), {
+                                let base = section.label();
+                                format!("{base} …")
+                            })
                         } else {
-                            section.label().to_string()
+                            format!("{} {}", section.num(), section.label())
                         };
                         let selected = self.section == *section;
                         let text = if selected {
@@ -394,12 +507,20 @@ impl eframe::App for StudioApp {
                             egui::RichText::new(&label)
                                 .color(orchestrator_studio::theme::ON_SURFACE)
                         };
-                        let response = ui
-                            .selectable_label(selected, text)
-                            .interact(egui::Sense::click());
-                        if response.clicked() {
-                            self.section = *section;
-                        }
+                        ui.horizontal(|ui| {
+                            let response = ui
+                                .selectable_label(selected, text)
+                                .interact(egui::Sense::click());
+                            if response.clicked() {
+                                self.section = *section;
+                            }
+                            ui.label(
+                                egui::RichText::new(section.tag())
+                                    .monospace()
+                                    .small()
+                                    .color(orchestrator_studio::theme::OUTLINE),
+                            );
+                        });
                     }
                     ui.add_space(orchestrator_studio::theme::SPACE_MD);
                 }
@@ -418,10 +539,11 @@ impl eframe::App for StudioApp {
                     };
                     orchestrator_studio::views::overview::show(
                         ui,
-                        &self.state,
-                        &self.services,
-                        &self.agents,
+                        &mut self.state,
+                        &mut self.services,
+                        &mut self.agents,
                         &self.models,
+                        &mut self.shared,
                         proof,
                         &self.discovery,
                     );
@@ -469,7 +591,11 @@ impl eframe::App for StudioApp {
                     orchestrator_studio::views::dispatch::show(ui, &mut self.dispatch)
                 }
                 #[cfg(feature = "dds")]
-                Section::Topology => orchestrator_studio::views::topology::show(ui, &mut self.dds),
+                Section::Topology => orchestrator_studio::views::topology::show(
+                    ui,
+                    &mut self.dds,
+                    &self.discovery,
+                ),
                 Section::Workflow => {
                     orchestrator_studio::views::workflow::show(ui, &mut self.workflow)
                 }
@@ -489,7 +615,14 @@ impl eframe::App for StudioApp {
 }
 
 fn main() -> Result<()> {
-    let options = eframe::NativeOptions::default();
+    // Janela no tamanho do mockup (3.3 screen.png = 1600×1358) para que o
+    // layout respire — janela pequena espreme os cards e o design some.
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([1600.0, 900.0])
+            .with_min_inner_size([1024.0, 640.0]),
+        ..eframe::NativeOptions::default()
+    };
     eframe::run_native(
         "DDS Orchestrator Studio",
         options,

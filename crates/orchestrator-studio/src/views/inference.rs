@@ -1,111 +1,260 @@
-//! Painel de inferência: sessão multi-turn contra o llama ao vivo.
+//! Painel 3.3 Inferência & Chat de Engenharia: dois planos visuais —
+//! "visto no domínio" (ServerStatus DDS, cards) × "conectado para conversar"
+//! (endpoint HTTP manual), parâmetros completos (temperatura/top-p/tokens) e
+//! transcript com estatísticas reais por resposta (duração, tokens, t/s).
 
 use crate::discovery::DiscoveryState;
 use crate::inference::{InferenceState, Role};
 use crate::kit;
-use crate::panel_header;
+use crate::panel_header::panel_header;
+use crate::theme;
 use eframe::egui;
 
-/// Servidor, modelos, parâmetros, prompt e transcript da sessão.
+/// Servidor descoberto, verificação de modelos, parâmetros e transcript.
 pub fn show(ui: &mut egui::Ui, infer: &mut InferenceState, discovery: &DiscoveryState) {
-    panel_header::panel_header(
+    panel_header(
         ui,
-        "SEC 3.3 · INFERÊNCIA — CHAT LLAMA-SERVER",
-        "Inferência",
-        "Chat multi-turn contra o llama-server via HTTP · dois planos: descoberta DDS (ServerStatus) × endpoint HTTP manual · timeout até 120s",
-    );
-    // Servidores de inferência VIVOS no domínio (ServerStatus — descoberta
-    // automática). Nota honesta: o contrato não carrega a URL HTTP do
-    // servidor (só id/modelo/slots); a URL do formulário segue manual.
-    // ── PLANO 1 (3.3): SERVIDOR DESCOBERTO — DDS, automático ──
-    ui.collapsing(
-        format!(
-            "SERVIDOR DESCOBERTO (DDS) — domínio {} [{}]",
-            discovery.domain,
-            if discovery.servers.is_empty() { "nenhum" } else { "presente" }
+        &format!(
+            "SEC 3.3 · INFERÊNCIA · DDS_TOPIC: STUDIO.SERVERSTATUS · DOMÍNIO {}",
+            discovery.domain
         ),
-        |ui| {
-            if discovery.servers.is_empty() {
-                ui.label(format!(
-                    "Nenhum servidor anunciando ServerStatus no domínio {} — \
-                     o llama-server precisa rodar com --enable-dds --dds-domain {} \
-                     para aparecer aqui.",
-                    discovery.domain, discovery.domain
-                ));
-            } else {
-                egui::Grid::new("dds_live_servers")
-                    .striped(true)
-                    .show(ui, |ui| {
-                        kit::grid_header(ui, &["server_id", "modelo", "slots", "pronto"]);
-                        for server in &discovery.servers {
-                            kit::mono_cell(ui, &server.server_id);
-                            ui.label(&server.model_loaded);
-                            ui.label(format!(
-                                "{}/{}",
-                                server.slots_processing,
-                                server.slots_idle + server.slots_processing
-                            ));
-                            ui.label(if server.ready { "sim" } else { "não" });
-                            ui.end_row();
-                        }
-                    });
-                ui.weak("Nota: o ServerStatus não carrega URL HTTP — o endpoint do chat é manual (abaixo).");
-            }
-        },
+        "Inferência & Chat de Engenharia",
+        "Dois planos: descoberta DDS (ServerStatus — presença) × endpoint HTTP \
+         (chat) · envio pode levar até 120 s (REQ/T-820-19)",
     );
-    ui.separator();
-    // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
-    infer.poll();
-    ui.collapsing("Inferência (servidor llama ao vivo)", |ui| {
-        ui.horizontal(|ui| {
-            ui.label("servidor:");
-            ui.add_enabled_ui(!infer.busy, |ui| {
-                ui.text_edit_singleline(&mut infer.server_url);
-                if ui.button("Modelos").clicked() {
-                    infer.refresh_models();
-                }
-            });
-        });
-        if infer.models.is_empty() {
-            ui.text_edit_singleline(&mut infer.model);
+
+    // ── Seção 1: servidores descobertos no domínio (cards) ──
+    kit::section_label(ui, &format!(
+        "SERVIDORES DESCOBERTOS NO DOMÍNIO (SERVERSTATUS) · {}",
+        if discovery.servers.is_empty() {
+            "NENHUM"
         } else {
-            egui::ComboBox::from_label("modelo")
-                .selected_text(&infer.model)
-                .show_ui(ui, |ui| {
-                    for candidate in infer.models.clone() {
-                        ui.selectable_value(&mut infer.model, candidate.clone(), candidate);
-                    }
-                });
+            "AO VIVO"
         }
-        ui.add(egui::Slider::new(&mut infer.temperature, 0.0..=2.0).text("temperatura"));
-        ui.add(egui::Slider::new(&mut infer.max_tokens, 1..=4096).text("máx. tokens"));
-        ui.label("prompt:");
-        ui.text_edit_multiline(&mut infer.prompt);
-        ui.horizontal(|ui| {
-            ui.add_enabled_ui(!infer.busy, |ui| {
-                if ui.button("Enviar").clicked() {
-                    infer.send();
-                }
+    ));
+    if discovery.servers.is_empty() {
+        kit::empty_state(
+            ui,
+            &format!(
+                "Nenhum servidor anunciando ServerStatus no domínio {} — o \
+                 llama-server precisa rodar com --enable-dds --dds-domain {} \
+                 para aparecer aqui.",
+                discovery.domain, discovery.domain
+            ),
+        );
+    } else {
+        for server in &discovery.servers {
+            let total = server.slots_idle + server.slots_processing;
+            let full = total > 0 && server.slots_idle == 0;
+            let accent = if full {
+                theme::ERROR
+            } else if server.ready {
+                theme::OK
+            } else {
+                theme::WARN
+            };
+            kit::accent_card(ui, accent, |ui| {
+                ui.horizontal(|ui| {
+                    kit::mono_cell(ui, &server.server_id);
+                    kit::badge(
+                        ui,
+                        if server.ready { "PRONTO" } else { "NÃO PRONTO" },
+                        accent,
+                    );
+                });
+                ui.label(&server.model_loaded);
+                ui.label(
+                    egui::RichText::new(format!(
+                        "KV SLOTS {}/{} ATIVOS ({} livres){}",
+                        server.slots_processing,
+                        total,
+                        server.slots_idle,
+                        if full { " · LOTADO" } else { "" }
+                    ))
+                    .monospace()
+                    .small()
+                    .color(if full {
+                        theme::ERROR
+                    } else {
+                        theme::ON_SURFACE_VARIANT
+                    }),
+                );
             });
-            if ui.button("Nova sessão").clicked() {
-                infer.clear_session();
+        }
+        ui.label(
+            egui::RichText::new("Nota: o ServerStatus NÃO carrega a URL HTTP — o \
+                 endpoint do chat é manual (abaixo). Visto no domínio ≠ \
+                 conectado para conversar.")
+                .small()
+                .weak(),
+        );
+    }
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Seção 2: endpoint HTTP + verificação /v1/models + parâmetros ──
+    kit::section_label(ui, "ENDPOINT DE CONTROLE HTTP & VERIFICAÇÃO DE MODELOS");
+    ui.horizontal(|ui| {
+        ui.label("servidor:");
+        ui.add_enabled_ui(!infer.busy, |ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut infer.server_url)
+                    .desired_width(260.0)
+                    .hint_text("http://192.168.1.61:8081"),
+            );
+            if ui.button("Verificar /v1/models").clicked() {
+                infer.refresh_models();
             }
         });
-        ui.separator();
-        egui::ScrollArea::vertical()
-            .max_height(220.0)
-            .show(ui, |ui| {
-                if infer.history.is_empty() {
-                    ui.label(&infer.reply);
-                }
-                for message in &infer.history {
-                    let who = match message.role {
-                        Role::System => "sistema",
-                        Role::User => "você",
-                        Role::Assistant => "assistente",
-                    };
-                    ui.label(format!("{who}: {}", message.content));
+    });
+    if !infer.reply.is_empty() {
+        ui.label(egui::RichText::new(&infer.reply).small().weak());
+    }
+    if !infer.models.is_empty() {
+        ui.label(
+            egui::RichText::new(format!(
+                "● HTTP OK · {} modelo(s) anunciado(s): {}",
+                infer.models.len(),
+                infer.models.join(" · ")
+            ))
+            .monospace()
+            .small()
+            .color(theme::OK),
+        );
+    }
+    ui.horizontal(|ui| {
+        ui.label("modelo:");
+        egui::ComboBox::from_id_salt("infer-model")
+            .selected_text(if infer.model.is_empty() {
+                "—".to_owned()
+            } else {
+                infer.model.clone()
+            })
+            .show_ui(ui, |ui| {
+                for model in &infer.models {
+                    ui.selectable_value(&mut infer.model, model.clone(), model.as_str());
                 }
             });
     });
+    egui::Grid::new("infer_params").show(ui, |ui| {
+        ui.label("temperatura:");
+        ui.add(egui::Slider::new(&mut infer.temperature, 0.0..=2.0));
+        ui.label("top-p:");
+        ui.add(egui::Slider::new(&mut infer.top_p, 0.0..=1.0));
+        ui.end_row();
+        ui.label("máx. tokens:");
+        ui.add(egui::DragValue::new(&mut infer.max_tokens).range(1..=8192));
+        ui.label("timeout: até 120 s (REQ/T-820-19)");
+        ui.end_row();
+    });
+    ui.separator();
+
+    // ── Seção 3: transcript com stats reais por resposta ──
+    kit::section_label(ui, "TRANSCRIPT DE ENGENHARIA & DEPURAÇÃO");
+    egui::ScrollArea::vertical()
+        .id_salt("infer-transcript")
+        .max_height(320.0)
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            if infer.history.is_empty() {
+                kit::empty_state(ui, "sessão vazia — envie o primeiro prompt abaixo.");
+            }
+            let mut assistant_index = 0usize;
+            for message in &infer.history {
+                match message.role {
+                    Role::System => {
+                        ui.label(egui::RichText::new(format!("sistema: {}", message.content)).weak());
+                    }
+                    Role::User => {
+                        ui.label(
+                            egui::RichText::new(format!("você: {}", message.content))
+                                .color(theme::ON_SURFACE),
+                        );
+                    }
+                    Role::Assistant => {
+                        ui.vertical(|ui| {
+                            ui.label(
+                                egui::RichText::new(format!("assistente: {}", message.content))
+                                    .color(theme::SECONDARY_FIXED),
+                            );
+                            if let Some(stats) = infer.stats.get(assistant_index) {
+                                let tokens = match (stats.prompt_tokens, stats.completion_tokens) {
+                                    (Some(p), Some(c)) => format!(" · {p}+{c} tokens"),
+                                    (None, Some(c)) => format!(" · {c} tokens de saída"),
+                                    _ => String::new(),
+                                };
+                                let tps = stats
+                                    .tokens_per_sec()
+                                    .map(|v| format!(" · {v:.1} tok/s"))
+                                    .unwrap_or_default();
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "↳ {} ms{tokens}{tps}",
+                                        stats.elapsed_ms
+                                    ))
+                                    .monospace()
+                                    .small()
+                                    .color(theme::OUTLINE),
+                                );
+                            }
+                        });
+                        assistant_index += 1;
+                    }
+                }
+            }
+            if infer.busy {
+                ui.label(
+                    egui::RichText::new("◐ gerando… (pode levar até 120 s)")
+                        .monospace()
+                        .small()
+                        .color(theme::WARN),
+                );
+                ui.ctx().request_repaint();
+            }
+        });
+    ui.add_space(theme::SPACE_SM);
+
+    // ── Seção 4: entrada ──
+    ui.horizontal(|ui| {
+        ui.label("prompt:");
+        let send = ui.add_enabled(
+            !infer.busy && !infer.prompt.trim().is_empty(),
+            egui::Button::new(
+                egui::RichText::new(if infer.busy {
+                    "gerando…"
+                } else {
+                    "Enviar Prompt"
+                })
+                .monospace()
+                .color(theme::ON_PRIMARY),
+            )
+            .fill(theme::PRIMARY_CONTAINER),
+        );
+        if send.clicked() {
+            infer.send();
+        }
+        if ui.button("Nova sessão").clicked() {
+            infer.clear_session();
+        }
+    });
+    ui.add(
+        egui::TextEdit::multiline(&mut infer.prompt)
+            .desired_rows(2)
+            .desired_width(ui.available_width())
+            .hint_text("digite o comando ou questão técnica…"),
+    );
+
+    // ── Rodapé: slots reais do ServerStatus ──
+    if let Some(server) = discovery.servers.first() {
+        let total = server.slots_idle + server.slots_processing;
+        ui.add_space(theme::SPACE_SM);
+        ui.label(
+            egui::RichText::new(format!(
+                "SLOTS {}: {} ocupado(s) · {} livre(s) de {}",
+                server.server_id, server.slots_processing, server.slots_idle, total
+            ))
+            .monospace()
+            .small()
+            .color(theme::OUTLINE),
+        );
+    }
 }

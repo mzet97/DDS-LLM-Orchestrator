@@ -33,6 +33,36 @@ pub struct ChatRequest {
     pub messages: Vec<Message>,
     pub temperature: f32,
     pub max_tokens: u32,
+    /// Top-p (nucleus sampling) — atravessa o contrato como os demais.
+    pub top_p: f32,
+}
+
+/// Estatísticas reais de um turno assistente (tela 3.3): duração medida +
+/// tokens do `usage` quando o servidor os retorna.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct TurnStats {
+    pub elapsed_ms: u64,
+    pub prompt_tokens: Option<u64>,
+    pub completion_tokens: Option<u64>,
+}
+
+impl TurnStats {
+    /// Tokens/s derivado (Some só quando há tokens de saída e Δt > 0).
+    #[must_use]
+    pub fn tokens_per_sec(&self) -> Option<f64> {
+        let tokens = self.completion_tokens? as f64;
+        let secs = self.elapsed_ms as f64 / 1000.0;
+        (secs > 0.0).then(|| tokens / secs)
+    }
+}
+
+/// `usage` da resposta do servidor (campos opcionais — nem todo build envia).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Deserialize)]
+pub struct UsageInfo {
+    #[serde(default)]
+    pub prompt_tokens: Option<u64>,
+    #[serde(default)]
+    pub completion_tokens: Option<u64>,
 }
 
 /// Modelo anunciado por `GET /v1/models` (campos usados pela GUI).
@@ -83,8 +113,8 @@ fn send(
 enum InferMsg {
     /// Resposta de `Modelos` (`GET /v1/models`).
     Models(Result<Vec<ModelInfo>, String>),
-    /// Resposta de `Enviar` (`POST /v1/chat/completions`).
-    Reply(Result<String, String>),
+    /// Resposta de `Enviar` (`POST /v1/chat/completions`) com stats reais.
+    Reply(Result<(String, Option<UsageInfo>, u64), String>),
 }
 
 /// Estado do painel de inferência: parâmetros que atravessam o contrato,
@@ -94,11 +124,14 @@ pub struct InferenceState {
     pub server_url: String,
     pub model: String,
     pub temperature: f32,
+    pub top_p: f32,
     pub max_tokens: u32,
     pub prompt: String,
     pub reply: String,
     pub models: Vec<String>,
     pub history: Vec<Message>,
+    /// Estatísticas por turno assistente (paralelo ao histórico; tela 3.3).
+    pub stats: Vec<TurnStats>,
     /// `true` enquanto há HTTP em background (`poll` drena e libera).
     pub busy: bool,
     receiver: Option<mpsc::Receiver<InferMsg>>,
@@ -112,11 +145,13 @@ impl InferenceState {
             server_url: String::from("http://127.0.0.1:8082"),
             model: String::new(),
             temperature: 0.2,
+            top_p: 0.95,
             max_tokens: 256,
             prompt: String::new(),
             reply: String::new(),
             models: Vec::new(),
             history: Vec::new(),
+            stats: Vec::new(),
             busy: false,
             receiver: None,
         }
@@ -156,14 +191,17 @@ impl InferenceState {
             model: self.model.clone(),
             messages: self.history.clone(),
             temperature: self.temperature,
+            top_p: self.top_p,
             max_tokens: self.max_tokens,
         };
         let url = self.server_url.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let _ = tx.send(InferMsg::Reply(
-                chat_completion(&url, &chat).map_err(|err| err.to_string()),
-            ));
+            let started = std::time::Instant::now();
+            let result = chat_completion_with_stats(&url, &chat)
+                .map(|(content, usage)| (content, usage, started.elapsed().as_millis() as u64))
+                .map_err(|err| err.to_string());
+            let _ = tx.send(InferMsg::Reply(result));
         });
         self.receiver = Some(rx);
         self.busy = true;
@@ -191,10 +229,17 @@ impl InferenceState {
                         }
                     },
                     InferMsg::Reply(result) => match result {
-                        Ok(content) => {
+                        Ok((content, usage, elapsed_ms)) => {
                             self.history.push(Message {
                                 role: Role::Assistant,
                                 content: content.clone(),
+                            });
+                            self.stats.push(TurnStats {
+                                elapsed_ms,
+                                prompt_tokens: usage.as_ref().and_then(|u| u.prompt_tokens),
+                                completion_tokens: usage
+                                    .as_ref()
+                                    .and_then(|u| u.completion_tokens),
                             });
                             self.reply = content;
                             self.prompt.clear();
@@ -214,9 +259,10 @@ impl InferenceState {
         }
     }
 
-    /// Nova sessão: limpa histórico, prompt e resposta.
+    /// Nova sessão: limpa histórico, prompt, resposta e stats.
     pub fn clear_session(&mut self) {
         self.history.clear();
+        self.stats.clear();
         self.prompt.clear();
         self.reply.clear();
     }
@@ -245,8 +291,18 @@ pub fn list_models(base_url: &str) -> Result<Vec<ModelInfo>, InferenceError> {
         })
 }
 
-/// Geração real (`POST /v1/chat/completions`); retorna o conteúdo da 1ª escolha.
+/// Geração real (`POST /v1/chat/completions`); retorna o conteúdo da 1ª
+/// escolha (mantida para os callers que só querem o texto).
 pub fn chat_completion(base_url: &str, chat: &ChatRequest) -> Result<String, InferenceError> {
+    chat_completion_with_stats(base_url, chat).map(|(content, _)| content)
+}
+
+/// Como [`chat_completion`], devolvendo também o `usage` reportado pelo
+/// servidor (tokens) quando presente na resposta.
+pub fn chat_completion_with_stats(
+    base_url: &str,
+    chat: &ChatRequest,
+) -> Result<(String, Option<UsageInfo>), InferenceError> {
     let url = base_url.trim_end_matches('/');
     let response = send(
         url,
@@ -261,6 +317,8 @@ pub fn chat_completion(base_url: &str, chat: &ChatRequest) -> Result<String, Inf
     #[derive(Deserialize)]
     struct Completion {
         choices: Vec<Choice>,
+        #[serde(default)]
+        usage: Option<UsageInfo>,
     }
     let completion: Completion = response.json().map_err(|err| InferenceError::Unreachable {
         url: String::from(url),
@@ -270,6 +328,6 @@ pub fn chat_completion(base_url: &str, chat: &ChatRequest) -> Result<String, Inf
         .choices
         .into_iter()
         .next()
-        .map(|choice| choice.message.content)
+        .map(|choice| (choice.message.content, completion.usage))
         .ok_or(InferenceError::EmptyChoices)
 }

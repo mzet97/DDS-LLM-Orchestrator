@@ -47,6 +47,11 @@ pub struct OverviewInput<'a> {
     pub discovery_agents: usize,
     pub discovery_servers: usize,
     pub discovery_target: Option<&'a str>,
+    /// Catálogo compartilhado (6º card do mockup 3.1): snapshot da autoridade.
+    pub catalog_items: usize,
+    pub catalog_cursor: u64,
+    pub catalog_loaded: bool,
+    pub catalog_error: &'a str,
 }
 
 /// Resume os estados em cartões; vazio/falha vira cartão `stale`, nunca dado.
@@ -213,6 +218,40 @@ pub fn summarize(input: &OverviewInput<'_>) -> Vec<OverviewTile> {
             TileHealth::Stale
         },
     });
+    // 6º card do mockup 3.1: catálogo compartilhado (snapshot da autoridade).
+    tiles.push(if !input.catalog_error.is_empty() {
+        OverviewTile {
+            title: String::from("Catálogo compartilhado"),
+            summary: format!("não lido: {}", input.catalog_error),
+            stale: true,
+            health: TileHealth::Stale,
+        }
+    } else if input.catalog_loaded {
+        OverviewTile {
+            title: String::from("Catálogo compartilhado"),
+            summary: format!(
+                "{} registro(s) no snapshot · cursor {}",
+                input.catalog_items, input.catalog_cursor
+            ),
+            stale: false,
+            health: TileHealth::Ok,
+        }
+    } else {
+        OverviewTile {
+            title: String::from("Catálogo compartilhado"),
+            summary: if input.discovery_target.is_some() {
+                String::from("carregando snapshot do nó alvo…")
+            } else {
+                String::from("nunca lido — abra Catálogo e clique Ler snapshot")
+            },
+            stale: input.discovery_target.is_none(),
+            health: if input.discovery_target.is_some() {
+                TileHealth::Warn
+            } else {
+                TileHealth::Stale
+            },
+        }
+    });
     tiles
 }
 
@@ -241,6 +280,10 @@ mod tests {
             discovery_agents: 0,
             discovery_servers: 0,
             discovery_target: None,
+            catalog_items: 0,
+            catalog_cursor: 0,
+            catalog_loaded: false,
+            catalog_error: "",
         }
     }
 
@@ -250,7 +293,7 @@ mod tests {
 
         let tiles = summarize(&data);
 
-        assert_eq!(tiles.len(), 5);
+        assert_eq!(tiles.len(), 6);
         assert!(tiles.iter().all(|tile| tile.stale));
     }
 
@@ -291,6 +334,9 @@ mod tests {
         data.models_total = 15;
         data.models_hashed = 4;
         data.inference_proof = "OK";
+        data.catalog_items = 14;
+        data.catalog_cursor = 49;
+        data.catalog_loaded = true;
 
         let tiles = summarize(&data);
 

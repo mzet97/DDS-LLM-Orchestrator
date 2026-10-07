@@ -305,6 +305,7 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
                 content: plan.proof_prompt.clone(),
             }],
             temperature: 0.0,
+            top_p: 1.0,
             max_tokens: 32,
         },
     ) {

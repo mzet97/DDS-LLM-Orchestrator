@@ -103,9 +103,26 @@ enum ServicesMsg {
     /// Resposta de atuação + releitura do plano (mesma sequência do
     /// antigo `actuate_row`: atua, depois relê).
     Actuated {
+        route: String,
         outcome: Result<ActuateOut, String>,
         then_list: Option<Result<Vec<ServiceStatus>, String>>,
     },
+    /// Resposta do reinício (stop → start) + releitura do plano.
+    Restarted {
+        service: String,
+        stop: Result<ActuateOut, String>,
+        start: Option<Result<ActuateOut, String>>,
+        then_list: Option<Result<Vec<ServiceStatus>, String>>,
+    },
+}
+
+/// Entrada do log de auditoria de operações systemd (tela 3.8).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditEntry {
+    /// Ação aplicada (ex.: "POST /services/llama-server/start").
+    pub action: String,
+    /// Desfecho legível (ok com `acted/active` ou o motivo da falha).
+    pub outcome: String,
 }
 
 /// Estado do painel de serviços.
@@ -113,11 +130,18 @@ enum ServicesMsg {
 pub struct ServicesPanel {
     /// Ação aceita pelo modo protegido e aguardando confirmação (T-890-08).
     pub pending_action: Option<(String, bool)>,
+    /// Reinício pendente de confirmação (T-890-UX: ↺ = stop+start).
+    pub pending_restart: Option<String>,
     pub url: String,
     pub list: Vec<ServiceStatus>,
     pub error: String,
     /// `true` enquanto há HTTP em background (`poll` drena e libera).
     pub busy: bool,
+    /// Instante do último plano lido com sucesso (tela 3.8).
+    pub last_sync: Option<std::time::Instant>,
+    /// Log de auditoria das atuações aplicadas pela GUI (tela 3.8), mais
+    /// recente por último.
+    pub audit: Vec<AuditEntry>,
     receiver: Option<mpsc::Receiver<ServicesMsg>>,
 }
 
@@ -127,10 +151,13 @@ impl ServicesPanel {
     pub fn new() -> Self {
         Self {
             pending_action: None,
+            pending_restart: None,
             url: String::from("http://127.0.0.1:4317"),
             list: Vec::new(),
             error: String::new(),
             busy: false,
+            last_sync: None,
+            audit: Vec::new(),
             receiver: None,
         }
     }
@@ -160,8 +187,8 @@ impl ServicesPanel {
     }
 
     /// Efetiva start/stop na linha em BACKGROUND e relê o plano em seguida
-    /// (mesma sequência, fora da thread de UI — REQ/T-820-19). Clique
-    /// durante `busy` é ignorado; `poll` aplica o desfecho no painel.
+    /// (mesma sequência, fora da thread de UI — REQ/T-820-19). Clique durante
+    /// `busy` é ignorado; `poll` aplica o desfecho no painel.
     pub fn actuate_row(&mut self, service: &str, start: bool) {
         if self.busy {
             return;
@@ -170,63 +197,196 @@ impl ServicesPanel {
         let url = self.url.clone();
         let service_owned = service.to_string();
         let (tx, rx) = mpsc::channel();
+        let route = format!(
+            "POST /services/{service_owned}/{}",
+            if start { "start" } else { "stop" }
+        );
         std::thread::spawn(move || {
             let outcome = actuate(&url, &service_owned, start, &id).map_err(|err| err.to_string());
             let then_list = match outcome {
                 Ok(_) => Some(list_services(&url).map_err(|err| err.to_string())),
                 Err(_) => None,
             };
-            let _ = tx.send(ServicesMsg::Actuated { outcome, then_list });
+            let _ = tx.send(ServicesMsg::Actuated {
+                route,
+                outcome,
+                then_list,
+            });
         });
         self.receiver = Some(rx);
         self.busy = true;
         self.error = "atuando…".into();
     }
 
+    /// Reinicia a unidade em BACKGROUND: stop → start → relê o plano
+    /// (↺ da tela 3.8; mesma proteção do modo protegido). Clique durante
+    /// `busy` é ignorado.
+    pub fn restart_row(&mut self, service: &str) {
+        if self.busy {
+            return;
+        }
+        let stop_id = fresh_operation_id(service);
+        let start_id = fresh_operation_id(service);
+        let url = self.url.clone();
+        let service_owned = service.to_string();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let stop = actuate(&url, &service_owned, false, &stop_id).map_err(|err| err.to_string());
+            let start = if stop.is_ok() {
+                Some(actuate(&url, &service_owned, true, &start_id).map_err(|err| err.to_string()))
+            } else {
+                None
+            };
+            let then_list = if start.as_ref().is_some_and(Result::is_ok) {
+                Some(list_services(&url).map_err(|err| err.to_string()))
+            } else {
+                None
+            };
+            let _ = tx.send(ServicesMsg::Restarted {
+                service: service_owned,
+                stop,
+                start,
+                then_list,
+            });
+        });
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.error = "reiniciando (stop→start)…".into();
+    }
+
     /// Drena o worker; chamar a cada frame enquanto `busy`.
     pub fn poll(&mut self) {
-        let mut finished = false;
+        // Drena primeiro para uma fila local (o empréstimo de `receiver`
+        // não pode coexistir com os métodos `&mut self` que aplicam).
+        let mut drained: Vec<ServicesMsg> = Vec::new();
         if let Some(rx) = &self.receiver {
             while let Ok(msg) = rx.try_recv() {
-                match msg {
-                    ServicesMsg::Listed(result) => match result {
-                        Ok(list) => {
-                            self.list = list;
-                            self.error.clear();
-                        }
-                        Err(err) => {
-                            self.error = err;
-                        }
-                    },
-                    ServicesMsg::Actuated { outcome, then_list } => match outcome {
-                        Ok(out) => {
-                            self.error.clear();
-                            if let Some(listed) = then_list {
-                                match listed {
-                                    Ok(list) => {
-                                        self.list = list;
-                                        self.error.clear();
-                                    }
-                                    Err(err) => {
-                                        self.error = err;
-                                    }
-                                }
-                            }
-                            if !out.acted {
-                                self.error = format!("{} já estava convergido", out.service);
-                            }
-                        }
-                        Err(err) => {
-                            self.error = err;
-                        }
-                    },
+                drained.push(msg);
+            }
+        }
+        let finished = !drained.is_empty();
+        for msg in drained {
+            match msg {
+                ServicesMsg::Listed(result) => match result {
+                    Ok(list) => {
+                        self.list = list;
+                        self.error.clear();
+                        self.last_sync = Some(std::time::Instant::now());
+                    }
+                    Err(err) => {
+                        self.error = err;
+                    }
+                },
+                ServicesMsg::Actuated {
+                    route,
+                    outcome,
+                    then_list,
+                } => {
+                    self.apply_actuated(&route, outcome, then_list);
                 }
-                finished = true;
+                ServicesMsg::Restarted {
+                    service,
+                    stop,
+                    start,
+                    then_list,
+                } => {
+                    // Auditoria do reinício: duas entradas (stop e start).
+                    match stop {
+                        Ok(out) => self.audit.push(AuditEntry {
+                            action: format!("POST /services/{service}/stop"),
+                            outcome: format!("ok · acted={} active={}", out.acted, out.active),
+                        }),
+                        Err(err) => {
+                            self.error = err.clone();
+                            self.audit.push(AuditEntry {
+                                action: format!("POST /services/{service}/stop"),
+                                outcome: err,
+                            });
+                        }
+                    }
+                    if let Some(start) = start {
+                        match start {
+                            Ok(out) => {
+                                self.error.clear();
+                                self.audit.push(AuditEntry {
+                                    action: format!("POST /services/{service}/start"),
+                                    outcome: format!(
+                                        "ok · acted={} active={}",
+                                        out.acted, out.active
+                                    ),
+                                });
+                                self.apply_list(then_list);
+                            }
+                            Err(err) => {
+                                self.error = err.clone();
+                                self.audit.push(AuditEntry {
+                                    action: format!("POST /services/{service}/start"),
+                                    outcome: err,
+                                });
+                            }
+                        }
+                    }
+                }
             }
         }
         if finished {
             self.receiver = None;
             self.busy = false;
+        }
+        // Auditoria é um log: mantém só as últimas 32 entradas.
+        if self.audit.len() > 32 {
+            let drop = self.audit.len() - 32;
+            self.audit.drain(0..drop);
+        }
+    }
+
+    /// Aplica o desfecho de uma atuação start/stop (+ relista o plano).
+    fn apply_actuated(
+        &mut self,
+        route: &str,
+        outcome: Result<ActuateOut, String>,
+        then_list: Option<Result<Vec<ServiceStatus>, String>>,
+    ) {
+        match outcome {
+            Ok(out) => {
+                self.error.clear();
+                self.audit.push(AuditEntry {
+                    action: String::from(route),
+                    outcome: format!(
+                        "{} · acted={} active={}",
+                        if out.acted { "aplicada" } else { "já convergido" },
+                        out.acted,
+                        out.active
+                    ),
+                });
+                self.apply_list(then_list);
+                if !out.acted {
+                    self.error = format!("{} já estava convergido", out.service);
+                }
+            }
+            Err(err) => {
+                self.error = err.clone();
+                self.audit.push(AuditEntry {
+                    action: String::from(route),
+                    outcome: err,
+                });
+            }
+        }
+    }
+
+    /// Aplica a releitura do plano após atuação (quando existe).
+    fn apply_list(&mut self, then_list: Option<Result<Vec<ServiceStatus>, String>>) {
+        if let Some(listed) = then_list {
+            match listed {
+                Ok(list) => {
+                    self.list = list;
+                    self.error.clear();
+                    self.last_sync = Some(std::time::Instant::now());
+                }
+                Err(err) => {
+                    self.error = err;
+                }
+            }
         }
     }
 }
