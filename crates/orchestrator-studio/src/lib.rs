@@ -11,9 +11,10 @@ pub mod catalog_remote;
 pub mod dds_observe;
 pub mod discovery;
 pub mod inference;
-pub mod launch;
 /// Máquinas (REQ/T-840-03): registro multi-host no catálogo compartilhado
 /// com sonda `/version` por nó — segredo só em memória (RNF-04).
+pub mod kit;
+pub mod launch;
 pub mod machines;
 pub mod models;
 pub mod origin;
@@ -22,6 +23,7 @@ pub mod protected;
 pub mod services;
 pub mod state;
 pub mod studio_log;
+pub mod theme;
 pub mod views;
 pub mod workflow;
 pub mod workload;

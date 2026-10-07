@@ -20,6 +20,36 @@ use orchestrator_studio::workload::DispatchState;
 /// "Catálogo compartilhado" (autoridade no nó via `catalog_remote`).
 /// "Máquinas" (REQ/T-840-03) registra nós remotos no MESMO catálogo
 /// compartilhado e sonda cada um via `GET /version`.
+/// Grupos da navegação (migração Stitch: sidebar em 5 grupos, v6).
+const NAV_GROUPS: &[(&str, &[Section])] = &[
+    (
+        "Sistema",
+        &[Section::Overview, Section::Topology, Section::Logs],
+    ),
+    (
+        "Nós & Infraestrutura",
+        &[
+            Section::Machines,
+            Section::Node,
+            Section::Services,
+            Section::Shared,
+        ],
+    ),
+    (
+        "Enxame IA & Inferência",
+        &[
+            Section::Agents,
+            Section::Inference,
+            Section::Launch,
+            Section::Workflow,
+            #[cfg(feature = "dds")]
+            Section::Tools,
+        ],
+    ),
+    ("Artefatos", &[Section::Models]),
+    ("Diagnóstico", &[Section::Dispatch]),
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Section {
     Overview,
@@ -58,26 +88,6 @@ impl Section {
             Self::Tools => "Ferramentas",
             Self::Logs => "Logs",
         }
-    }
-
-    fn all() -> &'static [Self] {
-        &[
-            Self::Overview,
-            Self::Node,
-            Self::Inference,
-            Self::Launch,
-            Self::Agents,
-            Self::Dispatch,
-            Self::Models,
-            Self::Services,
-            Self::Shared,
-            Self::Machines,
-            Self::Topology,
-            Self::Workflow,
-            #[cfg(feature = "dds")]
-            Self::Tools,
-            Self::Logs,
-        ]
     }
 }
 
@@ -150,6 +160,86 @@ impl StudioApp {
 
 impl eframe::App for StudioApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Header 40px (migração Stitch): título + badge de domínio + chip de
+        // alvo + modo protegido. O repaint pulsante do dot é do ctx.
+        egui::Panel::top("header")
+            .exact_size(40.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.strong("DDS Orchestrator Studio");
+                    ui.label(
+                        egui::RichText::new("v1.0")
+                            .monospace()
+                            .small()
+                            .color(orchestrator_studio::theme::OUTLINE),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // badge de domínio com dot pulsante
+                        let (rect, _) =
+                            ui.allocate_at_least(egui::vec2(140.0, 22.0), egui::Sense::hover());
+                        ui.painter().rect_filled(
+                            rect,
+                            egui::CornerRadius::same(orchestrator_studio::theme::RADIUS_SM as u8),
+                            orchestrator_studio::theme::SURFACE_HIGH,
+                        );
+                        let any_alive = self
+                            .discovery
+                            .nodes
+                            .iter()
+                            .any(|n| n.is_alive(orchestrator_studio::machines::now_unix_ns()));
+                        let pulse: f32 = if any_alive {
+                            (ui.input(|i| i.time) * 2.0).sin() as f32 * 0.5 + 0.5
+                        } else {
+                            1.0
+                        };
+                        ui.painter().circle_filled(
+                            egui::pos2(rect.left() + 8.0, rect.center().y),
+                            3.0,
+                            orchestrator_studio::theme::PRIMARY_CONTAINER
+                                .gamma_multiply(1.0 - pulse * 0.5),
+                        );
+                        ui.painter().text(
+                            egui::pos2(rect.left() + 16.0, rect.center().y),
+                            egui::Align2::LEFT_CENTER,
+                            format!("DDS DOMAIN {}", self.discovery.domain),
+                            egui::FontId::monospace(10.0),
+                            orchestrator_studio::theme::ON_SURFACE_VARIANT,
+                        );
+                        // chip de modo protegido
+                        let armed = self.protected.armed;
+                        let chip_text = if armed {
+                            "🛡 MODO PROTEGIDO: ARMADO (clique p/ desarmar)"
+                        } else {
+                            "🛡 MODO PROTEGIDO: DESARMADO (clique p/ armar)"
+                        };
+                        let chip_color = if armed {
+                            orchestrator_studio::theme::ERROR
+                        } else {
+                            orchestrator_studio::theme::ON_SURFACE_VARIANT
+                        };
+                        let chip = ui.add(egui::Button::new(
+                            egui::RichText::new(chip_text)
+                                .monospace()
+                                .small()
+                                .color(chip_color),
+                        ));
+                        if chip.clicked() {
+                            self.protected.set_armed(!armed);
+                        }
+                        if let Some(refusal) = &self.protected.last_refusal {
+                            if armed {
+                                ui.label(
+                                    egui::RichText::new(refusal)
+                                        .small()
+                                        .color(orchestrator_studio::theme::ERROR),
+                                );
+                            }
+                        }
+                    });
+                });
+            });
+
         // T-890-03: descoberta → alvo único. O nó selecionado (auto: primeiro
         // online; manual: combobox no painel Máquinas) propaga para TODOS os
         // painéis que falam com um studio-node — trocar uma vez, muda tudo.
@@ -202,47 +292,75 @@ impl eframe::App for StudioApp {
             ));
             self.dds.refresh();
         }
-        egui::Panel::bottom("status").show(ui, |ui| {
-            ui.label(self.state.status());
-            ui.separator();
-            ui.label(format!(
-                "🛰 descoberta: {} nó(s) · {} agente(s) · {} inferência(s)",
-                self.discovery.nodes.len(),
-                self.discovery.agents.len(),
-                self.discovery.servers.len()
-            ));
-            if let Some(target) = self.discovery.selected_url() {
-                ui.separator();
-                ui.label(format!("🛰 alvo: {target}"));
-            }
-        });
-        egui::Panel::left("nav").show(ui, |ui| {
-            ui.heading("Studio");
-            for section in Section::all() {
-                let busy = matches!(section, Section::Models) && self.models.is_busy();
-                let label = if busy {
-                    format!("{} …", section.label())
-                } else {
-                    section.label().to_string()
+        egui::Panel::bottom("status")
+            .exact_size(52.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                let mono = |text: String| {
+                    egui::RichText::new(text)
+                        .monospace()
+                        .small()
+                        .color(orchestrator_studio::theme::ON_SURFACE_VARIANT)
                 };
-                if ui
-                    .selectable_label(self.section == *section, label)
-                    .clicked()
-                {
-                    self.section = *section;
+                ui.label(mono(format!(
+                    "ESTADO DO NÓ: {}",
+                    self.state.status()
+                )));
+                ui.label(mono(format!(
+                    "DESCOBERTA DDS: {} nó(s) ativos (lease 10s) · {} agente(s) · {} servidor(es) de inferência | Domínio: {}",
+                    self.discovery.nodes.len(),
+                    self.discovery.agents.len(),
+                    self.discovery.servers.len(),
+                    self.discovery.domain
+                )));
+                let alvo = self
+                    .discovery
+                    .selected_url()
+                    .unwrap_or_else(|| String::from("— nenhum alvo —"));
+                ui.label(mono(format!(
+                    "ALVO SELECIONADO: {alvo} | Token: apenas em memória, sem segredos em disco"
+                )));
+            });
+        egui::Panel::left("nav")
+            .exact_size(256.0)
+            .resizable(false)
+            .show(ui, |ui| {
+                ui.add_space(orchestrator_studio::theme::SPACE_SM);
+                for (group, sections) in NAV_GROUPS {
+                    ui.label(
+                        egui::RichText::new((*group).to_uppercase())
+                            .monospace()
+                            .small()
+                            .color(orchestrator_studio::theme::OUTLINE),
+                    );
+                    ui.add_space(orchestrator_studio::theme::SPACE_XS);
+                    for section in *sections {
+                        let busy = matches!(section, Section::Models) && self.models.is_busy();
+                        let label = if busy {
+                            format!("{} …", section.label())
+                        } else {
+                            section.label().to_string()
+                        };
+                        let selected = self.section == *section;
+                        let text = if selected {
+                            egui::RichText::new(&label)
+                                .strong()
+                                .color(orchestrator_studio::theme::PRIMARY_CONTAINER)
+                        } else {
+                            egui::RichText::new(&label)
+                                .color(orchestrator_studio::theme::ON_SURFACE)
+                        };
+                        let response = ui
+                            .selectable_label(selected, text)
+                            .interact(egui::Sense::click());
+                        if response.clicked() {
+                            self.section = *section;
+                        }
+                    }
+                    ui.add_space(orchestrator_studio::theme::SPACE_MD);
                 }
-            }
-            ui.separator();
-            // T-890-08 (G-38/65): modo protegido — ações com efeito real.
-            let armed = self.protected.armed;
-            let guard_label = self.protected.label();
-            if ui.selectable_label(armed, guard_label).clicked() {
-                self.protected.set_armed(!armed);
-            }
-            if let Some(refusal) = &self.protected.last_refusal {
-                ui.colored_label(egui::Color32::RED, refusal);
-            }
-        });
+            });
         egui::CentralPanel::default().show(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| match self.section {
                 Section::Overview => {
@@ -332,7 +450,12 @@ fn main() -> Result<()> {
     eframe::run_native(
         "DDS Orchestrator Studio",
         options,
-        Box::new(|_cc| Ok(Box::new(StudioApp::new()))),
+        Box::new(|cc| {
+            // Design system Stitch → egui (T-890-03 v6): superfícies, hairlines,
+            // Inter + JetBrains Mono, accent ciano. Uma vez no boot.
+            orchestrator_studio::theme::apply(&cc.egui_ctx);
+            Ok(Box::new(StudioApp::new()))
+        }),
     )
     .map_err(|err| anyhow::anyhow!("falha ao abrir a janela: {err}"))
 }
