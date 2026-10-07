@@ -2,14 +2,30 @@
 //! em buffer circular — comportamento analisável dentro da própria GUI.
 
 use crate::studio_log;
+use crate::theme;
 use eframe::egui;
 
 pub fn show(ui: &mut egui::Ui) {
     let entries = studio_log::entries();
-    ui.heading(format!("Logs do Studio ({})", entries.len()));
+    let info_count = entries.iter().filter(|e| e.level == "INFO").count();
+    let warn_count = entries.iter().filter(|e| e.level == "WARN").count();
+    let error_count = entries.iter().filter(|e| e.level == "ERRO").count();
+
+    ui.heading(format!(
+        "FIFO Ring Buffer [500] — {}/500 slots",
+        entries.len()
+    ));
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(format!("● INFO {info_count}"))
+                .color(egui::Color32::from_rgb(140, 210, 170)),
+        );
+        ui.label(egui::RichText::new(format!("◐ WARN {warn_count}")).color(theme::WARN));
+        ui.label(egui::RichText::new(format!("● ERRO {error_count}")).color(theme::ERROR));
+    });
     ui.label(
         "Eventos de descoberta, seleção de alvo, auto-carga e observação. \
-         Os mesmos eventos vão para o stderr do processo (buffer: últimos 500).",
+         Os mesmos eventos vão para o stderr do processo.",
     );
     ui.separator();
     egui::ScrollArea::vertical()
