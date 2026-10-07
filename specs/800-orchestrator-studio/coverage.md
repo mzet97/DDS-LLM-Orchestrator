@@ -436,3 +436,83 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
 - **Nota de validação:** captura de tela veio no screensaver (tela apagada
   do autor); validação final feita via kittest headless (interação accesskit)
   + os logs em tempo real. Autor valida visualmente ao voltar.
+
+## T-890-UX — CORREÇÃO TELA A TELA SOBRE OS 14 MOCKUPS (2026-10-06)
+
+**Gatilho:** autor reprovou a fidelidade ("não está como no protótipo") — 6
+views ainda no layout antigo, `kit.rs` quase todo morto, colunas minúsculas,
+URL manual em vez do alvo único. Fonte de verdade: os `code.html` do
+`stitch_dds_orchestrator_studio_ux_redesign/` (14 telas; as 8 imagens do autor
+= 3.11/3.1/3.10/3.8/3.7/3.12/3.3/3.5, confirmado por conteúdo).
+
+**Decisões do autor na sessão:** tela inicial = **Topologia DDS** (Visão Geral
+permanece no grupo Sistema). Dados dos mockups que são INVENÇÃO ficam fora
+(GUID, RTT, host/tópicos por agente, tok/s de barramento, VRAM/temperatura,
+MD5, % LOSS, presets, "Simular Queda", estimativa de despacho). Níveis de
+segurança pelo contrato: `SecurityLevel` 0=PUBLIC/1=INTERNAL (só esses
+confirmados no IDL — READ_ONLY/SANDBOX/HOST_MUTATION do mockup descartados).
+
+- **Etapa 0 (`6f7de6b`):** kit completo (metric_card/accent_card/target_chip/
+  legend/progress_line/section_label adotados nas views); shell: git hash no
+  badge de versão (build.rs), botão **Auto-Carga (5s)** funcional (refresh
+  periódico + repaint), sidebar numerada 3.1–3.14 com tags mono
+  (DOM/MESH/HB/SYSTEMD/REV/…), `state.poll()` no loop principal (o header
+  parava em "conectando…" fora da tela Nó — bug real corrigido).
+- **3.11 Topologia REFEITA (`6f7de6b`):** kicker com QoS do contrato, janela
+  em chips 1–30 s, **6 contadores reais**, mesh Painter (estação local no
+  centro, nós no arco com idade de HB, enxame IA à direita, ServerStatus à
+  esquerda, linhas rotuladas), **5 abas** (Agentes/Tool Calls/Métricas/
+  Descoberta/Instalações) com filtro por substring (tab/filter no DdsState).
+- **3.1 (`6f7de6b`):** 6º cartão Catálogo (cursor+registros reais), legenda
+  "N Ok · N Warn · N Stale", botões de ação reais (Re-carregar alvo / Ler
+  plano / Atualizar orquestrador), tabela de instalações.
+- **3.10 (`6f7de6b`):** tabela canonical (Estado/NodeID | URL | Probe&Versão |
+  Autenticação Bearer | Heartbeat&Ações), legenda 3 cores (401 roxo AUTH ≠
+  offline), gauges de lease, classificador, catálogo persistido com badges
+  TOKEN_OK/AUTH_PEND/OFFLINE, **modal Definir Alvo & Token** (remember_token
+  em memória + comuta alvo + re-probe), "Forçar probe" de todos os nós.
+- **3.8 (`6f7de6b`):** banner de intertravamento na tela (ARM/DISARM espelha
+  o guard; kittest clica ARM e arma de verdade), colunas uppercase,
+  SINCRONIZADO/DIVERGE(wanted/active)/DESATIVADO, **↺ Reiniciar = stop→start**
+  em worker único (ServicesMsg::Restarted), auditoria em memória (32
+  entradas, rotas reais POST /services/<u>/<ação>), última sincronização.
+- **3.7 (`6f7de6b`):** colunas separadas checksum calculado × manifesto,
+  filtros Todos/Divergentes/Pendentes com contagem, 4 cards resumo,
+  "Exportar relatório" (JSON no diretório de modelos).
+- **3.12 (`6f7de6b`):** 3 stage cards com conectores e estados derivados
+  (pendente/executando/concluído/falhou por parse honesto do erro), 4 métricas
+  (total com breakdown A+B+C, estado, 3/3 entregues, último erro), auditoria,
+  painel de exceção com o erro REAL.
+- **3.3 (`6f7de6b`):** servidores DDS como cards (KV slots com cor de
+  lotação), "Verificar /v1/models" com resultado, **top_p atravessa o fio**
+  (ChatRequest + asserção no teste de fio), stats reais por resposta
+  (duração medida + tokens do usage + tok/s derivado; TurnStats), rodapé de
+  slots reais. `chat_completion` mantém assinatura (delega em
+  `chat_completion_with_stats`).
+- **3.5 (`6f7de6b`):** Seção A (FONTE 1: DDS) e B (FONTE 2: HTTP auxiliar)
+  com badges; colunas host/concluídas/falhas do `AgentInfo` real; **taxa de
+  sucesso** derivada + linha agregada do enxame; banner de falha honesto
+  ("o barramento DDS continua operando").
+- **Etapa 2 (`f1d7239`):** 3.13 Ferramentas (cards de nível com contagens,
+  chips de filtro por status, inspetor da chamada; tools_filter/
+  tools_selected no DdsState); 3.14 Logs (KPIs, busca substring, filtros por
+  nível, auto-scroll, **Limpar/Exportar .log** — LogsPanel+clear+export no
+  studio_log); 3.2 Nó (select de endpoint da descoberta, tríade de métricas,
+  ops com tipo + inspetor, card de falha 401×rede); 3.9 Catálogo (**banner
+  409 OCC de 1ª classe** com "Atualizar Snapshot & Mesclar", strip
+  cursor/registros/kinds, validação JSON da gaveta, filtros por kind, feed de
+  mutações); 3.6 Despacho (card estruturado com agente/latência/conteúdo —
+  content extraído do fio — e histórico da sessão com taxa/média); 3.4 Subir
+  (CLI preview copiável, wizard com duração **medida** por etapa —
+  StepResult.duration_ms, "Abrir no Chat (3.3)").
+- **Fix real:** `theme::tint` fazia `alpha10*10` em u8 e **estourava** com
+  alpha>25 (overflow no mesh em debug) — agora satura em 255.
+- **Gates (`f1d7239`):** fmt OK; clippy `-D warnings` OK ×2 features;
+  workspace **483 passed / 0 failed** (110 suítes, `CYCLONEDDS_STATIC=1`,
+  GUI fechada e studio-noded preservado); kittest_phase_b 3/3 (topologia
+  headless, ARM pela tela, 6º cartão). Bin release glibc+dds 24,8 MB em
+  `~/.local/bin/studio`; boot validado no lab: **abre na Topologia**,
+  observação automática no boot, 3 nós + 2 agentes + inferência descobertos
+  em ~1 s, alvo .61 auto-carregado com token.
+- **Validação visual:** captura da tela real (Spectacle) confirma sidebar
+  numerada, 6 contadores e mesh renderizando; detalhe por tela cabe ao autor.
