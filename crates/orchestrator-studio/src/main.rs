@@ -175,6 +175,49 @@ impl eframe::App for StudioApp {
                             .color(orchestrator_studio::theme::OUTLINE),
                     );
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // chip NÓ ALVO (3.1/3.10): URL + estado de conexão
+                        if let Some(target) = self.discovery.selected_url() {
+                            let connected = self.state.node().is_some();
+                            let state_text = if connected {
+                                format!(
+                                    "Conectado v{}.{}",
+                                    self.state.node().map(|n| n.version.major).unwrap_or(1),
+                                    self.state.node().map(|n| n.version.minor).unwrap_or(0)
+                                )
+                            } else {
+                                String::from("conectando…")
+                            };
+                            let (rect, _) =
+                                ui.allocate_at_least(egui::vec2(280.0, 22.0), egui::Sense::hover());
+                            ui.painter().rect_filled(
+                                rect,
+                                egui::CornerRadius::same(
+                                    orchestrator_studio::theme::RADIUS_SM as u8,
+                                ),
+                                orchestrator_studio::theme::tint(
+                                    orchestrator_studio::theme::PRIMARY_CONTAINER,
+                                    10,
+                                ),
+                            );
+                            ui.painter().text(
+                                egui::pos2(rect.left() + 8.0, rect.center().y),
+                                egui::Align2::LEFT_CENTER,
+                                format!("NÓ ALVO: {target}"),
+                                egui::FontId::monospace(10.0),
+                                orchestrator_studio::theme::PRIMARY_FIXED_DIM,
+                            );
+                            ui.painter().text(
+                                egui::pos2(rect.right() - 8.0, rect.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                state_text,
+                                egui::FontId::monospace(9.0),
+                                if connected {
+                                    orchestrator_studio::theme::OK
+                                } else {
+                                    orchestrator_studio::theme::WARN
+                                },
+                            );
+                        }
                         // badge de domínio com dot pulsante
                         let (rect, _) =
                             ui.allocate_at_least(egui::vec2(140.0, 22.0), egui::Sense::hover());

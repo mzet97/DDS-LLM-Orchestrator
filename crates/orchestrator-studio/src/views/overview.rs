@@ -35,6 +35,62 @@ pub fn show(
     ui.weak("Fonte de cada cartão indicada; nada é inventado — apagado = ainda não lido.");
     ui.add_space(theme::SPACE_MD);
 
+    let target = discovery.selected_url();
+
+    // ── Banner Alvo Ativo (3.1): URL + estado do nó + lease em contagem ──
+    egui::Frame::NONE
+        .fill(theme::tint(theme::PRIMARY_CONTAINER, 10))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
+        .inner_margin(theme::SPACE_MD)
+        .stroke(egui::Stroke::new(1.0, theme::PRIMARY_CONTAINER))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("Alvo Ativo:").weak());
+                ui.monospace(target.clone().unwrap_or_else(|| String::from("—")));
+            });
+            ui.horizontal(|ui| match state.node() {
+                Some(node) => {
+                    ui.label(
+                        egui::RichText::new(
+                            format!(
+                                "Conectado ao studio-node v{}.{} · {} operação(ões) registradas",
+                                node.version.major,
+                                node.version.minor,
+                                node.operations.len()
+                            )
+                            .to_string(),
+                        )
+                        .color(theme::OK),
+                    );
+                }
+                None => {
+                    ui.label(egui::RichText::new("conectando ao studio-node…").weak());
+                }
+            });
+            // QoS lease do AgentRegistry (10 s) com contagem a partir do
+            // heartbeat mais recente visto pela descoberta.
+            let now = crate::machines::now_unix_ns();
+            let freshest = discovery
+                .agents
+                .iter()
+                .map(|a| a.last_update_ns)
+                .max()
+                .unwrap_or(0);
+            let age = now.saturating_sub(freshest) as f64 / 1e9;
+            let ttl = (10.0_f64 - age).max(0.0);
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("QoS Lease:").weak());
+                ui.label(
+                    egui::RichText::new(format!("10.0s [TTL: {ttl:.1}s]"))
+                        .monospace()
+                        .color(if ttl > 3.0 { theme::OK } else { theme::WARN }),
+                );
+                ui.weak("· Auto-Carga Contínua (5s)");
+            });
+        });
+    ui.add_space(theme::SPACE_MD);
+
     // ── Hero (3.1): descoberta em tempo real, 3 números grandes ──
     egui::Frame::NONE
         .fill(theme::SURFACE_CONTAINER)
@@ -100,7 +156,71 @@ pub fn show(
         discovery_target: target.as_deref(),
     });
 
-    ui.add_space(6.0);
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Topologia de Barramento (3.1): os 3 pilares com dados REAIS ──
+    ui.columns(3, |cols| {
+        // Nós Studio
+        cols[0].vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("●").color(theme::OK));
+                ui.strong(format!("{} Nós Studio", discovery.nodes.len()));
+            });
+            ui.add_space(theme::SPACE_XS);
+            for node in &discovery.nodes {
+                ui.monospace(egui::RichText::new(node.url.clone()).small());
+            }
+        });
+        // AgentRegistry
+        cols[1].vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("🤖").color(theme::PRIMARY_FIXED_DIM));
+                ui.strong(format!("{} Agentes IA", discovery.agents.len()));
+            });
+            ui.add_space(theme::SPACE_XS);
+            for agent in &discovery.agents {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · slots {}/{}",
+                        agent.agent_id, agent.slots_busy, agent.slots_total
+                    ))
+                    .small()
+                    .color(theme::ON_SURFACE_VARIANT),
+                );
+            }
+        });
+        // ServerStatus
+        cols[2].vertical(|ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new("⚡").color(theme::WARN));
+                ui.strong(format!("{} Servidor Inferência", discovery.servers.len()));
+            });
+            ui.add_space(theme::SPACE_XS);
+            for server in &discovery.servers {
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{} · pronto={} · slots {}/{}",
+                        server.server_id,
+                        if server.ready { "sim" } else { "não" },
+                        server.slots_processing,
+                        server.slots_idle + server.slots_processing
+                    ))
+                    .small()
+                    .color(theme::ON_SURFACE_VARIANT),
+                );
+            }
+        });
+    });
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Despacho Operacional Imediato (3.1) ──
+    ui.collapsing("Despacho Operacional Imediato", |ui| {
+        ui.weak(
+            "Ações rápidas: abram as seções correspondentes (Topologia re-observa              o domínio; Serviços lê o plano; Nó conecta). A Visão geral é agregado              somente leitura.",
+        );
+    });
+
+    ui.add_space(theme::SPACE_MD);
     // Grade 2 colunas de cartões com borda colorida por estado.
     egui::Grid::new("overview_grid")
         .spacing(egui::vec2(10.0, 10.0))
