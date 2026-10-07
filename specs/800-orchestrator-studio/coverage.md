@@ -407,3 +407,32 @@ Com `specs/840-multihost/REPORT.md` (evidências ao vivo em 192.168.1.61/62/64):
   Warn (presença confirmada, sem prova de geração ainda); Serviços = Warn
   "carregando plano…" durante a auto-carga.
 - Validado por captura na estação do autor. 480 passed/0.
+
+## T-890-03 (v6) — MIGRAÇÃO STITCH → EGUI COMPLETA (2026-10-06)
+
+- **Fase 0 (`d2e46f7`):** design system em `theme.rs` (tokens do DESIGN.md
+  verificados 1:1 contra o tailwind.config dos mockups: superfícies
+  #0f141b→#343941, texto #dee2ec/#bac9cc, accent ciano #00e5ff, semântica
+  OK #10B981/WARN #F59E0B/ERROR #EF4444/AUTH #A855F7/STALE #6B7280);
+  fontes **Inter + JetBrains Mono embutidas** (include_bytes, fallback
+  emoji preservado); TextStyles (headline 16/body 13/button 12/small 11/
+  mono 11); `kit.rs` (status_dot, badge tint 10%, banners, empty_state,
+  grid_header, mono_cell); shell: header 40px (badge de domínio com dot
+  pulsante + chip do modo protegido), sidebar 256px em 5 grupos
+  (NAV_GROUPS), status bar 52px em 3 micro-rows mono.
+- **Fase A (`7419eb0`):** Máquinas hero (header de escuta com lease/poda/
+  heartbeat, cards por instalação com probe ●/🔒/◌ e idade FRESCO/VIVO/
+  EXPIRANDO, ação de definir alvo); Visão geral hero (3 números grandes);
+  Topologia com **mesh desenhado em Painter** (grade de pontos 16px,
+  estação GUI no centro, nós em círculo com linhas SPDP) + coleções.
+- **Fase B (`b9ef115`):** Serviços com interlock banner + confirmação
+  2 passos em banner âmbar (âncora kittest atualizada); Inferência com
+  split DDS×HTTP (3.3 do mockup).
+- **Fase C (`056bbcb`):** Ferramentas com filtro por status canônico e
+  semáforo de security level; Logs com contadores FIFO coloridos.
+- **Fase D:** gates verdes — **481 passed / 0** workspace com
+  `CYCLONEDDS_STATIC=1`; kittest 3+2+1 suites ✅; build release
+  substituindo `~/.local/bin/studio` (o .desktop executará o novo).
+- **Nota de validação:** captura de tela veio no screensaver (tela apagada
+  do autor); validação final feita via kittest headless (interação accesskit)
+  + os logs em tempo real. Autor valida visualmente ao voltar.
