@@ -330,28 +330,28 @@ fn task_status_color(status: i32) -> egui::Color32 {
 
 // ── Mesh ─────────────────────────────────────────────────────────────────
 
-/// Desenha o diagrama de topologia: grade de pontos, estação local no
-/// centro, nós Studio no arco superior, enxame IA à direita e servidor de
-/// inferência à esquerda — linhas rotuladas pelos tópicos reais. Os cards
-/// são clicáveis: a seleção vira o card "ASSINANTE SELECIONADO".
+/// Mesh (UX4): canvas DOMINANTE com CARDS DE ASSINANTE GRANDES e ricos
+/// (título + 4-5 linhas de propriedades reais + faixa colorida por tipo),
+/// espalhados ao redor do hub ESTAÇÃO LOCAL e conectados por linhas — a
+/// composição do design Stitch (não um diagrama radial minúsculo). Cards
+/// clicáveis: a seleção vira o card "ASSINANTE SELECIONADO".
 fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) {
-    let height = 300.0;
+    let height = 420.0;
     let (rect, response) = ui.allocate_exact_size(
         egui::vec2(ui.available_width(), height),
         egui::Sense::click(),
     );
     let painter = ui.painter_at(rect);
 
-    // Fundo do canvas: superfície própria + grade de pontos 16 px (UX3 —
-    // o canvas se destaca do painel como nos mockups).
+    // Fundo do canvas: superfície própria + grade de pontos 16 px.
     painter.rect_filled(
         rect,
         egui::CornerRadius::same(theme::RADIUS_MD as u8),
         theme::SURFACE_LOW,
     );
-    let mut y = 8.0;
+    let mut y = 10.0;
     while y < rect.height() {
-        let mut x = 8.0;
+        let mut x = 10.0;
         while x < rect.width() {
             painter.circle_filled(
                 egui::pos2(rect.left() + x, rect.top() + y),
@@ -368,10 +368,8 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
         egui::Stroke::new(1.0, theme::SURFACE_HIGHEST),
         egui::StrokeKind::Inside,
     );
-
-    // Título do canvas (mockup: "MODO OBSERVADOR").
     painter.text(
-        egui::pos2(rect.left() + theme::SPACE_LG, rect.top() + theme::SPACE_LG),
+        egui::pos2(rect.left() + theme::SPACE_LG, rect.top() + theme::SPACE_MD),
         egui::Align2::LEFT_TOP,
         "TOPOLOGIA DE BARRAMENTO DDS · MODO OBSERVADOR",
         egui::FontId::monospace(10.0),
@@ -379,227 +377,228 @@ fn draw_mesh(ui: &mut egui::Ui, dds: &mut DdsState, discovery: &DiscoveryState) 
     );
 
     let now = now_unix_ns();
-    let center = rect.center();
+    let w = rect.width();
+    let h = rect.height();
+    let pt = |fx: f32, fy: f32| egui::pos2(rect.left() + w * fx, rect.top() + h * fy);
 
     // Cards clicáveis coletados para o hit-test do clique.
     let mut hit_rects: Vec<(egui::Rect, String)> = Vec::new();
 
-    // Estação local (este Studio) no centro.
-    let local_box = egui::Rect::from_center_size(center, egui::vec2(160.0, 48.0));
-    painter.rect_filled(local_box, egui::CornerRadius::same(4), theme::SURFACE_HIGH);
+    // ── Hub: ESTAÇÃO LOCAL (este Studio) ──
+    let hub_rect = egui::Rect::from_center_size(pt(0.50, 0.50), egui::vec2(190.0, 58.0));
+    painter.rect_filled(hub_rect, egui::CornerRadius::same(6), theme::SURFACE_HIGH);
     painter.rect_stroke(
-        local_box,
-        egui::CornerRadius::same(4),
-        egui::Stroke::new(1.0, theme::PRIMARY_CONTAINER),
+        hub_rect,
+        egui::CornerRadius::same(6),
+        egui::Stroke::new(1.25, theme::PRIMARY_CONTAINER),
         egui::StrokeKind::Inside,
     );
     painter.text(
-        local_box.left_top() + egui::vec2(8.0, 8.0),
+        hub_rect.left_top() + egui::vec2(10.0, 8.0),
         egui::Align2::LEFT_TOP,
         "ESTAÇÃO LOCAL",
-        egui::FontId::monospace(10.0),
+        egui::FontId::monospace(11.0),
         theme::PRIMARY_FIXED_DIM,
     );
     painter.text(
-        local_box.left_top() + egui::vec2(8.0, 24.0),
+        hub_rect.left_top() + egui::vec2(10.0, 26.0),
         egui::Align2::LEFT_TOP,
-        "STUDIO GUI (esta máquina)",
+        "STUDIO GUI · observador",
         egui::FontId::monospace(9.0),
         theme::ON_SURFACE_VARIANT,
     );
 
-    // Nós Studio no arco superior (presença contínua da descoberta; fallback
-    // para a foto da janela quando a descoberta ainda não viu nada).
-    let nodes: Vec<(String, bool, u64)> = if discovery.nodes.is_empty() {
+    // Desenha um card de assinante GRANDE (UX4): faixa superior colorida por
+    // tipo, título + dot, e 3-4 linhas de propriedades reais.
+    #[allow(clippy::too_many_arguments)]
+    let subscriber_card = |painter: &egui::Painter,
+                           center: egui::Pos2,
+                           title: &str,
+                           lines: &[String],
+                           accent: egui::Color32,
+                           alive: bool,
+                           selected: bool,
+                           hit: &mut Vec<(egui::Rect, String)>,
+                           key: String| {
+        let size = egui::vec2(258.0, 30.0 + lines.len() as f32 * 15.0);
+        let card = egui::Rect::from_center_size(center, size);
+        // Linha do hub ao card.
+        painter.line_segment(
+            [hub_rect.center(), card.center()],
+            egui::Stroke::new(1.5, theme::tint(accent, 80)),
+        );
+        painter.rect_filled(card, egui::CornerRadius::same(6), theme::SURFACE_CONTAINER);
+        painter.rect_stroke(
+            card,
+            egui::CornerRadius::same(6),
+            egui::Stroke::new(
+                if selected { 1.75 } else { 1.0 },
+                if selected {
+                    theme::PRIMARY_CONTAINER
+                } else {
+                    theme::tint(accent, 40)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+        // Faixa superior colorida por tipo (assinatura visual do design).
+        let strip = card.with_max_y(card.top() + 3.0);
+        painter.rect_filled(
+            strip,
+            egui::CornerRadius {
+                nw: 6,
+                ne: 6,
+                sw: 0,
+                se: 0,
+            },
+            accent,
+        );
+        // Título + dot de status.
+        painter.circle_filled(
+            egui::pos2(card.left() + 12.0, card.top() + 17.0),
+            3.5,
+            if alive { accent } else { theme::STALE },
+        );
+        painter.text(
+            egui::pos2(card.left() + 21.0, card.top() + 9.0),
+            egui::Align2::LEFT_TOP,
+            title,
+            egui::FontId::monospace(10.5),
+            theme::ON_SURFACE,
+        );
+        for (index, line) in lines.iter().enumerate() {
+            painter.text(
+                egui::pos2(card.left() + 12.0, card.top() + 28.0 + index as f32 * 15.0),
+                egui::Align2::LEFT_TOP,
+                line,
+                egui::FontId::monospace(8.75),
+                theme::ON_SURFACE_VARIANT,
+            );
+        }
+        hit.push((card, key));
+    };
+
+    // ── Nós Studio (Studio.NodePresence) — colunas à direita/esquerda ──
+    let nodes: Vec<(String, bool, u64, String)> = if discovery.nodes.is_empty() {
         dds.snapshot
             .studio_nodes
             .iter()
-            .map(|row| (row.node_id.clone(), true, 0))
+            .map(|row| (row.node_id.clone(), true, 0, row.url.clone()))
             .collect()
     } else {
         discovery
             .nodes
             .iter()
-            .map(|node| (node.node_id.clone(), node.is_alive(now), node.age_secs(now)))
+            .map(|node| {
+                (
+                    node.node_id.clone(),
+                    node.is_alive(now),
+                    node.age_secs(now),
+                    node.url.clone(),
+                )
+            })
             .collect()
     };
-    let count = nodes.len().min(6);
-    if count > 0 {
-        let radius = (rect.width() * 0.30).clamp(120.0, 260.0);
-        for (index, (node_id, alive, age)) in nodes.iter().take(count).enumerate() {
-            // Arco superior: -160°…-20° (esq.→dir.).
-            let angle =
-                (-160.0 + (140.0 / (count as f32 - 1.0).max(1.0)) * index as f32).to_radians();
-            let pos = center + egui::vec2(angle.cos() * radius, angle.sin() * radius);
-            // Card de assinante (UX3 ciclo 2): maior, com dot de status.
-            let box_rect = egui::Rect::from_center_size(pos, egui::vec2(148.0, 38.0));
-            let accent = if *alive { theme::OK } else { theme::STALE };
-            let selected = dds.mesh_selected.as_deref() == Some(node_id.as_str());
-            painter.line_segment(
-                [center + egui::vec2(0.0, -22.0), box_rect.center()],
-                egui::Stroke::new(1.25, theme::tint(accent, 90)),
-            );
-            painter.rect_filled(
-                box_rect,
-                egui::CornerRadius::same(4),
-                theme::SURFACE_CONTAINER,
-            );
-            painter.rect_stroke(
-                box_rect,
-                egui::CornerRadius::same(4),
-                egui::Stroke::new(
-                    if selected { 1.5 } else { 1.0 },
-                    if selected {
-                        theme::PRIMARY_CONTAINER
-                    } else {
-                        theme::tint(accent, 35)
-                    },
-                ),
-                egui::StrokeKind::Inside,
-            );
-            // Dot de status vivo/expirado (padrão dos cards do design).
-            painter.circle_filled(
-                egui::pos2(box_rect.left() + 9.0, box_rect.top() + 12.0),
-                3.5,
-                accent,
-            );
-            painter.text(
-                egui::pos2(box_rect.left() + 17.0, box_rect.top() + 4.0),
-                egui::Align2::LEFT_TOP,
-                node_id,
-                egui::FontId::monospace(9.5),
-                theme::ON_SURFACE,
-            );
-            painter.text(
-                egui::pos2(box_rect.left() + 17.0, box_rect.top() + 20.0),
-                egui::Align2::LEFT_TOP,
-                format!("hb {age}s · {}", if *alive { "vivo" } else { "expirado" }),
-                egui::FontId::monospace(8.5),
-                accent,
-            );
-            hit_rects.push((box_rect, format!("node:{node_id}")));
-        }
-        // Rótulo do tópico na primeira linha (sem poluir as demais).
-        painter.text(
-            egui::pos2(center.x, center.y - radius * 0.55),
-            egui::Align2::CENTER_CENTER,
-            "Studio.NodePresence",
-            egui::FontId::monospace(8.0),
-            theme::OUTLINE,
-        );
-    } else {
-        painter.text(
-            egui::pos2(center.x, rect.top() + 60.0),
-            egui::Align2::CENTER_CENTER,
-            "nenhum nó visto — aguardando heartbeats em Studio.NodePresence…",
-            egui::FontId::monospace(9.0),
-            theme::STALE,
-        );
-    }
-
-    // Enxame IA (AgentRegistry) na lateral direita.
-    let agents: Vec<&crate::discovery::AgentRow> = discovery.agents.iter().take(8).collect();
-    if !agents.is_empty() {
-        let column_left = rect.right() - 156.0;
-        let mut top = rect.top() + 56.0;
-        painter.text(
-            egui::pos2(column_left, top),
-            egui::Align2::LEFT_TOP,
-            format!("ENXAME IA · {} agente(s)", discovery.agents.len()),
-            egui::FontId::monospace(9.0),
-            theme::OUTLINE,
-        );
-        top += 16.0;
-        let anchor = egui::pos2(column_left - 8.0, top + (agents.len() as f32) * 18.0 / 2.0);
-        painter.line_segment(
-            [center, anchor],
-            egui::Stroke::new(1.25, theme::tint(theme::PRIMARY_FIXED_DIM, 90)),
-        );
-        painter.text(
-            egui::pos2((center.x + anchor.x) / 2.0, center.y - 10.0),
-            egui::Align2::CENTER_CENTER,
-            "AgentRegistry",
-            egui::FontId::monospace(8.0),
-            theme::OUTLINE,
-        );
-        for agent in agents {
-            let box_rect =
-                egui::Rect::from_min_size(egui::pos2(column_left, top), egui::vec2(148.0, 18.0));
-            painter.rect_filled(
-                box_rect,
-                egui::CornerRadius::same(3),
-                theme::SURFACE_CONTAINER,
-            );
-            painter.circle_filled(
-                egui::pos2(box_rect.left() + 6.0, box_rect.center().y),
-                2.5,
-                theme::PRIMARY_FIXED_DIM,
-            );
-            painter.text(
-                egui::pos2(box_rect.left() + 13.0, box_rect.center().y),
-                egui::Align2::LEFT_CENTER,
+    let node_slots = [
+        (0.78, 0.16),
+        (0.78, 0.52),
+        (0.78, 0.86),
+        (0.20, 0.16),
+        (0.20, 0.86),
+    ];
+    for (index, (node_id, alive, age, url)) in nodes.iter().take(5).enumerate() {
+        let (fx, fy) = node_slots[index];
+        let accent = if *alive { theme::OK } else { theme::STALE };
+        let selected = dds.mesh_selected.as_deref() == Some(node_id.as_str());
+        subscriber_card(
+            &painter,
+            pt(fx, fy),
+            &format!("NÓ · {node_id}"),
+            &[
+                format!("url {url}"),
+                format!("heartbeat {age}s atrás · lease 10s"),
+                String::from("QoS Reliable + TransientLocal"),
                 format!(
-                    "{} · {}/{} slots",
-                    agent.agent_id, agent.slots_busy, agent.slots_total
+                    "publica Studio.NodePresence (5s) · token {}",
+                    if discovery
+                        .nodes
+                        .iter()
+                        .any(|n| n.node_id == *node_id && n.token_required)
+                    {
+                        "exigido"
+                    } else {
+                        "livre"
+                    }
                 ),
-                egui::FontId::monospace(8.0),
-                theme::ON_SURFACE_VARIANT,
-            );
-            hit_rects.push((box_rect, format!("agent:{}", agent.agent_id)));
-            top += 20.0;
-        }
+            ],
+            accent,
+            *alive,
+            selected,
+            &mut hit_rects,
+            format!("node:{node_id}"),
+        );
     }
 
-    // Servidor de inferência (ServerStatus) na lateral esquerda.
-    if let Some(server) = discovery.servers.first() {
-        let box_rect = egui::Rect::from_min_size(
-            egui::pos2(rect.left() + 16.0, rect.bottom() - 64.0),
-            egui::vec2(168.0, 40.0),
+    // ── Enxame IA (AgentRegistry) — coluna esquerda ──
+    let agent_slots = [(0.20, 0.34), (0.20, 0.60)];
+    for (index, agent) in discovery.agents.iter().take(2).enumerate() {
+        let (fx, fy) = agent_slots[index];
+        let age = now.saturating_sub(agent.last_update_ns) / 1_000_000_000;
+        let selected = dds.mesh_selected.as_deref() == Some(agent.agent_id.as_str());
+        subscriber_card(
+            &painter,
+            pt(fx, fy),
+            &format!("AGENTE · {}", agent.agent_id),
+            &[
+                format!("modelo {}", agent.model),
+                format!(
+                    "slots {}/{} · latência EMA {:.0} ms",
+                    agent.slots_busy, agent.slots_total, agent.ema_latency_ms
+                ),
+                format!("heartbeat {age}s atrás"),
+                String::from("subscreve Tasks · publica TaskOutput"),
+            ],
+            theme::PRIMARY_FIXED_DIM,
+            age <= 30,
+            selected,
+            &mut hit_rects,
+            format!("agent:{}", agent.agent_id),
         );
-        painter.line_segment(
-            [center, box_rect.center()],
-            egui::Stroke::new(1.25, theme::tint(theme::WARN, 90)),
-        );
-        painter.text(
-            egui::pos2((center.x + box_rect.center().x) / 2.0, center.y + 16.0),
-            egui::Align2::CENTER_CENTER,
-            "ServerStatus",
-            egui::FontId::monospace(8.0),
-            theme::OUTLINE,
-        );
-        painter.rect_filled(
-            box_rect,
-            egui::CornerRadius::same(3),
-            theme::SURFACE_CONTAINER,
-        );
-        painter.rect_stroke(
-            box_rect,
-            egui::CornerRadius::same(3),
-            egui::Stroke::new(1.0, theme::SURFACE_HIGHEST),
-            egui::StrokeKind::Inside,
-        );
-        painter.text(
-            egui::pos2(box_rect.left() + 6.0, box_rect.top() + 5.0),
-            egui::Align2::LEFT_TOP,
-            &server.server_id,
-            egui::FontId::monospace(9.0),
-            theme::ON_SURFACE,
-        );
-        painter.text(
-            egui::pos2(box_rect.left() + 6.0, box_rect.top() + 20.0),
-            egui::Align2::LEFT_TOP,
-            format!(
-                "⚡ {} · slots {}/{} · pronto={}",
-                server.model_loaded,
-                server.slots_processing,
-                server.slots_idle + server.slots_processing,
-                if server.ready { "sim" } else { "não" }
-            ),
-            egui::FontId::monospace(8.0),
-            theme::ON_SURFACE_VARIANT,
-        );
-        hit_rects.push((box_rect, format!("server:{}", server.server_id)));
     }
+
+    // ── Servidor de inferência (ServerStatus) — topo centro ──
+    if let Some(server) = discovery.servers.first() {
+        let selected = dds.mesh_selected.as_deref() == Some(server.server_id.as_str());
+        subscriber_card(
+            &painter,
+            pt(0.50, 0.16),
+            &format!("INFERÊNCIA · {}", server.server_id),
+            &[
+                format!("modelo {}", server.model_loaded),
+                format!(
+                    "slots {}/{} · pronto {}",
+                    server.slots_processing,
+                    server.slots_idle + server.slots_processing,
+                    if server.ready { "sim" } else { "não" }
+                ),
+                String::from("publica ServerStatus"),
+            ],
+            theme::WARN,
+            server.ready,
+            selected,
+            &mut hit_rects,
+            format!("server:{}", server.server_id),
+        );
+    }
+
+    // Rótulo do tópico das linhas do hub.
+    painter.text(
+        pt(0.50, 0.565),
+        egui::Align2::CENTER_CENTER,
+        "Studio.NodePresence · AgentRegistry · ServerStatus",
+        egui::FontId::monospace(8.5),
+        theme::OUTLINE,
+    );
 
     // Hit-test do clique: seleciona o card sob o ponteiro.
     if response.clicked() {

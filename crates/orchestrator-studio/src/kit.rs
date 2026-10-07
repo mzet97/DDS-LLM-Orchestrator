@@ -231,14 +231,14 @@ pub fn metric_card(
         .stroke(egui::Stroke::new(1.0, theme::tint(accent, 45)))
         .show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            ui.set_min_height(92.0);
+            ui.set_min_height(104.0);
             ui.label(
                 egui::RichText::new(label.to_uppercase())
                     .monospace()
                     .small()
                     .color(theme::OUTLINE),
             );
-            ui.label(egui::RichText::new(value).size(32.0).strong().color(accent));
+            ui.label(egui::RichText::new(value).size(42.0).strong().color(accent));
             if !sub.is_empty() {
                 ui.label(
                     egui::RichText::new(sub)
