@@ -6,6 +6,7 @@ use crate::models::ModelsState;
 use crate::overview::{summarize, OverviewInput, TileHealth};
 use crate::services::ServicesPanel;
 use crate::state::AppState;
+use crate::theme;
 use eframe::egui;
 
 /// Paleta do painel (escura, consistente com o tema do egui dark).
@@ -29,9 +30,53 @@ pub fn show(
     proof: &str,
     discovery: &DiscoveryState,
 ) {
-    ui.add_space(4.0);
+    ui.add_space(theme::SPACE_XS);
     ui.heading("Visão geral");
     ui.weak("Fonte de cada cartão indicada; nada é inventado — apagado = ainda não lido.");
+    ui.add_space(theme::SPACE_MD);
+
+    // ── Hero (3.1): descoberta em tempo real, 3 números grandes ──
+    egui::Frame::NONE
+        .fill(theme::SURFACE_CONTAINER)
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
+        .inner_margin(theme::SPACE_XL)
+        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            ui.label(
+                egui::RichText::new("DESCOBERTA EM TEMPO REAL")
+                    .monospace()
+                    .small()
+                    .color(theme::PRIMARY_FIXED_DIM),
+            );
+            ui.add_space(theme::SPACE_SM);
+            ui.columns(3, |cols| {
+                let big = |ui: &mut egui::Ui, n: usize, label: &str| {
+                    ui.vertical(|ui| {
+                        ui.label(
+                            egui::RichText::new(n.to_string())
+                                .size(28.0)
+                                .strong()
+                                .color(theme::PRIMARY_FIXED_DIM),
+                        );
+                        ui.label(egui::RichText::new(label).small().color(theme::OUTLINE));
+                    });
+                };
+                big(&mut cols[0], discovery.nodes.len(), "NÓS STUDIO");
+                big(&mut cols[1], discovery.agents.len(), "AGENTES IA");
+                big(&mut cols[2], discovery.servers.len(), "SERVIDOR INFERÊNCIA");
+            });
+            if let Some(target) = discovery.selected_url() {
+                ui.add_space(theme::SPACE_SM);
+                ui.label(
+                    egui::RichText::new(format!("🛰 alvo: {target}"))
+                        .monospace()
+                        .small()
+                        .color(theme::SECONDARY_FIXED),
+                );
+            }
+        });
+    ui.add_space(theme::SPACE_MD);
 
     let target = discovery.selected_url();
     let hashed = models
@@ -103,22 +148,9 @@ pub fn show(
             }
         });
 
-    ui.add_space(8.0);
-    // Rodapé: alvo e identidade do sistema (do que a descoberta viu).
-    if let Some(target) = target {
-        ui.horizontal(|ui| {
-            ui.label("🛰 alvo:");
-            ui.monospace(&target);
-        });
-    }
-    ui.horizontal_wrapped(|ui| {
-        ui.weak(format!(
-            "domínio {}: {} instalação(ões) · {} agente(s) · {} servidor(es) de inferência \
-             — descoberta automática via Studio.NodePresence/AgentRegistry/ServerStatus",
-            discovery.domain,
-            discovery.nodes.len(),
-            discovery.agents.len(),
-            discovery.servers.len()
-        ));
-    });
+    ui.add_space(theme::SPACE_MD);
+    ui.weak(format!(
+        "domínio {}: descoberta automática via Studio.NodePresence / AgentRegistry / ServerStatus",
+        discovery.domain
+    ));
 }

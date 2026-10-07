@@ -8,6 +8,7 @@
 
 use crate::discovery::DiscoveryState;
 use crate::machines::{MachinesState, ProbeState};
+use crate::theme;
 use eframe::egui;
 
 /// Cor/símbolo do ponto de status por estado da sonda.
@@ -25,84 +26,128 @@ fn dot_style(state: ProbeState) -> (egui::Color32, &'static str) {
 /// registro (token = password), lista do snapshot compartilhado com ponto
 /// de status e botão "Probe" por máquina.
 pub fn show(ui: &mut egui::Ui, machines: &mut MachinesState, discovery: &mut DiscoveryState) {
-    discovery.poll();
-    ui.collapsing(
-        "Instalações descobertas automaticamente (Studio.NodePresence, ao vivo)",
-        |ui| {
-            if discovery.scanning {
-                ui.label("escutando o domínio…");
-            }
-            if !discovery.error.is_empty() {
-                ui.label(&discovery.error);
-            }
-            if discovery.nodes.is_empty() {
-                ui.label(format!(
-                    "Nenhuma instalação vista ainda no domínio {} (heartbeats a cada 5 s; \
-                     nós com canvas DDS aparecem sozinhos aqui).",
-                    discovery.domain
-                ));
-                return;
-            }
-            let now_ns = crate::machines::now_unix_ns();
-
-            // ALVO ÚNICO (T-890-03): o nó escolhido aqui é usado por TODOS os
-            // painéis da GUI (Nó, Serviços, Catálogo, Máquinas, Despacho).
-            egui::ComboBox::from_id_salt("discovery-selected-node")
-                .selected_text(
-                    discovery
-                        .selected_url()
-                        .unwrap_or_else(|| String::from("— selecionar nó alvo —")),
-                )
-                .show_ui(ui, |ui| {
-                    for (index, node) in discovery.nodes.iter().enumerate() {
-                        let alive = if node.is_alive(now_ns) { "●" } else { "○" };
-                        ui.selectable_value(
-                            &mut discovery.selected,
-                            Some(index),
-                            format!("{alive} {} ({})", node.node_id, node.url),
-                        );
-                    }
-                });
-            match discovery.selected_url() {
-                Some(url) => {
-                    ui.label(format!("alvo de todos os painéis: {url}"));
-                }
-                None => {
-                    ui.label("sem seleção — painéis seguem com a URL manual");
-                }
-            }
-            egui::Grid::new("discovery_grid")
-                .striped(true)
-                .show(ui, |ui| {
-                    ui.label("node_id");
-                    ui.label("url");
-                    ui.label("estado");
-                    ui.label("idade");
-                    ui.end_row();
-                    for node in &discovery.nodes {
-                        let alive = node.is_alive(now_ns);
-                        ui.monospace(&node.node_id);
-                        ui.hyperlink_to(&node.url, &node.url);
-                        let (state, detail) = match (&node.probe, alive) {
-                            (Some(probe), true) => (probe.state, probe.detail.clone()),
-                            (Some(probe), false) => (
-                                ProbeState::Offline,
-                                format!("sem heartbeat ({})", probe.detail),
-                            ),
-                            (None, true) => (ProbeState::Unknown, String::from("sondando…")),
-                            (None, false) => (ProbeState::Offline, String::from("sem heartbeat")),
-                        };
-                        let (color, dot) = dot_style(state);
-                        ui.label(egui::RichText::new(format!("{dot} {detail}")).color(color));
-                        ui.label(format!("{} s", node.age_secs(now_ns)));
-                        ui.end_row();
-                    }
-                });
-        },
-    );
-    ui.separator();
-    // Drena o worker de HTTP (thread + mpsc — REQ/T-820-19).
     machines.poll();
+    discovery.poll();
+    ui.add_space(theme::SPACE_XS);
+
+    // ── Hero (3.10): escuta contínua do Studio.NodePresence ──
+    ui.heading("Máquinas");
+    ui.label(
+        egui::RichText::new(format!(
+            "Escutando tráfego Studio.NodePresence · Lease 10s · Poda 30s · Heartbeat a cada 5s · Domínio {}",
+            discovery.domain
+        ))
+        .monospace()
+        .small()
+        .color(theme::OUTLINE),
+    );
+    ui.add_space(theme::SPACE_MD);
+
+    if discovery.scanning && discovery.nodes.is_empty() {
+        ui.label(egui::RichText::new("escutando o domínio…").weak());
+    }
+    if !discovery.error.is_empty() {
+        ui.label(egui::RichText::new(&discovery.error).color(theme::ERROR));
+    }
+
+    let now_ns = crate::machines::now_unix_ns();
+
+    // Cards por instalação (estado do probe + idade do heartbeat + alvo).
+    for (index, node) in discovery.nodes.iter().enumerate() {
+        let alive = node.is_alive(now_ns);
+        let age = node.age_secs(now_ns);
+        let (dot_color, probe_badge): (egui::Color32, String) = match &node.probe {
+            Some(probe) if probe.state == ProbeState::Online => {
+                (theme::OK, format!("● {}", probe.detail))
+            }
+            Some(probe) if probe.state == ProbeState::AuthPending => {
+                (theme::AUTH, format!("🔒 {}", probe.detail))
+            }
+            Some(probe) => (theme::ERROR, format!("◌ {}", probe.detail)),
+            None if alive => (theme::STALE, String::from("sondando…")),
+            None => (theme::STALE, String::from("—")),
+        };
+        let hb_label = if age <= 5 {
+            "● FRESCO"
+        } else if age <= 10 {
+            "● VIVO"
+        } else {
+            "◌ EXPIRANDO"
+        };
+        let selected = discovery.selected == Some(index);
+
+        egui::Frame::NONE
+            .fill(if selected {
+                theme::tint(theme::PRIMARY_CONTAINER, 10)
+            } else {
+                theme::SURFACE_CONTAINER
+            })
+            .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
+            .inner_margin(theme::SPACE_MD)
+            .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+            .show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    // dot de presença
+                    ui.painter().circle_filled(
+                        egui::pos2(
+                            ui.max_rect().left() + theme::SPACE_LG,
+                            ui.cursor().top() + theme::SPACE_LG + 7.0,
+                        ),
+                        5.0,
+                        if alive { theme::OK } else { theme::STALE },
+                    );
+                    ui.vertical(|ui| {
+                        ui.horizontal(|ui| {
+                            ui.strong(
+                                egui::RichText::new(&node.node_id)
+                                    .monospace()
+                                    .color(theme::ON_SURFACE),
+                            );
+                            ui.label(
+                                egui::RichText::new(format!("[{hb_label} {age}s]"))
+                                    .monospace()
+                                    .small()
+                                    .color(if alive { theme::OK } else { theme::STALE }),
+                            );
+                        });
+                        ui.label(
+                            egui::RichText::new(&node.url)
+                                .monospace()
+                                .color(theme::ON_SURFACE_VARIANT),
+                        );
+                        ui.label(
+                            egui::RichText::new(&probe_badge)
+                                .monospace()
+                                .small()
+                                .color(dot_color),
+                        );
+                    });
+                });
+                // ação primária: selecionar como alvo (T-890-03)
+                ui.add_space(theme::SPACE_XS);
+                let target_label = if selected {
+                    "★ ALVO DA GUI — clique para remover"
+                } else {
+                    "Definir como alvo da GUI"
+                };
+                if ui.selectable_label(selected, target_label).clicked() {
+                    discovery.selected = if selected { None } else { Some(index) };
+                }
+            });
+        ui.add_space(theme::SPACE_SM);
+    }
+
+    if discovery.nodes.is_empty() {
+        ui.label(format!(
+            "Nenhuma instalação vista ainda no domínio {} (heartbeats a cada 5 s; \
+             nós com canvas DDS aparecem sozinhos aqui).",
+            discovery.domain
+        ));
+    }
+    ui.add_space(theme::SPACE_MD);
+
+    // Catálogo compartilhado persistido (sempre visível, abaixo da descoberta).
     ui.collapsing("Máquinas (catálogo compartilhado)", |ui| {
         ui.horizontal(|ui| {
             ui.label("autoridade:");
