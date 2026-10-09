@@ -1,0 +1,27 @@
+# ConfigMap tese-runner-config (fonte; criar só na ativação aprovada).
+# Espelha o runner existente com capacidade 1 (uma execução por vez).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tese-runner-config
+  namespace: ci-runners
+data:
+  config.yaml: |
+    log:
+      level: info
+
+    runner:
+      file: /data/.runner
+      capacity: 1
+      env_file: .env
+      timeout: 3h
+      fetch_timeout: 5s
+      fetch_interval: 2m
+
+    container:
+      network: ""
+      enable_ipv6: false
+      options: ""
+      workdir_parent: /data/cache
+      valid_volumes: []
+      docker_host: ""

@@ -54,6 +54,24 @@ tools vivo no mesh) · ❌ não implementado (exige backend inexistente).
 | G-68 | ◐ | `take(20)` + releitura manual |
 | G-69 | ◐ | estados crus separados; sem semáforo inventado |
 
+## Adendo T-800-21…T-800-26 (2026-09-12, branch `studio/phase-800-node`)
+
+- T-800-21: inventário GGUF assíncrono (lista instantânea + SHA-256 em
+  thread com progresso/cancelamento) + navegação lateral §30.
+- T-800-22: Visão geral somente leitura (tela inicial, cartões com `stale`
+  explícito; vazio sem erro = "nunca lido").
+- T-800-23: assistente Subir inferência (plano legível → start idempotente
+  → espera active → lista modelos → prova de geração real), prova viva
+  em :8082 (Qwen3.5-0.8B, 32 tokens).
+- T-800-24/25: `STUDIO_NODE_BIND` (padrão localhost) + `studio-noded`
+  sob systemd na .62 e na .61 (RTX 3080); prova viva: protocolo 1.0 nas
+  duas, `dds-agent` parado sem pretendido. 3 origens administráveis.
+- T-800-26: registro de nós conhecidos na GUI (apelido+URL digitados,
+  sem varredura/SSH). G-02/G-04 seguem bloqueados (cadastro SSH fora).
+- Esteira (DRAFT, não executar): `.gitea/workflows/ci.yml` +
+  `ansible/{deploy,validate}-studio-node.yml` + template systemd.
+  Push ao Harbor desabilitado (robot + CA pendentes, F0).
+
 ## Bloqueados por ambiente (🔒 — nada a fazer sem 2º host/credenciais)
 
 G-02, G-04, G-08 (colisão entre nós), G-10, G-11 (verificação cruzada),

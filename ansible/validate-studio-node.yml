@@ -1,0 +1,258 @@
+# Validação do studio-noded (F3). Playbook REAL do ensaio isolado no .62
+# (2026-09-14) — participantes e binários EXTRAÍDOS DO PACOTE no host do
+# ensaio (mesmo host nesta rodada; sem inferência real).
+#
+# Evidência 1 (daemon): hash == aprovado, protocolo 1.0, unidade ativa,
+# operação REAL com efeito no recurso inofensivo do ensaio (estado não
+# vazio), reinício da unidade e preservação do DB pelo esquema real
+# (validate_db.py transferido pelo módulo script).
+# Evidência 2 (DDS fase B): det-responder + agent dds + submit-one do
+# pacote, domínio reservado, prompt canônico com hash conferido,
+# correlação por CAMPOS EXATOS (task_id), negativo com resposta de
+# OUTRA tarefa, encerramento por PID registrado mesmo em falha.
+# O antigo smoke fase A (engine mock na operadora) foi substituído pela
+# fase B no host com o pacote real.
+
+- name: Exigir domínio de teste reservado + prompt verificável
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Recusar ausente, vazio ou protegido
+      ansible.builtin.assert:
+        that:
+          - dds_test_domain is defined and dds_test_domain | string | length > 0
+          - dds_test_domain | int != 0
+          - dds_test_domain | int != 42
+          - prompt_file is defined and prompt_file | length > 0
+        fail_msg: "informe -e dds_test_domain=<reservado> -e prompt_file=<PROMPT_VERSION: canônico>; 0 e 42 (protegidos) são recusados"
+
+    - name: Prompt confere com o hash canônico
+      ansible.builtin.command:
+        argv: ["sha256sum", "{{ prompt_file }}"]
+      register: prompt_hash
+      changed_when: false
+      failed_when: prompt_hash.stdout.split()[0] not in lookup('file', playbook_dir + '/prompts.sha256')
+
+- name: Validar daemon instalado + operação real + reinício com preservação
+  hosts: studio_nodes
+  vars:
+    node_bind: "127.0.0.1"
+    db_file: "{{ deploy_dir }}/studio-node-log.json"
+  tasks:
+    - name: Hash instalado confere com o artefato aprovado
+      ansible.builtin.command:
+        argv: ["sha256sum", "{{ deploy_dir }}/studio-noded"]
+      register: installed_hash
+      changed_when: false
+      failed_when: installed_hash.stdout.split()[0] != tese_approved_sha256
+
+    - name: Protocolo anunciado 1.0 (porta de ensaio)
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/version"
+        return_content: true
+      register: version
+      failed_when: version.json.major != 1 or version.json.minor != 0
+
+    - name: Unidade de ensaio ativa
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+      register: unit
+      failed_when: unit.status.ActiveState != "active"
+      become: true
+
+    - name: Operação REAL com efeito no recurso inofensivo do ensaio
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/apply"
+        method: POST
+        body_format: json
+        body:
+          protocol: {major: 1, minor: 0}
+          operation_id: "f3-op-{{ f3_run_id }}-bootstrap"
+            # AdminOp é internamente tagged: {"kind": "Bootstrap", ...}
+          op: {kind: bootstrap, node_name: "f3-ensaio-{{ f3_run_id }}"}
+        status_code: 200
+      register: apply1
+
+    - name: Snapshot do DB antes do reinício (estado NÃO vazio)
+      ansible.builtin.command:
+        argv: ["cat", "{{ db_file }}"]
+      register: db_before
+      changed_when: false
+      failed_when: db_before.stdout | length == 0
+
+    - name: Backup identificado antes do reinício
+      ansible.builtin.copy:
+        src: "{{ db_file }}"
+        dest: "{{ db_file }}.pre-restart-{{ f3_run_id }}"
+        remote_src: true
+        mode: '0644'
+
+    - name: Reiniciar a unidade de ensaio
+      ansible.builtin.systemd:
+        name: "{{ service_name }}"
+        state: restarted
+      become: true
+
+    - name: Aguardar prontidão pós-reinício
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/version"
+        status_code: 200
+      register: ready2
+      until: ready2.status == 200
+      retries: 20
+      delay: 2
+
+    - name: DB preservado pelo esquema real (script transferido)
+      ansible.builtin.script:
+        cmd: "validate_db.py {{ db_file | quote }} {{ (db_file + '.pre-restart-' + f3_run_id) | quote }}"
+      register: dbcheck
+      changed_when: false
+      failed_when: "'ops_preservadas=' not in dbcheck.stdout"
+
+    - name: Operação idempotente repetida não produz efeito novo
+      ansible.builtin.uri:
+        url: "http://{{ node_bind }}:{{ node_port }}/apply"
+        method: POST
+        body_format: json
+        body:
+          protocol: {major: 1, minor: 0}
+          operation_id: "f3-op-{{ f3_run_id }}-bootstrap"
+          op: {kind: bootstrap, node_name: "f3-ensaio-{{ f3_run_id }}"}
+        status_code: 200
+
+- name: DDS fase B — caminho completo com binários do pacote no host do ensaio
+  hosts: studio_nodes
+  vars:
+    dds_env:
+      # Descoberta uniforme (o mesmo perfil validado na imagem do runner):
+      # a config vazia '<Domain/>' mostrou-se INSTÁVEL no host do ensaio
+      # (agent travava na criação de readers com o responder ativo).
+      CYCLONEDDS_URI: "file://{{ deploy_dir }}/dds-{{ dds_test_domain }}/cyclonedds.xml"
+      LD_LIBRARY_PATH: "{{ deploy_dir }}/lib"
+  tasks:
+    - name: Diretório de trabalho próprio do teste
+      ansible.builtin.file:
+        path: "{{ deploy_dir }}/dds-{{ dds_test_domain }}"
+        state: directory
+        mode: '0755'
+
+    - name: Copiar config de descoberta validada para o host do ensaio
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../ci/tese-runner/cyclonedds.xml"
+        dest: "{{ deploy_dir }}/dds-{{ dds_test_domain }}/cyclonedds.xml"
+        mode: '0644'
+
+    - name: Fase B com limpeza garantida (block/always)
+      block:
+        - name: Copiar prompt canônico para o host do ensaio
+          ansible.builtin.copy:
+            src: "{{ prompt_file }}"
+            dest: "{{ deploy_dir }}/dds-{{ dds_test_domain }}/prompt.txt"
+            mode: '0644'
+
+        - name: Iniciar det-responder do pacote (PID registrado)
+          ansible.builtin.shell:
+            cmd: |
+              nohup "{{ deploy_dir }}/det-responder" --domain "{{ dds_test_domain }}" \
+                --delay-ms 5 --capacity 4 --log "{{ deploy_dir }}/dds-{{ dds_test_domain }}/resp.jsonl" \
+                > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/responder.log" 2>&1 &
+              echo $! > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/responder.pid"
+          environment: "{{ dds_env }}"
+          changed_when: true
+
+        - name: Iniciar agent dds do pacote (PID registrado)
+          ansible.builtin.shell:
+            cmd: |
+              nohup "{{ deploy_dir }}/agent" --agent-id f3-dds-{{ dds_test_domain }}-{{ f3_run_id }} \
+                --dds-domain "{{ dds_test_domain }}" --engine dds --model qwen3.5-0.8b \
+                > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/agent-dds.log" 2>&1 &
+              echo $! > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/agent-dds.pid"
+          environment: "{{ dds_env }}"
+          changed_when: true
+
+        - name: Aguardar o agent pronto E participantes vivos (não SIGHUP-ados)
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              grep -q 'claim loop iniciado' '{{ deploy_dir }}/dds-{{ dds_test_domain }}/agent-dds.log'
+              for f in agent-dds responder; do
+                kill -0 "$(cat '{{ deploy_dir }}/dds-{{ dds_test_domain }}/'$f'.pid')" 
+              done
+          args:
+            executable: /bin/bash
+          register: agentready
+          until: agentready.rc == 0
+          retries: 15
+          delay: 2
+          changed_when: false
+
+        - name: Submeter TAREFA 1 e correlacionar por campos EXATOS
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              MSG="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ deploy_dir }}/dds-{{ dds_test_domain }}/prompt.txt').read()},{'role':'user','content':'f3 tarefa 1'}]))")"
+              "{{ deploy_dir }}/submit-one" "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG" --timeout-ms 120000 \
+                > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/submit1.json"
+          environment: "{{ dds_env }}"
+          changed_when: false
+          args:
+            executable: /bin/bash
+
+        - name: Submeter TAREFA 2 (para o negativo de outra tarefa)
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              MSG="$(python3 -c "import json;print(json.dumps([{'role':'system','content':open('{{ deploy_dir }}/dds-{{ dds_test_domain }}/prompt.txt').read()},{'role':'user','content':'f3 tarefa 2'}]))")"
+              "{{ deploy_dir }}/submit-one" "{{ dds_test_domain }}" qwen3.5-0.8b "$MSG" --timeout-ms 120000 \
+                > "{{ deploy_dir }}/dds-{{ dds_test_domain }}/submit2.json"
+          environment: "{{ dds_env }}"
+          changed_when: false
+          args:
+            executable: /bin/bash
+
+        - name: Correlação exata (task_id campo a campo) + negativo de outra tarefa
+          ansible.builtin.command:
+            argv:
+              - python3
+              - -c
+              - |
+                import json
+                s1 = json.load(open('{{ deploy_dir }}/dds-{{ dds_test_domain }}/submit1.json'))
+                s2 = json.load(open('{{ deploy_dir }}/dds-{{ dds_test_domain }}/submit2.json'))
+                assert s1['task_id'] and s1['success'] is True, 'tarefa 1 sem conclusao'
+                assert s2['task_id'] and s2['success'] is True, 'tarefa 2 sem conclusao'
+                resp = [json.loads(l) for l in open('{{ deploy_dir }}/dds-{{ dds_test_domain }}/resp.jsonl')]
+                # Campos EXATOS de correlação do contrato (endpoint.rs:
+                # request_id/task_id) — não busca textual.
+                r1 = [e for e in resp if e.get('task_id') == s1['task_id']]
+                assert r1, 'tarefa 1 sem resposta correlacionada por task_id'
+                assert r1[0].get('request_id') == s1['task_id'], 'request_id != task_id (contrato)'
+                # NEGATIVO: resposta de OUTRA tarefa não satisfaz o aceite.
+                wrong = [e for e in resp if e.get('task_id') == s2['task_id'] and e.get('task_id') != s1['task_id']]
+                assert wrong, 'negativo sem material: tarefa 2 nao produzida'
+                assert all(e.get('task_id') != s1['task_id'] for e in wrong), 'negativo vazou'
+                print('correlacao exata OK: task1=%s task2=%s (negativo confirmado)' % (s1['task_id'][:8], s2['task_id'][:8]))
+          changed_when: false
+      always:
+        - name: Encerrar participantes pelos PIDs registrados
+          ansible.builtin.command:
+            argv: ["sh", "-c", "kill \"$(cat '{{ deploy_dir }}/dds-{{ dds_test_domain }}/{{ item }}')\" 2>/dev/null || true"]
+          loop:
+            - agent-dds.pid
+            - responder.pid
+          changed_when: false
+
+        - name: Confirmar término dos participantes
+          ansible.builtin.shell:
+            cmd: |
+              set -euo pipefail
+              for f in agent-dds responder; do
+                pid="$(cat '{{ deploy_dir }}/dds-{{ dds_test_domain }}/'$f'.pid')"
+                for _ in $(seq 1 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
+                kill -0 "$pid" 2>/dev/null && { echo "FALHOU: $f (pid $pid) ainda vivo"; exit 1; }
+                echo "$f pid $pid encerrado"
+              done
+          args:
+            executable: /bin/bash
+          changed_when: false

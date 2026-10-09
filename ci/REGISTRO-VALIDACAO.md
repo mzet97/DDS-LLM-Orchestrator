@@ -1,0 +1,701 @@
+# Registro de validação — CI/CD da tese (sem segredos)
+#
+# Caminhos e procedimentos já executados, para não reabrir perguntas.
+
+## CA pública `local-root-ca`
+- Origem: Secret `local-root-ca` (ns `cert-manager`, cluster .51),
+  campo `tls.crt` — SOMENTE o certificado público; a chave privada nunca
+  foi tocada.
+- Impressão SHA-256 (conferida via openssl no cluster E via python na
+  operadora — idênticas):
+  `A2:CB:24:84:56:4B:72:DC:65:64:E5:AD:F9:C6:F9:D0:8A:47:D1:DD:84:0A:70:28:55:5B:39:80:3F:E9:9A:5C`
+- Destino na operadora: `~/.config/dds-orchestrator/pki/local-root-ca.crt`
+  (dir 0700, arquivo 0600; nunca sobrescrever certificado diferente sem
+  conferir).
+- Uso: confiança explícita por ferramenta (`curl --cacert`, `oras
+  --ca-file`). Sem `-k`, sem instalação global no F0.
+- Prova: 200 em gitea/harbor/argocd `.home.arpa` com `--cacert`.
+
+## Cluster (somente leitura)
+- Acesso: `k8s1@192.168.1.51` (kubectl no host; kubeconfig administrativo
+  NÃO copiado para operadora/runner/GUI).
+- Runner existente: `ci-runners/gitea-act-runner` Running, v0.2.12,
+  labels `ubuntu-latest, ubuntu-22.04`, `capacity: 2`, SEM toolchain Rust.
+- ArgoCD: `root` Synced/Healthy de `gitea_admin/gitops.git`,
+  `gitops/bootstrap` — NÃO é o checkout `k8s`; não alterar.
+- Gitea 1.26.1; erro de banco (`pq ... shutting down`) em 12/09 + 27
+  restarts: ocorrências a investigar, sem causa raiz afirmada.
+- containerd: mirror `harbor.harbor.svc.cluster.local` → HTTP
+  `10.43.105.175` (pulls internos OK sem TLS; CA só para acesso externo).
+
+## Imagem `tese-runner:0.1.0` (bootstrap, só local no .51, SEM push)
+- Digest: `sha256:7b542446f6a54217098576759d293c3c4bb0e2356098339a701bd8fbc28386cc`
+- Smoke: usuário `runner`, rustc/cargo 1.95.0, node v24.21.0,
+  SEM docker socket, SEM chaves SSH.
+- act_runner 0.2.12 com SHA verificado contra o publicado:
+  `0b6d1ca5487e737bc67ecb440997dff412dd63d65b291eddcb69aec9cb61ebbf`
+
+## Canário local do daemon (revisão publicada 409c3a5, 2026-09-12)
+- Revisão: `409c3a5` (branch `studio/phase-800-node`, árvore limpa,
+  scripts com bit executável). Reprodução em checkout separado
+  (`git clone` + `checkout 409c3a5`):
+  `cargo build --locked --release -p studio-node` (15.9s) +
+  `./ansible/tests/canary_local.sh` → `CANARIO_EXIT=0`,
+  `CANÁRIO OK: deploy, reinício, validação, falha e rollback demonstrados`.
+- Binários (mesmo commit-fonte, perfis distintos):
+  v1 release `91afef86c968bf4d313e4e210097f34d602ce952d4ff08825d1c4cbf91094c3a`;
+  v2 debug `f4b9872bce1f680d0d1ae63b02dbe3fa42b520100ff5e049539fb9c8d20539e0`.
+  Conclusão limitada ao procedimento de substituição/reinício.
+- NÃO exercitados: playbooks Ansible, artefato OCI, systemd, SSH, GUI, DDS.
+- Validador: `test_validate_db.py` 8/8 (1 positivo + 6 negativos + flag).
+- Bloqueios externos (sem tocar em serviços): SSH `k8s1@192.168.1.51`
+  `Permission denied` com as chaves locais (porta 22 aberta); Harbor
+  `GET /v2/` responde 401 + `WWW-Authenticate: Bearer` (desafio normal,
+  credencial robot ainda não disponibilizada).
+  → RESOLVIDOS em 2026-09-12 (seções abaixo).
+
+## SSH administrativo restaurado (2026-09-12, com autorização expressa)
+- Pub `homelab-secure-edge-ansible` (`SHA256:Eu2fDEXUZ93PJx1A3cOSer8VJ0mPMsWko7QiSgUXJuA`)
+  cadastrada no `authorized_keys` do .51 por append; entradas
+  pré-existentes preservadas (2 no total, fingerprints conferidos).
+- Tentativa controlada única: `ssh -i ~/.ssh/homelab-secure-edge -o
+  IdentitiesOnly=yes k8s1@192.168.1.51 'echo SSH_OK; docker --version'`
+  → `SSH_OK`, Docker 29.4.0, exit 0. Host key validada (nunca
+  `StrictHostKeyChecking=no`).
+
+## Mudanças de infraestrutura do .51 (2026-09-12, autorizadas)
+- CA pública do Harbor instalada (fonte: CA já validada da operadora —
+  certificado público, sem chave privada):
+  - `/etc/docker/certs.d/harbor.home.arpa/ca.crt` (0644)
+  - `/etc/containerd/certs.d/harbor.home.arpa/ca.crt` (0644)
+  - `/usr/local/share/ca-certificates/local-root-ca.crt` +
+    `update-ca-certificates` (confiança do sistema).
+  Mantidos no host (NÃO removidos): necessários a pull/push TLS
+  futuros do runner. Reversíveis removendo os arquivos +
+  `update-ca-certificates --fresh`.
+- `systemctl restart docker` executado 1x (o containerd store do
+  Docker 29 lê `certs.d` apenas no arranque). Afetados: container
+  `iperf3-server` (parado e religado em seguida — Up confirmado);
+  k3s e seu containerd NÃO foram reiniciados (instância separada);
+  pods do cluster seguiram Running.
+- Robot `robot$tese+tese-ci` credenciado no docker config do k8s1
+  (`docker login`) para o push; `docker logout` após o uso e o arquivo
+  local da credencial removido.
+
+## Imagem `tese-runner:0.2.1` — APROVADA no aceite completo (2026-09-13)
+- Dockerfile/commit: 9321e31 (fix arbitragem + tool_call strength) sobre
+  d1f32b9 (make/g++, RUSTUP_TOOLCHAIN, HOME/CARGO_HOME uid 1001,
+  /etc/cyclonedds.xml + CYCLONEDDS_URI) — branch studio/phase-800-node.
+- Aceite reproduzível: `ci/tese-runner/aceite.sh` (fases build|bootstrap,
+  LOCAL_TARBALL da revisão, MEM/CPUS/CLAIM_REPS explícitos), rodando como
+  root no .51 (chown 1001), containers uid 1001 SEM apt-get/sudo/setpriv.
+- Resultados (rev 9321e31, imagem 0.2.1):
+  - bootstrap: fail-closed sem GITEA_* ✓; com .runner existente pula
+    registro ✓ (endereço inexistente; Gitea real intocado — F3 intacto);
+    executa como uid 1001 ✓.
+  - build: toolchain ✓ (rustc/cargo 1.95.0, node v24.21.0, make/g++);
+    `fmt --check` ✓; `clippy -D warnings` ✓; `cargo fetch` ✓; SUÍTE
+    COMPLETA `--no-fail-fast -- --test-threads=1` **0 falhas** (44+
+    suítes ok, incluindo claim e claim_diag); release build ✓
+    (agent/context-store/dds-bench como uid 1001).
+  - claim ×5 (estado novo cada): 5/5 OK (~0.85s cada; antes do fix:
+    loteria com timeouts de 30.8s).
+- Publicação: push via robot$tese+tese-ci; **digest do registry (índice
+  da tag 0.2.1): sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d**
+  (header docker-content-digest); pull por digest pelo Docker do .51 ✓
+  (não valida K3s — Deployment não aplicado); execução uid 1001 sem
+  preparo ✓. Objetos OCI: manifest amd64
+  sha256:88261ef750ee47f181d5e1982af71faea83c93dc54e39e008a0eb4db726c5f61;
+  config sha256:0b000c11879ad343d1b64f29dde30728cf66fee3e6d6568111ba1f431de6a36d;
+  10 camadas.
+- Manifesto `runner-deployment.yaml` fixado em
+  `harbor.home.arpa/tese/tese-runner@sha256:cee13047…58917d`.
+- 0.2.0 permanece no registry como candidata DIAGNÓSTICA (deps de build
+  incompletas — make/g++ ausentes; claim flaky pré-fix). Não sobrescrita.
+
+## Fechamento administrativo da manutenção (2026-09-14) — REVISÃO FINAL
+### Gatilhos do workflow do site (repos gitea_admin/zetdev-site)
+- Commit **9c984afb66** (build.yaml): `on: push` REMOVIDO; publicação
+  SOMENTE por `workflow_dispatch` com input `candidate-tag` OBRIGATÓRIO
+  e exclusivo (o job recusa vazio/`latest`/barra). Job antigo "deploy"
+  (clone GitOps + sed newTag) REMOVIDO do workflow. Confirmado
+  empiricamente: o commit NÃO disparou run (workflow do commit novo sem
+  push trigger; último run permanece o 46). Nenhuma publicação ou
+  implantação adicional nesta correção.
+### O que o job "deploy" do run nº46 REALMENTE executou (log job 128)
+- Passos executados: **somente** `git clone` do repo gitops (com
+  GITOPS_TOKEN mascarado). Os steps "Atualizar tag" (sed) e "Commit e
+  push" NÃO executaram (ausentes do log; count de steps = 1). NENHUM
+  kubectl, nenhuma chamada ao Argo CD, nenhum commit no GitOps —
+  confirmado pela árvore do repo gitops (último commit 13:07, meu;
+  nada às 16:58). Efeito observado: nenhum. O nome "deploy" era
+  ambíguo — o job foi REMOVIDO (não renomeado) no fechamento.
+### Evidência TLS no cliente correto (Buildah 1.41.6 do job)
+- Novo workflow `tls-check.yaml` (commits 59c8dfd6→558311216a),
+  dispatch-only, SEM credenciais de escrita e SEM publicação.
+  Run nº48 (job 130, SUCCESS), credenciais FICTÍCIAS:
+  - POSITIVO: `buildah login --tls-verify=true` com a CA versionada →
+    handshake COMPLETO; recusa `invalid username/password`
+    (autenticação; rc=1) — prova que o TLS passou e a recusa veio depois.
+  - NEGATIVO: CA incompatível (autoassinada gerada no job) →
+    `tls: failed to verify certificate: x509: certificate signed by
+    unknown authority` (rc=1) — recusa NO TLS antes da autenticação,
+    sem queda para HTTP. Confiança global do host intocada.
+- Correções de evidência anterior: o negativo com `openssl s_client`
+  SEM `-verify_return_error` apenas EXIBIA "Verify return code: 21" sem
+  provar abort — o workflow final usa `-verify_return_error` no
+  positivo e no negativo; a recusa real está demonstrada pelo teste
+  Buildah acima. "Recuperação por digest" = fetch do MANIFESTO por
+  digest (HEAD/200 + docker-content-digest), NÃO download das camadas
+  — o pull completo de camadas foi demonstrado apenas pelo pod do k3s
+  (manutenção) e pelo docker pull da operadora (F2).
+### Desvios consolidados (registro fiel)
+- **Incidente de credencial (run nº38)**: ocorreu ANTES da suspensão
+  efetiva do gatilho (commit da CA disparou o workflow antigo);
+  `robot$library+zetdev-push` DESATIVADA; substituta
+  `robot$library+zetdev-push2` (Pull+Push só library) distribuída
+  apenas aos secrets do Gitea; verificações: cred antiga → manifest 401
+  (novo escopo testado); SEM evidência de interceptação — apenas
+  tráfego HTTP no segmento interno; ressalva de tokens preexistentes
+  mantida. Causa operacional minha (sequência de commits), sem
+  atribuição a terceiros.
+- **Publicação adicional em latest**: a restauração do gatilho push
+  (commit 02af293753) NÃO estava autorizada nesta rodada — os runs
+  nº44–46 publicaram `latest` (digestos `e74cb32e` e final
+  `2b080bab29fc9ad14533930b94a480110f544bb1e335a98901d52a9c1036f3b8`).
+  O site permanece fixado no digest `d5c10fbb…` (nenhum rollout;
+  histórico acima registrado; latest NÃO foi revertida — política
+  futura decidida à parte).
+- **NetworkPolicy compartilhada (runner antigo)**: diff da regra
+  ADICIONADA a `gitea-act-runner` (ci-runners):
+  `+ to: [ns=kube-system + podSelector app.kubernetes.io/name=traefik],
+     ports: TCP 8443, TCP 8000` — idêntica à do tese-runner (destino
+  pós-DNAT do svclb); sem ampliação de escopo (nada além de traefik);
+  origem: aplicada via API (não versionada em repo — igual à do
+  tese-runner; pendência de declaratividade registrada). Estado
+  aplicado conferido.
+- **Medição da manutenção**: mantida a correção — 7 s do `systemctl
+  start` ao readyz; indisponibilidade TOTAL não medida. Script de
+  manutenção v2: validação SINTÁTICA apenas (não é ensaio de
+  recuperação executado no cluster).
+
+## Publicador do zetdev-site por HTTPS validado (2026-09-14) — CONCLUÍDO
+- Repositório: gitea_admin/zetdev-site, branch main, workflow
+  .gitea/workflows/build.yaml. CA pública versionada em
+  .gitea/certs/harbor-ca.crt (byte-idêntica à fonte administrativa;
+  fp SHA-256 A2:CB:24:84:56:4B:72:DC:65:64:E5:AD:F9:C6:F9:D0:8A:47:D1:
+  DD:84:0A:70:28:55:5B:39:80:3F:E9:9A:5C; nunca a chave privada).
+- Workflow corrigido (commits a448cc23→695ccc11eb): destino
+  harbor.home.arpa/library/zetdev-site (repositório confirmado);
+  --tls-verify=false REMOVIDO de todos os comandos; CA instalada em
+  /etc/containers/certs.d/harbor.home.arpa/ca.crt + conferência de
+  handshake com impressões (CA fp + cert do servidor + Verify return
+  code 0) e NEGATIVO de confiança (CA incompatível → Verify return code
+  21, recusa sem queda para HTTP); login com senha por stdin e authfile
+  0600 removido ao fim; deploy job gateado a `push` (nunca em dispatch).
+- INCIDENTE contido (run nº38): o commit da CA (push) disparou o
+  workflow ANTIGO ainda ativo, que usou a cred NOVA pelo caminho HTTP.
+  Conforme autorizado: robot$library+zetdev-push DESATIVADA e criada
+  robot$library+zetdev-push2 (Pull+Push somente library — Harbor 2.15
+  exige Pull+Push; descrição anterior 'Push somente' corrigida),
+  distribuída SÓ aos secrets do Gitea (nada por HTTP). zetdev-pull
+  permanece somente-leitura e separada.
+- Correções de causa única por tentativa (todas preservadas): nº39
+  stdin do s_client; nº40/41 connection refused — netpol do runner
+  antigo sem regra pós-DNAT (pods traefik 8443/8000; mesma do
+  tese-runner; adicionada); nº42-45 busybox sem curl/wget-CA (instalado
+  curl no apk); nº46 **SUCCESS completo**.
+- Evidências do run nº46 (job build 127): Verify 0 com a CA versionada;
+  negativo Verify 21; Login Succeeded; PUSH_OK latest com digest
+  **sha256:2b080bab29fc9ad14533930b94a480110f544bb1e335a98901d52a9c1036f3b8**;
+  recuperação INTRA-JOB por digest (docker-content-digest idêntico) e
+  pull por digest da OPERADORA com robot$library+zetdev-pull (HTTP 200).
+  Validação dedicada com tag exclusiva (dispatch r4):
+  tls-validation-1789396973-r4 = digest
+  sha256:a4afb02048c9961b8d5943a9e33b122d39e95ab77701dd95803ebfe67d1085ef.
+- Preservação: site operacional INALTERADO em
+  harbor.home.arpa/library/zetdev-site@sha256:d5c10fbb… (pod sem
+  rollout, 3h57m; site 200) — nenhuma tag de release sobrescrita; a
+  tag de validação não é referenciada por mecanismo de atualização.
+- Estados verificáveis finais: pull do runtime HTTPS carregado com
+  consumidores recuperados (manutenção); publicador ativo corrigido com
+  credencial limitada e build/push/pull reais aprovados (nº46);
+  credenciais antigas desativadas (gitops-ci, tese-pull, zetdev-push)
+  com ressalva registrada: tokens ANTES emitidos têm validade própria —
+  a contenção foi comprovada por recusa de NOVAS autorizações no escopo
+  testado, não se alega invalidação instantânea de todos os tokens.
+
+## Manutenção HTTPS do pull do Harbor no K3s (2026-09-14) — CONCLUÍDA
+- Topologia: k3s v1.34.6+k3s1 single-node (.51), datastore **kine/SQLite**
+  (state.db+WAL; snapshot etcd NÃO aplicável). Backups: quente
+  (/root/k3s-maint-20260914/state.db*) e FRIO (copiado com k3s parado);
+  server token PRESERVADO em /var/lib/rancher/k3s/server/token (fora de
+  relatórios). registries.yaml.bak-http em 0600 — JAMAIS restaurar (é o
+  material exposto); rollback é o registries.rollback-https (idêntico ao
+  aplicado). README-recuperacao.txt com procedimento SSH sem API.
+- Consumidores suspensos durante a janela: runner tese (scale 0; CI tese
+  sem runs ativos; CI zetdev-site sem runs ativos — últimas completed).
+- Restart ÚNICO do serviço k3s (sem killall; pods permaneceram, todos
+  IfNotPresent com imagens locais — 0 pods quebrados). **Medição
+  corrigida: 7 s contam do `systemctl start` até o readyz** — a
+  indisponibilidade TOTAL da API (primeira perda de prontidão até a
+  recuperação) NÃO foi medida: o script inicial abortou entre o stop e o
+  conclusão do backup (dir frio inexistente) e foi retomado manualmente;
+  a partir daí o start→readyz levou 7 s. Timeout de espera: 300 s
+  (critério de rollback registrado antes). Script de manutenção v2
+  (dirs PRÉ-stop + trap que re-starta em falha entre stop/start +
+  T0 no stop) versionado na seção de manutenção; sintaxe validada em
+  ambiente descartável (sem nova intervenção no cluster).
+- Conjunto de recuperação COMPLETO agora inclui cópia restrita do server
+  token (/root/k3s-maint-20260914/token.server, 0600 — além do original
+  preservado no caminho do k3s), backup frio do kine/SQLite e
+  registries.rollback-https.
+- Config aplicada (/etc/rancher/k3s/registries.yaml): mirrors
+  harbor.harbor.svc.cluster.local e harbor.home.arpa → **endpoint único
+  https://harbor.home.arpa**; configs TLS ca_file=/etc/rancher/k3s/certs/
+  harbor-home-arpa.crt (root:root 0644, CA pública já validada). SEM
+  insecure_skip_verify, SEM fallback HTTP, SEM credencial global
+  (autenticação por imagePullSecrets por consumidor). containerd gerou
+  hosts.toml HTTPS nos dois nomes (verificado).
+- Credenciais (segregadas por finalidade; Harbor 2.15):
+  - tese-runner: Secret tese-registry-pull → **robot$tese+tese-pull2**
+    (Pull só tese); deploy migrado p/ harbor.home.arpa/tese/@sha256:
+    cee13047… (mesmo digest); novo registro Gitea **id 9**; órfão id 8
+    removido. Old tese-pull permanece desativado.
+  - zetdev-site: Secret harbor-registry-auth → **robot$library+
+    zetdev-pull** (Pull só library, server harbor.home.arpa); origem
+    GitOps atualizada (kustomization images: newName harbor.home.arpa +
+    digest sha256:d5c10fbb… — mesmo conteúdo da tag latest; primeiro
+    commit quebrou indentação e o sync manteve a referência antiga —
+    corrigido e re-sincronizado). Rollout OK, pull autenticado (177ms),
+    site 200.
+  - CI zetdev-site (publicador): Gitea secrets HARBOR_ROBOT_USERNAME/
+    PASSWORD → **robot$library+zetdev-push** (Push só library). O
+    workflow build.yaml continua usando o nome interno com --tls-verify
+    false — PENDÊNCIA registrada (alterar workflow exige commit no repo
+    do site; a conta nova jamais foi enviada por HTTP: CI não rodou
+    nesta janela).
+  - **robot$gitops-ci DESATIVADO** (disable=true; inventário completo:
+    registries.yaml global + Secret zetdev-site + CI build.yaml). Não
+    reativado.
+- Evidências de pull pelo RUNTIME (não cache, não Docker): Pod
+  descartável check-pull-https (imagePullPolicy **Always**, digest,
+  imagePullSecret tese-pull2, runAsUser 1001, sem privilégios): evento
+  kubelet "Pulling…" → "Successfully pulled in 222ms" (manifest
+  revalidado com secret; camadas locais reaproveitadas — NÃO se alega
+  retransferência). Rejeição da cred antiga no RECURSO: gitops-ci contra
+  manifest tese via HTTPS = **401** (token emitido não autoriza pull do
+  recurso; escopo testado registrado).
+- Proibições respeitadas: nenhum killall/desinstalação/limpeza de
+  imagens/restart de Docker/PostgreSQL/Harbor/Gitea; .61 e o daemon do
+  .62 não tocados; Application raiz do Argo CD intocada (apenas o app
+  zetdev-site re-sincronizado pela própria origem corrigida).
+
+## Verificadores V1 + canário operacional + segurança do pull (2026-09-14)
+### Verificadores (ambiente descartável; commits 2a67658)
+- Correlação: `ansible/correlation.py` — MESMA função no positivo e no
+  negativo (campos exatos task_id/request_id; EVIDENCE_ABSENT /
+  REQUEST_ID_MISMATCH / EMPTY_TASK_ID). Unit 6/6 (inclui t2-como-t1,
+  ausência, divergência). Runtime (.62, domínio 99, run v1-084348,
+  rc=0 25/0): positivos correlation:OK:OK (t1/t2 sobre a lista
+  COMPLETA); negativo t2-como-t1 FAIL:EVIDENCE_ABSENT (evidência da t2
+  apresentada como candidata — arquivo só-com-t2, sem filtrar a
+  esperada fora do critério); ausência FAIL (arquivo vazio);
+  request_id divergente coberto no unit com registro sintético.
+- Idempotência pelo CONTRATO (não HTTP 200): /apply → outcome
+  applied → already_applied com o MESMO record (resposta FLAT; campo de
+  auditoria que muda: NENHUM no record — o arquivo é regravado
+  inteiro). Efeito administrado REAL via POST /services/<owned>/start
+  (actuator systemctl --user; dummy USER exclusiva com XDG_RUNTIME_DIR;
+  pré-condição limpa): acted true→false com wanted/active estáveis.
+- Estado não vazio PELO ESQUEMA: `check_state.py` — operações presentes
+  em records/order (14 ops no ensaio), não tamanho textual.
+### Canário operacional (commits 26c6707, bde602b)
+- Preflight SEM escrita: unit sem drop-ins, enabled, User=agent,
+  WorkDir=/home/agent/dds-llm-rust, bind 192.168.1.62:4317,
+  DB=studio-node-log.json (INEXISTENTE — nasce na 1ª operação),
+  Restart=always, KillMode=control-group; cgroup da unidade contém
+  SOMENTE o MainPID; Requires/Wants/PartOf/TriggeredBy sem agentes →
+  parada isolada demonstrada.
+- Revisões DISTINTAS: operacional 9a5ab50b (build 12/09 13:27, sem
+  procedência CI) vs candidato 9a3a1f9f (14/09, CI run nº8) — recência
+  por EVIDÊNCIA de data. Compat em ambiente separado (env espelhado,
+  dummy services, loopback): /version 1.0, /services, /apply applied.
+  Registro de canário: ci/PROMOCAO-tese-rust-54a7c34-canary.md
+  (histórico de ensaio preservado).
+- EXECUÇÃO: material verificado antes da interrupção; stop → backup
+  binário+unit em releases/can-<run>/ → instalação → start (janela
+  dentro de 90s). R1 exe do PID == aprovado; R2 /version 1.0; R3
+  listener 4317 do MainPID; /services com dds-agent (GUI); R4 falhou
+  POR MÉTODO contaminado (pgrep self-match + participantes meus de
+  ensaios vivos no host — resíduo meu, encerrado) — corrigido para ps
+  sem self-match. Rodada final rc=0: **'já na versão candidata;
+  nenhuma troca ou reinício necessário'** + R1-R4 verdes. Serviço
+  ativo com binário aprovado; agentes/inferência intocados (R4
+  vazio==vazio); sem bootstrap operacional; sem corrupção proposital.
+### Segurança do pull (V5)
+- Consumidores EFETIVOS do mirror HTTP `http://10.43.105.175`:
+  robot$tese+tese-pull (Secret tese-registry-pull/kubelet do
+  tese-runner + crictl manuais) E robot$gitops-ci (auth global do
+  registries.yaml + Secret zetdev-site/harbor-registry-auth do pod
+  zetdev-site). Ambos com Basic Auth em claro nesse segmento.
+- Contenção do robot do PILOTO executada: PUT/secret não editável no
+  Harbor 2.15 (validado: antiga seguia aceitando token) → robot
+  id 5 robot$tese+tese-pull DESATIVADO + criado robot$tese+tese-pull2
+  (Pull somente tese, 365d) com segredo NOVO que só existe em arquivo
+  0600 da operadora — NÃO distribuído a nenhum consumidor HTTP.
+  Verificação: cred antiga → manifest pelo mirror HTTP = 401 (pull
+  impossível); cred nova → token e manifest HTTPS = 200, 0 redirects.
+  Efeito registrado e aceito: NOVOS pulls do runner permanecem
+  BLOQUEADOS até o transporte HTTPS (Secret do cluster segue com a
+  cred morta, propositalmente). robot$gitops-ci: exposição REGISTRADA,
+  substituição fora do escopo autorizado nesta rodada.
+- Diff HTTPS do runtime (PREPARADO; exige restart k3s — autorização
+  de infraestrutura pendente):
+    # /etc/rancher/k3s/registries.yaml (substituir mirrors+configs)
+    mirrors:
+      harbor.home.arpa:
+        endpoint: [https://harbor.home.arpa]
+    configs:
+      harbor.home.arpa:
+        tls: {ca_file: /var/lib/rancher/k3s/agent/etc/containerd/certs.d/harbor-home-arpa.crt}
+  Pré-requisito: copiar a CA pública para o caminho acima; atualizar
+  os dois Secrets (tese-registry-pull com tese-pull2; zetdev-site
+  conforme gestão própria). Procedimento: aplicar yaml → restart k3s
+  (~30-60s de API single-node; pods seguem) → verificação: `k3s
+  crictl pull` por digest com a cred nova (caminho do RUNTIME, não
+  Docker) + rollout do tese-runner. Recuperação: restaurar
+  registries.yaml.bak + restart.
+
+## F2 concluído + F3 validado em ensaio remoto isolado no .62 (2026-09-14)
+- **F2 — publicação e promoção**: vínculos confirmados pela API (artefato
+  ID 5 ↔ run nº 8 ↔ 54a7c349) ANTES do download; pacote verificado em
+  diretório novo (manifest commit/arch/toolchain, 6 bins + 3 libs,
+  SHA256SUMS 9/9). Publicado o MESMO .tar.gz (sem recompilar) via oras
+  (HTTPS + CA local; robot de publicação; segredo só em arquivo 0600):
+  **harbor.home.arpa/tese/tese-rust@sha256:ca4836d7…82a76** (tag
+  54a7c34-x86_64, artifact-type application/vnd.tese.bundle). Pull por
+  digest em outro diretório: SHA-256 idêntico
+  (b4f892c7acbb37c4cb968d35771a65253e07d46bceee1ca66281c7a38cc4a7fa).
+  Registro de promoção: `ci/PROMOCAO-tese-rust-54a7c34.md` — aprovado
+  PARA ENSAIO F3 ISOLADO; NÃO aprovado para substituir serviços
+  operacionais. Digest do PACOTE (ca4836d7) ≠ digest da IMAGEM do runner
+  (cee13047) — nomes distintos registrados.
+- **F3 — ensaio no .62 (host 'agent', x86_64, sudo; studio-noded
+  OPERACIONAL ativo na 4317 — intocado durante todo o ensaio e
+  confirmado ao fim: mesmo MainPID 11523)**. Execução 20260914a:
+  - Playbooks reais corrigidos (commits 146ec3b e anteriores): nome do
+    pacote lido e validado (não derivado do digest); integridade e hash
+    aprovado ANTES de copiar; lib/libddsc.so* instalada com
+    LD_LIBRARY_PATH exclusivo da unidade; validate_db.py via módulo
+    script; parametrização total + proteções (recusa studio-noded/4317,
+    bind loopback, staging por run_id).
+  - Percurso: pull por digest na operadora → validação/extração →
+    implantação Ansible (deploy ok) → systemd start (unidade
+    studio-noded-f3-test-20260914a, porta 24317, 127.0.0.1, uid agent) →
+    operação REAL (/apply Bootstrap) com estado NÃO vazio → idempotência
+    (repetição sem efeito novo) → reinício da unidade → DB preservado
+    (validate_db: ops_preservadas; backup identificado) → **DDS com
+    binários do pacote**: det-responder + agent dds + submit-one,
+    domínio reservado 95/96, prompt canônico seq_B_reviewer_v1 (hash
+    conferido), 2 tarefas com correlação EXATA por task_id/request_id
+    + NEGATIVO (resposta de outra tarefa não satisfaz) → participantes
+    encerrados por PID registrado com confirmação de término.
+  - Negativo de corrupção: binário adulterado no staging → sha256sum -c
+    FALHA (studio-noded: FAILED) → playbook aborta rc=2 SEM instalar
+    nada (nenhum arquivo copiado, unidade inexistente).
+  - Falha controlada + rollback: ELF truncado (após stop — binário em
+    execução recusa overwrite com ETXTBSY) → unit failed, sem resposta
+    → reexecução do deploy (rc=0, restaurou o pacote válido e
+    re-verificou hash) → revalidação completa rc=0. Classificação:
+    RECUPERAÇÃO DO PROCEDIMENTO (mesmo release antes/depois; nenhuma
+    alegação de compatibilidade entre versões).
+  - Correções da execução (causas registradas nos commits): AdminOp é
+    internamente tagged snake_case ({"kind":"bootstrap"}); config
+    CycloneDDS vazia instável no host (agent travava na criação de
+    readers com o responder ativo — resolvido com o XML de descoberta
+    validado copiado ao host); participantes em background tomavam
+    SIGHUP ao fechar o canal da task (nohup + barreira de
+    prontidão/vida antes do submit); domínio 77 histórico da LAN tinha
+    resíduo (domínios reservados novos usados).
+  - Limpeza: f3-teardown rc=0 (unidade removida, daemon-reload, dirs de
+    deploy e staging removidos); 0 processos f3 restantes; portas de
+    teste liberadas; inventário local com senha JAMAIS versionado.
+- Fora do escopo mantido: substituir o studio-noded operacional,
+  atualizar .61, campanha científica, deploy automático por push.
+
+## Consolidação F1 + pendência de segurança do pull (2026-09-14)
+- Estado efetivo vs versionado: os elementos Recreate/imagePullSecrets/
+  SSL_CERT_FILE/GIT_SSL_CAINFO/NODE_EXTRA_CA_CERTS vieram do apply manual
+  do piloto + `kubectl set env` (NODE_EXTRA_CA_CERTS) — nenhum overlay ou
+  patch de terceiros. O manifesto `ci/tese-runner/runner-deployment.yaml`
+  agora versiona a configuração declarativa COMPLETA igual ao efetivo
+  (referências aos Secrets, nunca valores). Headers DRAFT substituídos
+  por estado aplicado; `set -x` removido do caminho normal dos jobs
+  (diagnóstico de tentativas documentado nos commits).
+- **PENDÊNCIA DE SEGURANÇA (pull da imagem)**: o runtime K3s puxa
+  tese-runner pelo mirror interno `http://10.43.105.175` (svc `harbor`,
+  porta 80 — HTTP, sem TLS). Nesse segmento (node→ClusterIP) a senha do
+  robot pull-only trafega como Basic Auth EM CLARO: a confidencialidade
+  desse caminho NÃO está garantida. NÃO é equivalente ao HTTPS com CA
+  validada usado em todo o resto (Gitea, publicação, oras). Correção
+  futura proposta (EXIGE `systemctl restart k3s` — fora desta rodada,
+  diff apresentado, não aplicado):
+      # /etc/rancher/k3s/registries.yaml (proposta)
+      mirrors:
+        harbor.home.arpa:
+          endpoint:
+            - https://harbor.home.arpa
+      configs:
+        "harbor.home.arpa":
+          tls:
+            ca_file: /etc/rancher/k3s/certs/harbor-local-root-ca.crt
+  Impacto do restart: interrupção breve do plano de controle single-node
+  (API ~30-60s; pods seguem). Aguarda autorização própria.
+- Endpoints efetivos verificados (sem valores sensíveis): token do
+  registro via API do Gitea (HTTPS gitea.home.arpa, CA validada);
+  transferência de imagem: mirror HTTP interno acima (exceção
+  registrada); artefatos de CI: HTTPS gitea.home.arpa (Node com
+  NODE_EXTRA_CA_CERTS). Publicação/recuperação de PACOTES da aplicação
+  (F2): SEMPRE HTTPS harbor.home.arpa com CA — HTTP não estendido.
+- NetworkPolicy tese-runner: restaurada e CONFIRMADA igual à versionada
+  (5 regras: DNS 53, gitea 3000, harbor 80/443, pods traefik 8443/8000
+  — destino pós-DNAT —, internet pública). A remoção temporária do
+  diagnóstico foi encerrada com a regra pós-DNAT; não será mais
+  removida para testes.
+
+## F1 — runner dedicado ativo e CI validada no Gitea (2026-09-14)
+- Revisão final da frente: 54a7c349 (branch studio/phase-800-node;
+  ajustes de pré-ativação: 32651ca docs, a40cf30 registro, 814d417
+  verificadores/workflow, a39f417 manifesto, 710acc0 netpol pós-DNAT,
+  fc1cbd4 forks de artefato, 1f285de negativos com rc explícito,
+  e86c640 set -x diagnóstico, c14fbbd+54a7c34 libddsc no pacote).
+- Revisão do WORKFLOW executado: 54a7c349 (workflow_dispatch com input
+  ref=SHA imutável; todos os jobs no mesmo SHA resolvido pelo job pin).
+- Espelho: repo gitea_admin/DDS-LLM-Orchestrator (id 3, privado, criado
+  para o piloto) — branch + tags; push via HTTPS com CA local.
+- Recursos aplicados (namespace ci-runners; todos exclusivos do piloto):
+  SA tese-runner (automount=false), NetPol tese-runner (DNS, gitea:3000,
+  harbor, pods traefik 8443/8000 — destino PÓS-DNAT do svclb, correção
+  da tentativa 1 —, internet pública), CM tese-runner-config (capacity
+  1) e tese-ca-publica, Secrets tese-registry-pull (robot
+  robot$tese+tese-pull: Pull SOMENTE leitura do projeto tese, 365d,
+  segredo apenas no cluster) e tese-runner-secret (token de registro
+  ESCO REPOSITÓRIO). Deployment 1 réplica, strategy Recreate, uid 1001,
+  runAsNonRoot, sem docker.sock/kubeconfig/privileged.
+- Imagem: harbor.harbor.svc.cluster.local/tese/tese-runner@
+  sha256:cee130476b844294dc670b258bd3f6adbdbcb84d3d5762929bb52dc0a558917d
+  (mesmo índice OCI da tag 0.2.1; pull pelo runtime K3s via mirror
+  interno HTTP do registries.yaml + imagePullSecrets — verificado com
+  k3s crictl pull ANTES de aplicar; TLS do runtime não exigido).
+- GITEA_INSTANCE_URL: https://gitea.home.arpa (HTTPS validado; CA
+  montada e aplicada a act_runner via SSL_CERT_FILE, git via
+  GIT_SSL_CAINFO, curl via CURL_CA_BUNDLE e Actions Node via
+  NODE_EXTRA_CA_CERTS — cada um verificado nas tentativas).
+- Runner: tese-runner, **Gitea id 8**, label tese-rust, capacity 1,
+  escopo repositório, online. Recriações do pod geram novo registro:
+  id 7 (primeira subida) removido como órfão do piloto; procedimento
+  registrado (remover apenas órfãos deste piloto).
+- Execução no Gitea: workflow tese-rust-ci, **run nº 8** (tasks
+  108-111; internal run 46) — pin SUCCESS, check SUCCESS (fmt/clippy/
+  suíte --no-fail-fast uid 1001 sem instalar deps), build SUCCESS,
+  **accept SUCCESS** com "ACEITE OK". Jobs nos mesmos SHA 54a7c349.
+- Artefato: **ID 5** `tese-rust-54a7c349973b012d05a8ad277133fcb21cba9ac1`
+  (16.007.699 bytes): 6 binários obrigatórios + manifest.json +
+  SHA256SUMS + lib/libddsc.so{,.11,.11.0.0}. Upload/download REAIS pelo
+  serviço de artefatos do Gitea (backend v4; forks compatíveis
+  ChristopherHX fixados por SHA). Aceite em diretório independente:
+  integridade + 2 negativos (remoção/adulteração) + studio-noded real
+  em porta própria (/version, /services com dds-agent; kill confirmado)
+  + submit-one sem args → uso + rc=2.
+- Tentativas preservadas (causa → correção em commit): nº1 814d417
+  checkout recusado (netpol pós-DNAT; 710acc0); nº2-3 fc1cbd4 upload
+  GHESNotSupportedError (forks); nº3+ NODE TLS
+  (NODE_EXTRA_CA_CERTS); nº5 1f285de morte silenciosa pós-integridade
+  (set -x e86c640 isolou); nº6-7 libddsc.so.11 ausente (c14fbbd/54a7c34:
+  família completa da lib no pacote + LD_LIBRARY_PATH).
+- Limites respeitados: F3 (Ansible/VMs) NÃO executado; runner existente
+  (gitea-act-runner) intocado; sem restarts de daemons nesta frente; a
+  partir daqui, "runner dedicado ativo e CI validada no Gitea para a
+  revisão testada" — NÃO implica aplicação implantada nem campanha.
+
+## Falha do claim — causa raiz e correção (2026-09-13, commit 9321e31)
+- Sintoma: `claim_prevents_duplicate_execution_with_two_gateways` timeout
+  30.8s no contêiner (4 e 16 CPUs — não era contenção) e flaky fora dele.
+- Diagnóstico por conjuntos (`tests/claim_diag.rs`, decorador de
+  ClaimStore + handler gravador): SEMPRE 100/100 executados exatamente
+  1× (claims 100 únicos, 300 duplicatas refutadas); a perda estava no
+  OBSERVADOR — via exatamente as conclusões do gateway-1 (21/100, 54/54
+  em outro run) e NENHUMA do gateway-2.
+- Causa raiz (tracing Cyclone finest): writers de `ToolCall.Request`
+  (key=call_id, `Ownership::Exclusive`) com `ownership_strength=0` —
+  a força do papel do DataSpace NUNCA foi propagada para esse tópico
+  (tasks propagava). Owner por instância decidido por GUID (determinístico
+  por processo, aleatório entre runs): quando o GUID do writer do gw-1
+  vencia, ele detinha as instâncias e suprimia as conclusões do gw-2
+  perante os readers — o mesmo tipo de bug OP1/OP2 documentado para
+  Tasks. Não era descoberta/config de rede (lo, bridge nova, network
+  none e XMLs variados todos flaky do mesmo modo).
+- Correções: (1) produto — `profiles::tool_call(Option<i32>)` aplica a
+  strength do papel no writer (paridade com tasks e com a arbitragem do
+  in_memory); (2) testes claim/claim_diag — requests publicadas por
+  DataSpace CLIENT (topologia de produção: quem submete é mais fraco que
+  quem executa; o executor vence a arbitragem da instância que conclui).
+  Propriedades de aceite preservadas: 100 chamadas, duplicadas, claim
+  store compartilhado, timeout 30s, dois gateways arbitrando.
+- Evidência de estabilidade: 6/6 runs locais ~0.85s + 5/5 no aceite em
+  contêiner (estado novo cada).
+- Propriedade EFETIVAMENTE demonstrada (delimitação precisa): dois
+  serviços ToolCallService no MESMO processo, com claim store
+  compartilhado em memória (MemoryClaimStore), recebendo as 100
+  requisições duplicadas via DDS, executando cada chamada exatamente
+  uma vez e tornando as conclusões observáveis ao reader da topologia
+  testada (após a correção da arbitragem em 9321e31). RESSALVA: isso
+  NÃO comprova exclusão distribuída entre máquinas — nem persistência
+  de claims entre processos (FileClaimStore aparece apenas em
+  exactly_once), nem particionamento de rede; propriedades de cenários
+  posteriores.
+- Interpretações descartadas com evidência (não reabrir sem fato novo):
+  descoberta/config de rede como causa da falha do claim — lo, bridge
+  nova, --network none e variações de XML reproduziram o MESMO padrão
+  de falha pré-fix; o tracing finest mostrou ownership_strength=0 em
+  todos os writers (causa real).
+- Correção de documentação (13/09, pré-ativação, commit 32651ca):
+  comentários do Dockerfile/cyclonedds.xml que atribuíam a correção à
+  descoberta, chamavam o tópico de keyless e afirmavam "nenhum host
+  real alcançado" foram reescritos (config efetiva: autodetermine +
+  multicast default; jobs alcançam endpoints da CI). QoS/descoberta
+  NÃO alteradas nesta correção; a tag 0.2.1 NÃO foi substituída.
+## Compilação e testes na 0.2.0 (rodada DIAGNÓSTICA, 2026-09-13)
+- Referência executada POR DIGEST:
+  `harbor.home.arpa/tese/tese-runner@sha256:33c1468b…9d5d1`.
+- Código: checkout limpo de `cfe3ff2` (git archive → tar), em
+  `/tmp/tese-compile-cfe3ff2` (dono uid 1001), `CARGO_HOME` próprio;
+  sem credenciais, docker socket ou kubeconfig montados.
+- Recursos: `--memory 8g/16g --cpus 4/16` (duas rodadas p/ discriminar
+  contenção); rede do container liberada apenas para `cargo fetch`
+  (crates.io) — o build final roda `--offline`.
+- Comandos executados como uid 1001 (via setpriv), na ordem do
+  `security.yml`:
+  1. `cargo fetch --locked` ✓
+  2. `cargo fmt --all -- --check` ✓
+  3. `cargo clippy --workspace --all-targets --all-features --locked
+     -- -D warnings` ✓ (compila CycloneDDS 11.0.0 embutido via cmake)
+  4. `cargo test --workspace --all-features --locked --
+     --test-threads=1` → 44 suítes `ok` + **1 FALHA**:
+     - `mcp-gateway/tests/claim.rs:183`
+       `claim_prevents_duplicate_execution_with_two_gateways` — 100
+       tool calls não completaram no timeout de 30s (30.82s com 4
+       CPUs; 30.83s com 16 CPUs). Reproduzível e INDEPENDENTE de
+       recursos. Suspeita: descoberta/entrega DDS dentro do network
+       namespace do container. **ABERTO p/ triage — bloqueia o uso do
+       runner p/ essa suíte.**
+  5. `cargo build --workspace --all-features --locked --offline
+     --release` ✓ **COMPILACAO_OK** (0 erros) — artefatos uid 1001 em
+     `target/release`: `agent` (4.7 MB), `context-store` (2.0 MB),
+     `dds-bench` (2.0 MB) + `.fingerprint`/`deps` (652 itens).
+     Nota de limpeza: um `.cargo-lock` root-órfão de um run anterior
+     foi removido antes da rodada final.
+- Lacuna encontrada no Dockerfile da imagem: faltam `make` e `g++`
+  para o CycloneDDS embutido (só gcc foi instalado). Contornada por
+  run com apt-get + `setpriv` para uid 1001 — incorporar ao Dockerfile
+  na próxima iteração.
+
+## Imagem `tese-runner:0.2.0` — reconciliação, testes e push (2026-09-12)
+- Reconciliação: ID local no .51
+  `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
+  == digest registrado em `ci/tese-runner/runner-deployment.yaml` —
+  SEM divergência, sem rebuild.
+- Smoke uid 1001: `uid=1001(runner)`; rustc/cargo 1.95.0, rustfmt 1.9.0,
+  clippy 0.1.95, cmake 3.22.1, node v24.21.0, act_runner v0.2.12;
+  `/data` gravável (DATA_OK).
+- Superfície: SEM docker.sock; SEM kubeconfig (root e $HOME); find
+  id_rsa/id_ed25519/known_hosts (maxdepth 4): nada; `entrypoint.sh`
+  presente 0755; falha FECHADA sem `GITEA_*`; tentativa de registro
+  apenas contra endereço inexistente (127.0.0.1:9) — Gitea real
+  intocado (F3 permanece bloqueado).
+- Harbor (autorizado): projeto `tese` criado PRIVADO; robot
+  `robot$tese+tese-ci` — somente Pull+Push de repositório no projeto
+  `tese`, duração 180d; segredo em arquivo 0600 fora de git (caminho:
+  `~/.config/dds-orchestrator/secrets/harbor-tese-robot.env`).
+- Infra necessária ao push TLS: CA do Harbor instalada no .51 em
+  `/etc/docker/certs.d/harbor.home.arpa/ca.crt` e
+  `/etc/containerd/certs.d/harbor.home.arpa/ca.crt` (+ pool do sistema);
+  docker reiniciado 1x (iperf3-server religado; k3s/containerd do
+  cluster intocados).
+- Push: `tese-runner:0.2.0` → aceito pelo registry. Objetos OCI
+  identificados (não são um objeto só):
+  - `docker image inspect .Id` (store containerd) reporta o digest do
+    **índice OCI**: `sha256:33c1468bec5a8c5c6e0094ebb29ee7fff3ca6dc759c6d2c90416518a8149d5d1`
+    — é a referência fixada no manifesto (`@sha256:33c1468b…`).
+  - Índice → 1 manifesto amd64
+    `sha256:2e1d3232755038404ce1066342940c7e93019b9e43317ff5fcabcaf8f21c22c5`
+    (oci.image.manifest.v1+json, 1813 B).
+  - Manifest → config
+    `sha256:1f672ebd668f8a48bd4ccce5bb4756ac00fef875040a991fea634c828165184c`
+    + 8 camadas (OCI layer tar+gzip).
+- Pull por digest `@sha256:33c1468b…` executado pelo **Docker do .51**
+  (não valida pull pelo runtime do K3s — o Deployment ainda não foi
+  aplicado); header `docker-content-digest` do registry confere com o
+  índice.
+- Pendente (exigem autorizações próprias): aplicar o Deployment,
+  registrar/ativar o runner no Gitea (F3), executar workflow, promover
+  release.
+
+## GUI Studio — painel SSH dedicado, descartável (2026-09-12/13)
+- Ambiente: app forçado a X11 (XWayland), apenas no processo de teste
+  (`env -u WAYLAND_DISPLAY -u XDG_SESSION_TYPE DISPLAY=:0`), para
+  automação por xdotool (Wayland/KDE sem injetor; uinput inacessível
+  neste kernel: /dev/uinput nobody:nobody, chown negado). Janela real
+  "DDS Orchestrator Studio" (bin `target/debug/studio` da revisão
+  cfe3ff2+, `STUDIO_SSH_DEBUG=1` para instrumentação em stderr).
+- Aceite CONCLUÍDO em 2026-09-13, fluxo completo pelos controles:
+  servidor descartável → Gerar identidade (GUI) → add-pub → Conectar →
+  bloco `Host desconhecido` com impressão IDÊNTICA à do terminal
+  (conferida por zoom de captura) → **Aprovar e salvar no cofre**
+  (trust.json gravado) → reconectar → **Saída: PROVA_OK** → erro
+  controlado (servidor parado; `Connection refused`) sem senha, sem
+  caminho de chave privada, sem token → reinício do app → reconexão
+  direta (aprovação persistida recuperada, sem novo prompt).
+- Correções registradas:
+  - BUG 1 (CORRIGIDO, commit 27790df): painel não definia
+    `trust_path` → aprovação falhava com `arquivo de confiança
+    ilegível em :`. Fix: `views/ssh.rs` → `aplicar_diretorio()` define
+    `<diretório>/trust.json`. Regressão nova
+    (`aplicar_diretorio_configura_identidade_e_cofre`) reproduz a
+    falha na versão sem fix (FAILED) e passa com o fix.
+  - BUG 2 (CORRIGIDO, mesmo commit): a thread de conexão não acordava
+    a UI ao concluir — `request_repaint` só existia com fase Running;
+    nas transições para NeedsApproval/Done/Failed o frame não rodava
+    (eventos enfileirados sem avaliação — interpretação correta do
+    antigo "congelamento"). Fix: `SshSession::set_repaint_source(ctx)`
+    + `ctx.request_repaint()` na thread e pós-transição (egui 0.36:
+    Context Clone+Send+Sync). Log `STUDIO_SSH_DEBUG` registra
+    start/fase/thread/cofre — sem senha nem conteúdo de chave.
+- Correções de interpretação:
+  - A identidade Ed25519 NÃO é determinística: `PrivateKey::random`
+    por geração + `encrypt(passphrase)`. Teste novo
+    (`identidade_aleatoria.rs`): mesma senha em diretórios novos →
+    públicas DIFERENTES; identidade existente conserva a fingerprint
+    ao desbloquear.
+  - O painel TEM campo `usuário` (linha host/porta/usuário) — ficava
+    CLIPADO na janela 800x600. Com janela 1300x720 o campo fica
+    visível e foi preenchido explicitamente (`mzet`). Config inicial:
+    string vazia (nada de usuário implícito).
+- Instrumentação: `STUDIO_SSH_DEBUG=1` registra handler de botões,
+  transições de fase (Idle/Running/NeedsApproval/Done/Failed),
+  conclusão da thread e abertura/persistência do cofre — sem segredos.
+- Evidências (capturas sanitizadas — senha sempre mascarada, sem
+  chaves) movidas para `~/projetos/tese/evidencias/2026-09-12-gui-ssh/`
+  (fora de /tmp); verificação de sanitização no relatório da rodada.
+
+## Caminho DDS completo (domínio de teste 77, 2026-09-12)
+- Participantes: `det-responder --domain 77` + `agent --agent-id
+  dds-prova-77 --dds-domain 77 --engine dds` + `submit-one` com
+  `PROMPT_VERSION:` de `seq_B_reviewer_v1.txt`. Diretório e processos
+  próprios; malha operacional (domínio 42) intocada; tudo encerrado após.
+- Resultado: `success:true`, `task_id=0c062488-…`, conteúdo do fixture
+  determinístico; `resp.jsonl` com `request_id == task_id`,
+  `agent_id=dds-prova-77`, `outcome:ok`.
+- Correção de CLI registrada: binários diretos NÃO usam `--` separador
+  (só via `cargo run --`); playbooks F3 ajustados.

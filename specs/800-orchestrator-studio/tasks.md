@@ -176,3 +176,63 @@
   Ao vivo: modelos listados e geração real OK em :8082
   (Qwen3.5-0.8B, 32 tokens). Criar unidade nova com parâmetros arbitrários
   segue inexistente no nó — declarado no plano, sem simular.
+- [x] **T-800-24 · studio-noded com bind remoto + deploy na .62** (§34)
+  `STUDIO_NODE_BIND` (padrão localhost; 2 testes). Deploy em 192.168.1.62
+  (Ubuntu 24.04, peer do orchestrator): binário 1.7MB em ~/dds-llm-rust,
+  unidade systemd `studio-noded` ativa com bind na LAN e DB persistido.
+  Ao vivo: /version 1.0, /services com dds-agent wanted=null/active=false,
+  /operations vazio. Sem atuação remota nesta tarefa (só leitura, G-46).
+- [x] **T-800-25 · studio-noded também na .61 (GPU)** (§34)
+  Mesmo binário/unidade do T-800-24 com bind na LAN da .61 (RTX 3080).
+  Ao vivo: /version 1.0 nas duas (.61 e .62), dds-agent parado sem
+  pretendido em ambas. Dois nós administráveis + local = 3 origens.
+- [x] **T-800-26 · Registro de nós conhecidos na GUI** (P3-admin parcial)
+  `nodes.rs`: adicionar/selecionar/remover `(apelido, URL)` digitados,
+  sem varredura e sem SSH; painel Nós virou registro + conexão. 4 testes.
+  G-02/G-04 seguem bloqueados (cadastro SSH com host key fora do escopo).
+- [x] **T-800-28 · Bridge SSH com chave dedicada (G-04, isolado)** (§34)
+  Novo crate `studio-ssh` (russh puro, sem shell): identidade Ed25519 por
+  instalação (PEM cifrada 0600, senha nunca gravada), confiança no handshake
+  real (desconhecido exige aprovação, alterada bloqueia), só `publickey`,
+  sem fallback, sem agent forwarding. Cofre com contexto + persistência
+  JSON (projeto/alias/host/porta/algo/impressão/quem/quando/substituída);
+  `ssh_trust` do Studio virou reexport. 12 testes isolados (servidor
+  descartável em processo): impressão real, persistência pós-reabertura,
+  rotação bloqueada, auth errada sem tentativa de senha. Sem tocar nas VMs.
+- [x] **T-800-29 · GUI usa a bridge SSH (G-04, isolado + GUI)** (§34)
+  `ssh_session.rs`: gerar identidade, desbloqueio, aprovação da impressão
+  real exibida, execução em thread com `poll`, persistência no cofre e
+  volta a `Idle` (reconectar é explícito). Painel "SSH dedicado" na
+  navegação. 4 testes de fases com runner injetado. Prova contra host
+  real fica para o canário (exige cadastrar a `.pub` — a apresentar).
+- [x] **T-800-30 · Executor validado isolado (G-18+ parcial)**
+  `mcp-gateway/tests/executor_isolated.rs`: PENDING→COMPLETED real com
+  resultado na mesma instância, negação com mensagem, fuga de sandbox
+  como FAILED e PENDING intacto sem executor. 4 testes, sem malha real.
+- [x] **F1/F3 corrigidos (DRAFT)** — workflow sem `on: push`, caminhos da
+  raiz do repo, CycloneDDS do registro, empacotamento estrito, proveniência
+  por SHA imutável, aceite com testes negativos; playbooks com pull por
+  digest, backup explícito, hash==aprovado, domínio de teste obrigatório
+  (0/42 recusados), DDS fim a fim com PROMPT_VERSION:. Toolchain fixado
+  em 1.95. Imagem `tese-runner:0.1.0` construída e verificada no .51
+  (digest em `ci/REGISTRO-VALIDACAO.md`), SEM push. CA persistida em
+  `~/.config/dds-orchestrator/pki/` com impressão registrada.
+- [x] **T-800-31 · Canário local do daemon com binário real (descartável)**
+  `ansible/tests/canary_local.sh` (+ `validate_db.py`, autoteste em
+  `ansible/tests/test_validate_db.py`): estado não vazio, backup explícito,
+  instalação v2 + reinício, validação pelo esquema real, barreira de hash
+  contra binário corrompido, falha de boot de versão instalada e rollback
+  com estado preservado. Revisão publicada `409c3a5` (branch
+  `studio/phase-800-node`); reprodução em checkout limpo com EXIT=0.
+  Delimitação: v1=release e v2=debug DO MESMO commit (procedimento, não
+  compatibilidade entre releases); script reproduz as etapas por comandos
+  próprios (Ansible/OCI/systemd NÃO exercitados); SSH, GUI e DDS fora do
+  teste. Bloqueios externos: SSH `k8s1@.51` negado com as chaves locais
+  (build 0.2.0 no .51 pendente); Harbor sem credencial robot; 401 com desafio de autenticação é o fluxo normal; token não testado).
+- [x] **T-800-32 · Sessão da GUI contra SSH descartável real (G-04, GUI)**
+  `orchestrator-studio/tests/ssh_session_live.rs`: caminho REAL
+  (`SshSession::start` + `poll` + `approve_displayed`) contra servidor
+  russh em processo — desconhecido bloqueia com a impressão real,
+  aprovação persiste no cofre, reconexão entrega `PROVA_OK`. Prova com
+  conexão SSH real em loopback; UI aberta e cadastro da `.pub` em VM
+  seguem fora do escopo.

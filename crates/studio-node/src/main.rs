@@ -63,10 +63,8 @@ async fn main() -> Result<()> {
         .context("STUDIO_NODE_PORT deve ser um numero de porta")?;
     // T-840-01: bind configurável (LAN exige STUDIO_NODE_TOKEN; localhost é o
     // padrão histórico e segue seguro sem token).
-    let bind: std::net::IpAddr = std::env::var("STUDIO_NODE_BIND")
-        .unwrap_or_else(|_| String::from("127.0.0.1"))
-        .parse()
-        .context("STUDIO_NODE_BIND deve ser um endereco IP")?;
+    let bind_raw = std::env::var("STUDIO_NODE_BIND").unwrap_or_else(|_| String::from("127.0.0.1"));
+    let bind: std::net::IpAddr = parse_bind(&bind_raw)?;
     let listener = tokio::net::TcpListener::bind((bind, port))
         .await
         .with_context(|| format!("studio-noded: porta {port} indisponivel em {bind}"))?;
@@ -159,6 +157,24 @@ async fn main() -> Result<()> {
         .context("servidor do no encerrou com erro")
 }
 
+/// Endereço de escuta: `STUDIO_NODE_BIND` como IP tipado (padrão localhost;
+/// administração remota exige valor explícito — §34/T-840-01). Valor em branco
+/// cai para localhost (T-800-24); lixo aborta o boot com contexto.
+///
+/// # Errors
+/// Retorna erro quando o valor não é um endereço IP válido.
+fn parse_bind(raw: &str) -> anyhow::Result<std::net::IpAddr> {
+    let trimmed = raw.trim();
+    let effective = if trimmed.is_empty() {
+        "127.0.0.1"
+    } else {
+        trimmed
+    };
+    effective
+        .parse()
+        .context("STUDIO_NODE_BIND deve ser um endereco IP")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +215,25 @@ mod tests {
             panic!("sem HOME e sem env deve ser volátil");
         };
         assert!(reason.contains("HOME"));
+    }
+
+    #[test]
+    fn parse_bind_honors_explicit_ips() {
+        assert_eq!(
+            parse_bind("192.168.1.62").unwrap().to_string(),
+            "192.168.1.62"
+        );
+        assert_eq!(parse_bind("0.0.0.0").unwrap().to_string(), "0.0.0.0");
+    }
+
+    #[test]
+    fn parse_bind_blank_falls_back_to_localhost() {
+        assert_eq!(parse_bind("").unwrap().to_string(), "127.0.0.1");
+        assert_eq!(parse_bind("   ").unwrap().to_string(), "127.0.0.1");
+    }
+
+    #[test]
+    fn parse_bind_rejects_garbage() {
+        assert!(parse_bind("nao-e-ip").is_err());
     }
 }
