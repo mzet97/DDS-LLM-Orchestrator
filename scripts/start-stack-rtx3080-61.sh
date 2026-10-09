@@ -10,15 +10,15 @@ cd "$HOME/dds-llm-rust"
 mkdir -p logs sandbox
 export CYCLONEDDS_URI="file://$HOME/.config/cyclonedds/studio-presence.xml"
 
-pkill -x orchestrator 2>/dev/null; sleep 0.3
+pkill -x orchestrator 2>/dev/null || true; sleep 0.3
 nohup ./orchestrator --port 8080 --dds-domain 170 --qos-manager static >> logs/orchestrator.log 2>&1 &
 
-pkill -x policy-engine 2>/dev/null; sleep 0.3
+pkill -x policy-engine 2>/dev/null || true; sleep 0.3
 nohup ./policy-engine --dds-domain 170 --policy-file "$HOME/dds-llm-rust/policies.json" >> logs/policy-engine.log 2>&1 &
 
-pkill -x mcp-gateway 2>/dev/null; sleep 0.3
+pkill -x mcp-gateway 2>/dev/null || true; sleep 0.3
 echo "funciona via gateway" > sandbox/prova.txt
 nohup ./mcp-gateway --dds-domain 170 --filesystem-root "$HOME/dds-llm-rust/sandbox" >> logs/mcp-gateway.log 2>&1 &
 
-pkill -x agent 2>/dev/null; sleep 0.3
+pkill -x agent 2>/dev/null || true; sleep 0.3
 nohup ./agent --agent-id agent-rtx3080-01 --engine dds --dds-domain 170 --slots 4 >> logs/agent-rtx.log 2>&1 &

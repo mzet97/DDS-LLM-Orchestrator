@@ -66,6 +66,21 @@ impl Handler for ProbeServer {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if data == b"fail" {
+            session.data(channel, "saida-parcial".as_bytes().to_vec())?;
+            session.extended_data(channel, 1, "comando falhou".as_bytes().to_vec())?;
+            session.exit_status_request(channel, 3)?;
+            session.eof(channel)?;
+            session.close(channel)?;
+            return Ok(());
+        }
+        if data == b"signaled" {
+            session.data(channel, "antes-do-sinal".as_bytes().to_vec())?;
+            session.exit_signal_request(channel, russh::Sig::TERM, false, "", "")?;
+            session.eof(channel)?;
+            session.close(channel)?;
+            return Ok(());
+        }
         let reply = if data == b"prove" {
             "PROVA_OK"
         } else {
@@ -254,6 +269,66 @@ async fn wrong_client_key_fails_without_password_fallback() {
 
     assert!(matches!(err, BridgeError::AuthFailed { .. }));
     assert_eq!(*fixture.password_attempts.lock().expect("contador"), 0);
+}
+
+#[tokio::test]
+async fn nonzero_exit_surfaces_as_failure_with_streams() {
+    let fixture = spawn_server().await;
+    let mut trust = TrustStore::new();
+    trust.approve(approval_for(&fixture, &fixture.host_fingerprint));
+
+    let err = studio_ssh::run_command(
+        &target(&fixture),
+        fixture.client_private.clone(),
+        &trust,
+        "fail",
+    )
+    .await
+    .expect_err("status diferente de zero falha");
+
+    match err {
+        BridgeError::CommandFailed {
+            status,
+            stdout,
+            stderr,
+            ..
+        } => {
+            assert_eq!(status, 3);
+            assert_eq!(stdout, "saida-parcial");
+            assert_eq!(stderr, "comando falhou");
+        }
+        other => panic!("erro errado: {other}"),
+    }
+}
+
+#[tokio::test]
+async fn signaled_command_surfaces_as_failure_with_streams() {
+    let fixture = spawn_server().await;
+    let mut trust = TrustStore::new();
+    trust.approve(approval_for(&fixture, &fixture.host_fingerprint));
+
+    let err = studio_ssh::run_command(
+        &target(&fixture),
+        fixture.client_private.clone(),
+        &trust,
+        "signaled",
+    )
+    .await
+    .expect_err("morte por sinal falha");
+
+    match err {
+        BridgeError::CommandSignaled {
+            signal,
+            stdout,
+            stderr,
+            ..
+        } => {
+            assert_eq!(signal, "TERM");
+            assert_eq!(stdout, "antes-do-sinal");
+            assert_eq!(stderr, "");
+        }
+        other => panic!("erro errado: {other}"),
+    }
 }
 
 #[tokio::test]

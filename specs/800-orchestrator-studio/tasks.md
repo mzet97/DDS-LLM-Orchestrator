@@ -186,9 +186,11 @@
   Mesmo binário/unidade do T-800-24 com bind na LAN da .61 (RTX 3080).
   Ao vivo: /version 1.0 nas duas (.61 e .62), dds-agent parado sem
   pretendido em ambas. Dois nós administráveis + local = 3 origens.
-- [x] **T-800-26 · Registro de nós conhecidos na GUI** (P3-admin parcial)
-  `nodes.rs`: adicionar/selecionar/remover `(apelido, URL)` digitados,
-  sem varredura e sem SSH; painel Nós virou registro + conexão. 4 testes.
+- [ ] **T-800-26 · Registro de nós conhecidos na GUI** (P3-admin parcial)
+  ⚠️ IMPLEMENTAÇÃO REMOVIDA no merge `5004a05` (era `nodes.rs`: adicionar/
+  selecionar/remover `(apelido, URL)` digitados + 4 testes). O comportamento
+  precisa ser re-verificado contra o painel Nós atual (UX4) antes de
+  remarcar como concluída.
   G-02/G-04 seguem bloqueados (cadastro SSH com host key fora do escopo).
 - [x] **T-800-28 · Bridge SSH com chave dedicada (G-04, isolado)** (§34)
   Novo crate `studio-ssh` (russh puro, sem shell): identidade Ed25519 por
@@ -196,15 +198,18 @@
   real (desconhecido exige aprovação, alterada bloqueia), só `publickey`,
   sem fallback, sem agent forwarding. Cofre com contexto + persistência
   JSON (projeto/alias/host/porta/algo/impressão/quem/quando/substituída);
-  `ssh_trust` do Studio virou reexport. 12 testes isolados (servidor
+  12 testes isolados (servidor
   descartável em processo): impressão real, persistência pós-reabertura,
   rotação bloqueada, auth errada sem tentativa de senha. Sem tocar nas VMs.
-- [x] **T-800-29 · GUI usa a bridge SSH (G-04, isolado + GUI)** (§34)
-  `ssh_session.rs`: gerar identidade, desbloqueio, aprovação da impressão
-  real exibida, execução em thread com `poll`, persistência no cofre e
-  volta a `Idle` (reconectar é explícito). Painel "SSH dedicado" na
-  navegação. 4 testes de fases com runner injetado. Prova contra host
-  real fica para o canário (exige cadastrar a `.pub` — a apresentar).
+  (O reexport `ssh_trust` no Studio foi removido no merge `5004a05`; o
+  crate segue standalone, sem consumidor na GUI — ver T-800-29.)
+- [ ] **T-800-29 · GUI usa a bridge SSH (G-04, isolado + GUI)** (§34)
+  ⚠️ REVERTIDA no merge `5004a05`: `ssh_session.rs`, `ssh_trust.rs`,
+  `views/ssh.rs` e o painel "SSH dedicado" foram removidos (protótipo de
+  setembro superado pelo UX4; vivo no histórico). Para reconcluir:
+  religar `studio-ssh` na GUI (dependência + sessão + painel) e
+  re-verificar os 4 testes de fases. Prova contra host real segue para
+  o canário (exige cadastrar a `.pub` — a apresentar).
 - [x] **T-800-30 · Executor validado isolado (G-18+ parcial)**
   `mcp-gateway/tests/executor_isolated.rs`: PENDING→COMPLETED real com
   resultado na mesma instância, negação com mensagem, fuga de sandbox
@@ -229,8 +234,10 @@
   próprios (Ansible/OCI/systemd NÃO exercitados); SSH, GUI e DDS fora do
   teste. Bloqueios externos: SSH `k8s1@.51` negado com as chaves locais
   (build 0.2.0 no .51 pendente); Harbor sem credencial robot; 401 com desafio de autenticação é o fluxo normal; token não testado).
-- [x] **T-800-32 · Sessão da GUI contra SSH descartável real (G-04, GUI)**
-  `orchestrator-studio/tests/ssh_session_live.rs`: caminho REAL
+- [ ] **T-800-32 · Sessão da GUI contra SSH descartável real (G-04, GUI)**
+  ⚠️ REVERTIDA no merge `5004a05` (teste `ssh_session_live.rs` removido
+  junto com a integração GUI; bloqueada pela T-800-29). Registro original:
+  caminho REAL
   (`SshSession::start` + `poll` + `approve_displayed`) contra servidor
   russh em processo — desconhecido bloqueia com a impressão real,
   aprovação persiste no cofre, reconexão entrega `PROVA_OK`. Prova com

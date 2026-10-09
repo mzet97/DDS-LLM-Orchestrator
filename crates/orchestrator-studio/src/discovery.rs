@@ -136,13 +136,16 @@ impl DiscoveryState {
 
     /// Drena o snapshot mais recente do worker (chamar por frame).
     pub fn poll(&mut self) {
+        // Drena primeiro para um vetor próprio: `observe_system` toma
+        // `&mut self` e não pode rodar sob o empréstimo do `receiver`.
         #[cfg(feature = "dds")]
-        if let Some(rx) = &self.receiver {
-            while let Ok(snapshot) = rx.try_recv() {
-                self.nodes = snapshot.nodes;
-                self.agents = snapshot.agents;
-                self.servers = snapshot.servers;
-                self.scanning = false;
+        {
+            let mut snapshots = Vec::new();
+            if let Some(rx) = &self.receiver {
+                snapshots.extend(rx.try_iter());
+            }
+            for snapshot in snapshots {
+                self.observe_system(snapshot.nodes, snapshot.agents, snapshot.servers);
                 self.error.clear();
             }
         }
@@ -150,7 +153,17 @@ impl DiscoveryState {
 
     /// Observa um snapshot direto (mesma transição do `poll`, testável).
     pub fn observe(&mut self, nodes: Vec<DiscoveredNode>) {
+        // Remapeia a seleção por IDENTIDADE (P1): a lista chega ordenada
+        // por `node_id` do worker — um nó novo antes do selecionado
+        // deslocaria o índice e `selected_url()` apontaria para outro nó
+        // sem nenhum clique. Nó sumido → seleção limpa (a auto-seleção do
+        // `main` escolhe outro online na sequência).
+        let selected_id = self
+            .selected
+            .and_then(|index| self.nodes.get(index))
+            .map(|node| node.node_id.clone());
         self.nodes = nodes;
+        self.selected = selected_id.and_then(|id| self.nodes.iter().position(|n| n.node_id == id));
         self.scanning = false;
     }
 
@@ -203,6 +216,24 @@ impl DiscoveryState {
             false
         }
     }
+}
+
+/// Lease de heartbeat do inventário (30 s — agentes E inferência): sem
+/// sinal nesse intervalo, a entrada sai do snapshot (poda honesta).
+#[cfg(any(test, feature = "dds"))]
+const HEARTBEAT_LEASE_NS: u64 = 30_000_000_000;
+
+/// Remove entradas cujo recebimento local envelheceu além do lease;
+/// devolve quantas saíram. `ServerStatus` não carrega relógio no fio —
+/// o par `(valor, recebido_local_ns)` é registrado na inserção (P2).
+#[cfg(any(test, feature = "dds"))]
+fn retain_fresh<T>(
+    entries: &mut std::collections::BTreeMap<String, (T, u64)>,
+    now_ns: u64,
+) -> usize {
+    let before = entries.len();
+    entries.retain(|_, (_, received_ns)| now_ns.saturating_sub(*received_ns) < HEARTBEAT_LEASE_NS);
+    before - entries.len()
 }
 
 /// Mescla uma amostra de presença na lista: atualiza a entrada do
@@ -302,7 +333,7 @@ fn run_worker(domain: u32, tx: std::sync::mpsc::Sender<DiscoverySnapshot>) {
         let mut nodes: Vec<DiscoveredNode> = Vec::new();
         let mut agents: std::collections::BTreeMap<String, AgentState> =
             std::collections::BTreeMap::new();
-        let mut servers: std::collections::BTreeMap<String, ServerStatus> =
+        let mut servers: std::collections::BTreeMap<String, (ServerStatus, u64)> =
             std::collections::BTreeMap::new();
         crate::studio_log::info(
             "descoberta: escutando NodePresence + AgentRegistry + ServerStatus",
@@ -363,23 +394,34 @@ fn run_worker(domain: u32, tx: std::sync::mpsc::Sender<DiscoverySnapshot>) {
                             server.server_id, server.model_loaded, server.ready
                         ));
                     }
-                    servers.insert(server.server_id.clone(), server);
+                    servers.insert(server.server_id.clone(), (server, now_unix_ns()));
                 }
             }
-            // Poda honesta: agente sem heartbeat há >30 s sai do inventário.
+            // Poda honesta: agente/inferência sem heartbeat há >30 s sai do
+            // inventário. `ServerStatus` não tem relógio no fio — o lease
+            // conta do recebimento local (P2: antes nunca era podado).
             let now = now_unix_ns();
             let before = agents.len();
-            agents.retain(|_, a| now.saturating_sub(a.last_update_ns) < 30_000_000_000);
+            agents.retain(|_, a| now.saturating_sub(a.last_update_ns) < HEARTBEAT_LEASE_NS);
             if agents.len() < before {
                 crate::studio_log::warn(format!(
                     "descoberta: {} agente(s) podado(s) por heartbeat >30 s",
                     before - agents.len()
                 ));
             }
+            let pruned_servers = retain_fresh(&mut servers, now);
+            if pruned_servers > 0 {
+                crate::studio_log::warn(format!(
+                    "descoberta: {pruned_servers} servidor(es) podado(s) por heartbeat >30 s"
+                ));
+            }
             let _ = tx.send(DiscoverySnapshot {
                 nodes: nodes.clone(),
                 agents: agents.values().map(agent_row).collect(),
-                servers: servers.values().map(server_row).collect(),
+                servers: servers
+                    .values()
+                    .map(|(status, _)| server_row(status))
+                    .collect(),
             });
         }
     });
@@ -409,7 +451,10 @@ fn probe_node(url: &str, token: Option<&str>) -> ProbeStatus {
 
 #[cfg(test)]
 mod tests {
-    use super::{merge_presence, token_for_url, DiscoveredNode, DiscoveryState};
+    use super::{
+        merge_presence, retain_fresh, token_for_url, DiscoveredNode, DiscoveryState,
+        HEARTBEAT_LEASE_NS,
+    };
 
     #[test]
     fn merge_updates_existing_and_sorts_new_entries() {
@@ -466,6 +511,65 @@ mod tests {
         );
         assert_eq!(token_for_url("http://10.0.0.1:4317", None), None);
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    fn node(id: &str, url: &str) -> DiscoveredNode {
+        DiscoveredNode {
+            node_id: String::from(id),
+            url: String::from(url),
+            token_required: false,
+            last_seen_unix_ns: 1,
+            probe: None,
+        }
+    }
+
+    #[test]
+    fn selection_follows_node_identity_across_resorted_snapshots() {
+        // P1: o worker ordena por `node_id` — um nó novo antes do
+        // selecionado desloca o índice; `selected_url()` deve continuar
+        // apontando para o MESMO nó, sem nenhum clique.
+        let mut state = DiscoveryState::new_disabled(170);
+        state.observe(vec![node("b:1", "http://b:4317")]);
+        state.select(0);
+        assert_eq!(state.selected_url().as_deref(), Some("http://b:4317"));
+
+        state.observe(vec![
+            node("a:1", "http://a:4317"),
+            node("b:1", "http://b:4317"),
+        ]);
+        assert_eq!(state.selected, Some(1), "índice remapeado para b:1");
+        assert_eq!(state.selected_url().as_deref(), Some("http://b:4317"));
+    }
+
+    #[test]
+    fn selection_clears_when_selected_node_vanishes() {
+        // Nó sumido do snapshot → seleção limpa (a auto-seleção do
+        // `main` escolhe outro online; índice obsoleto nunca retargeteia).
+        let mut state = DiscoveryState::new_disabled(170);
+        state.observe(vec![node("b:1", "http://b:4317")]);
+        state.select(0);
+        state.observe(vec![node("a:1", "http://a:4317")]);
+        assert_eq!(state.selected, None);
+        assert_eq!(state.selected_url(), None);
+    }
+
+    #[test]
+    fn server_prune_evicts_entries_past_heartbeat_lease() {
+        // P2: `ServerStatus` não carrega relógio no fio — o lease conta do
+        // recebimento local, igual ao dos agentes (sem isso, inferência
+        // morta fica no inventário para sempre).
+        let now = 1_000_000_000_000u64;
+        let mut entries: std::collections::BTreeMap<String, (&str, u64)> =
+            std::collections::BTreeMap::new();
+        entries.insert(String::from("fresco"), ("s", now - 5_000_000_000));
+        entries.insert(
+            String::from("obsoleto"),
+            ("s", now - HEARTBEAT_LEASE_NS - 1),
+        );
+        let evicted = retain_fresh(&mut entries, now);
+        assert_eq!(evicted, 1);
+        assert!(entries.contains_key("fresco"), "5 s fica");
+        assert!(!entries.contains_key("obsoleto"), ">30 s sai");
     }
 
     #[test]

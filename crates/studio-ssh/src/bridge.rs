@@ -63,6 +63,26 @@ pub enum BridgeError {
         port: u16,
         detail: String,
     },
+    /// Comando remoto terminou com status diferente de zero: informa
+    /// status, stdout e stderr (decodificados com perdas para nunca
+    /// mascarar a falha com erro de decodificação).
+    #[error("comando remoto falhou em {host}:{port} (status {status}): {stderr}")]
+    CommandFailed {
+        host: String,
+        port: u16,
+        status: u32,
+        stdout: String,
+        stderr: String,
+    },
+    /// Comando remoto morto por sinal: informa sinal, stdout e stderr.
+    #[error("comando remoto morto por {signal} em {host}:{port}: {stderr}")]
+    CommandSignaled {
+        host: String,
+        port: u16,
+        signal: String,
+        stdout: String,
+        stderr: String,
+    },
     /// Identidade (desbloqueio).
     #[error(transparent)]
     Identity(#[from] IdentityError),
@@ -102,9 +122,13 @@ impl Handler for Verifier {
     }
 }
 
-/// Executa `command` no alvo via sessão SSH autenticada e devolve o stdout.
-/// `trust` decide sobre a chave do handshake; `private_key` é a identidade
-/// dedicada já desbloqueada (senha fora daqui, nunca persistida).
+/// Executa `command` no alvo via sessão SSH autenticada e devolve o stdout
+/// (UTF-8 estrito) quando o status de saída é zero. Status diferente de
+/// zero vira [`BridgeError::CommandFailed`] (com stdout/stderr) e morte
+/// por sinal vira [`BridgeError::CommandSignaled`]; stderr chega em
+/// `ExtendedData` com `ext == 1` (RFC 4254 §5.2). `trust` decide sobre a
+/// chave do handshake; `private_key` é a identidade dedicada já
+/// desbloqueada (senha fora daqui, nunca persistida).
 pub async fn run_command(
     target: &SshTarget,
     private_key: ssh_key::PrivateKey,
@@ -154,18 +178,48 @@ pub async fn run_command(
         .exec(true, command)
         .await
         .map_err(|err| fail(err.to_string()))?;
-    let mut output = Vec::new();
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+    let mut exit_status: Option<u32> = None;
+    let mut exit_signal: Option<String> = None;
     loop {
         match channel.wait().await {
             None | Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) => break,
-            Some(ChannelMsg::Data { data }) => output.extend_from_slice(&data),
+            Some(ChannelMsg::Data { data }) => stdout.extend_from_slice(&data),
+            Some(ChannelMsg::ExtendedData { data, ext }) => {
+                if ext == 1 {
+                    stderr.extend_from_slice(&data);
+                }
+            }
+            Some(ChannelMsg::ExitStatus { exit_status: code }) => exit_status = Some(code),
+            Some(ChannelMsg::ExitSignal { signal_name, .. }) => {
+                exit_signal = Some(format!("{signal_name:?}"));
+            }
             Some(_) => {}
         }
     }
     let _ = session
         .disconnect(russh::Disconnect::ByApplication, "fim", "")
         .await;
-    String::from_utf8(output).map_err(|err| fail(format!("saida nao-utf8: {err}")))
+    if let Some(signal) = exit_signal {
+        return Err(BridgeError::CommandSignaled {
+            host: target.host.clone(),
+            port: target.port,
+            signal,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        });
+    }
+    if let Some(code) = exit_status.filter(|code| *code != 0) {
+        return Err(BridgeError::CommandFailed {
+            host: target.host.clone(),
+            port: target.port,
+            status: code,
+            stdout: String::from_utf8_lossy(&stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&stderr).into_owned(),
+        });
+    }
+    String::from_utf8(stdout).map_err(|err| fail(format!("saida nao-utf8: {err}")))
 }
 
 /// Caminho síncrono para a GUI (que não tem runtime async): desbloqueia a

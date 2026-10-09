@@ -127,7 +127,7 @@ pub struct ProbeStatus {
 /// Resultado do último probe por máquina.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeState {
-    /// Nó respondeu `GET /version` com versão de protocolo.
+    /// Nó respondeu `GET /version` e o token validou em `/operations`.
     Online,
     /// Nó inalcançável ou resposta fora do contrato: estado honesto.
     Offline,

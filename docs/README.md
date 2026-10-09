@@ -4,7 +4,7 @@
 > Idioma desta documentação: português (PT-BR). O `README.md` do workspace (em inglês)
 > continua sendo a referência rápida de build.
 
-Esta é a documentação oficial dos 18 crates Rust do DDS-LLM-Orchestrator —
+Esta é a documentação oficial dos 19 crates Rust do DDS-LLM-Orchestrator —
 runtime DDS-first, serviços, benchmark e o desktop Studio — mais o
 **[Manual do Usuário do Studio](studio-manual.md)**.
 
@@ -30,6 +30,7 @@ runtime DDS-first, serviços, benchmark e o desktop Studio — mais o
 | `orchestrator-studio` | Desktop GUI (egui) — ver manual | [studio-manual.md](studio-manual.md) + [crates/orchestrator-studio.md](crates/orchestrator-studio.md) |
 | `studio-core` | Domínio puro do catálogo (revisões, OCC) | [crates/studio-core.md](crates/studio-core.md) |
 | `studio-node` | Nó administrativo HTTP + presença DDS | [crates/studio-node.md](crates/studio-node.md) |
+| `studio-ssh` | Bridge SSH (russh, chave dedicada) — standalone | [crates/studio-ssh.md](crates/studio-ssh.md) |
 
 Grafo de dependência (alto nível):
 

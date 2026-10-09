@@ -74,19 +74,47 @@ async fn node_summary_with_correct_token_reads_node() {
     assert!(summary.operations.is_empty());
 }
 
-/// A sonda de Máquinas (T-840-03c) usa `fetch_node_version_with_token`:
-/// contra o nó real `/version` está aberto — responde mesmo sem token
-/// (a sonda envia o token quando o tem; nó mais estrito recusaria com 401).
+/// A sonda (`fetch_node_version_with_token`, T-840-03c) valida o token
+/// contra `GET /operations` (protegido): `/version` é aberto (T-840-01),
+/// então só a versão marcaria Online até com token errado — e o
+/// `AuthPending` da GUI seria inalcançável (P2).
 #[tokio::test]
-async fn version_probe_answers_open_route_even_without_token() {
+async fn version_probe_without_token_is_rejected_401() {
     let url = protected_node().await;
-    let version = tokio::task::spawn_blocking({
+    let err = tokio::task::spawn_blocking({
         let url = url.clone();
         move || fetch_node_version_with_token(&url, None)
     })
     .await
     .expect("sem panic")
-    .expect("versão");
+    .expect_err("sem token deve falhar na validação");
+    assert!(matches!(err, OriginError::Unauthorized));
+    assert_eq!(err.to_string(), "token recusado (401)");
+}
+
+#[tokio::test]
+async fn version_probe_with_wrong_token_is_rejected_401() {
+    let url = protected_node().await;
+    let err = tokio::task::spawn_blocking({
+        let url = url.clone();
+        move || fetch_node_version_with_token(&url, Some("token-errado"))
+    })
+    .await
+    .expect("sem panic")
+    .expect_err("token errado deve falhar na validação");
+    assert!(matches!(err, OriginError::Unauthorized));
+}
+
+#[tokio::test]
+async fn version_probe_with_correct_token_reads_version() {
+    let url = protected_node().await;
+    let version = tokio::task::spawn_blocking({
+        let url = url.clone();
+        move || fetch_node_version_with_token(&url, Some(TOKEN))
+    })
+    .await
+    .expect("sem panic")
+    .expect("token correto valida e lê a versão");
     assert_eq!(version, studio_node::protocol::NODE_PROTOCOL_VERSION);
 }
 

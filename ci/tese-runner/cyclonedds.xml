@@ -9,7 +9,7 @@
      no código em 9321e31) e NÃO é garantia de isolamento de rede:
      jobs alcançam os endpoints do cluster necessários à CI (Gitea,
      registry). -->
-<CycloneDDS xmlns="https://cdds.io/config">
+<CycloneDDS>
   <Domain Id="any">
     <General>
       <Interfaces>

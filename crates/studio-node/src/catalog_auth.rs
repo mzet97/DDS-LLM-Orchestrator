@@ -166,7 +166,7 @@ impl CatalogAuthority {
             detail: err.to_string(),
         })?;
         line.push('\n');
-        let mut file = std::fs::OpenOptions::new()
+        let file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
             .open(path)
@@ -174,12 +174,37 @@ impl CatalogAuthority {
                 path: path.display().to_string(),
                 detail: err.to_string(),
             })?;
-        file.write_all(line.as_bytes())
-            .and_then(|()| file.sync_all())
-            .map_err(|err| AuthorityError::Corrupt {
+        let old_len =
+            file.metadata()
+                .map(|meta| meta.len())
+                .map_err(|err| AuthorityError::Corrupt {
+                    path: path.display().to_string(),
+                    detail: err.to_string(),
+                })?;
+        Self::write_sync_truncate(&file, old_len, line.as_bytes(), std::fs::File::sync_all).map_err(
+            |err| AuthorityError::Corrupt {
                 path: path.display().to_string(),
                 detail: err.to_string(),
-            })
+            },
+        )
+    }
+
+    /// Escreve + sincroniza; em falha de escrita/sync, trunca de volta ao
+    /// `old_len` para a linha falha não ficar visível ao replay (P2: sem o
+    /// truncate, o rebuild após `sync_all` falho avançava a revisão de uma
+    /// mutação reportada como falha). `sync` injetável para teste direto.
+    fn write_sync_truncate(
+        file: &std::fs::File,
+        old_len: u64,
+        bytes: &[u8],
+        sync: impl FnOnce(&std::fs::File) -> std::io::Result<()>,
+    ) -> std::io::Result<()> {
+        let mut sink: &std::fs::File = file;
+        if let Err(err) = sink.write_all(bytes).and_then(|()| sync(file)) {
+            let _ = file.set_len(old_len);
+            return Err(err);
+        }
+        Ok(())
     }
 
     /// Publica condicionalmente e journaliza o aceito (G-47/57).
@@ -348,6 +373,50 @@ mod tests {
         let mut perms = std::fs::metadata(&path).expect("meta").permissions();
         perms.set_mode(0o644);
         std::fs::set_permissions(&path, perms).expect("chmod");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// P2: sync falho após escrita bem-sucedida trunca a linha antes do
+    /// rebuild — a mutação reportada como falha não fica visível no journal
+    /// nem avança revisão no replay.
+    #[test]
+    fn failed_sync_truncates_line_so_replay_ignores_it() {
+        use std::io::ErrorKind;
+
+        let path = temp_journal("sync-falha");
+        let mut authority = CatalogAuthority::with_journal(path.clone()).expect("boot novo");
+        authority
+            .publish(String::from("d"), None, String::from("v1"), 0)
+            .expect("primeira mutacao journalizada");
+        let before = std::fs::read(&path).expect("journal legivel");
+
+        // Simula escrita ok + sync falho contra o arquivo real.
+        let file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("abre append");
+        let old_len = file.metadata().expect("meta").len();
+        let err = CatalogAuthority::write_sync_truncate(
+            &file,
+            old_len,
+            b"{\"op\":\"publish\",\"id\":\"d2\",\"base\":null,\"value\":\"v2\",\"generation\":0}\n",
+            |_| Err(std::io::Error::other("fsync simulado")),
+        )
+        .expect_err("sync falho deve falhar");
+        assert_eq!(err.kind(), ErrorKind::Other);
+        drop(file);
+
+        // Rollback físico: arquivo byte-idêntico ao anterior.
+        let after = std::fs::read(&path).expect("journal legivel");
+        assert_eq!(after, before, "linha falha nao pode ficar visivel");
+
+        // Replay pós-falha: só a mutação aceita (revisão não avançou).
+        let reboot = CatalogAuthority::with_journal(path.clone()).expect("reboot reconstroi");
+        let snap = reboot.snapshot();
+        assert_eq!(snap.items.len(), 1);
+        assert_eq!(snap.items[0].id.0, "d");
+        let events = reboot.events_since(0).expect("cursor 0 valido");
+        assert_eq!(events.len(), 1);
         let _ = std::fs::remove_file(&path);
     }
 }

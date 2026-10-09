@@ -40,6 +40,12 @@ pub struct NodeState {
     pub(crate) storage: Option<Arc<dyn crate::storage::Storage>>,
     pub(crate) probe: Arc<dyn Probe>,
     pub(crate) actuator: Arc<dyn Actuator>,
+    /// Serializa sonda/atuação entre requisições concorrentes (P1): sem ela,
+    /// start × stop simultâneos para o mesmo serviço atuavam independentes e
+    /// a ordem de atuação podia contradizer a última intenção registrada. A
+    /// releitura da intenção é uma seção curta do log dentro desta trava (o
+    /// lock do log nunca é segurado durante I/O de SO — REQ/T-820-18).
+    pub(crate) actuate_lock: Arc<Mutex<()>>,
     pub(crate) catalog: Arc<Mutex<CatalogAuthority>>,
     /// T-840-01: SHA-256 do token de acesso (`STUDIO_NODE_TOKEN`). `None`
     /// desliga a autenticação — só aceitável com bind em 127.0.0.1.
@@ -76,6 +82,7 @@ impl NodeState {
             storage: None,
             probe,
             actuator,
+            actuate_lock: Arc::new(Mutex::new(())),
             catalog: Arc::new(Mutex::new(CatalogAuthority::new())),
             token_hash: None,
         }
@@ -134,6 +141,7 @@ impl NodeState {
             storage: Some(storage),
             probe: Arc::new(SystemdProbe),
             actuator: Arc::new(SystemdActuator),
+            actuate_lock: Arc::new(Mutex::new(())),
             catalog: Arc::new(Mutex::new(catalog)),
             token_hash: None,
         })

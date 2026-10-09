@@ -122,9 +122,14 @@ pub fn fetch_node_summary_with_token(
     })
 }
 
-/// Sonda leve de Máquinas (T-840-03c): só `GET /version`, com token opcional
-/// (T-840-03a). Sem checagem de compatibilidade aqui — a versão anunciada é
-/// exibida como veio; quem decide é o painel.
+/// Sonda de Máquinas/descoberta (T-840-03c): `GET /version` + validação do
+/// token em `GET /operations` (protegido), com token opcional (T-840-03a).
+/// `/version` é aberto (T-840-01) — sem a segunda chamada, token errado
+/// ainda retornaria `Ok` e a GUI marcaria Online, com `AuthPending`
+/// inalcançável (P2). Só o STATUS de `/operations` importa: 401 vira
+/// [`OriginError::Unauthorized`]; o corpo nem é lido. Sem checagem de
+/// compatibilidade aqui — a versão anunciada é exibida como veio; quem
+/// decide é o painel.
 pub fn fetch_node_version_with_token(
     base_url: &str,
     token: Option<&str>,
@@ -139,11 +144,17 @@ pub fn fetch_node_version_with_token(
             url: String::from(url),
             detail: err.to_string(),
         })?;
-    let response = authorized(client.get(format!("{url}/version")), token)
-        .send()
-        .map_err(|err| OriginError::Unreachable {
-            url: String::from(url),
-            detail: err.to_string(),
-        })?;
-    decode(url, response)
+    let get = |path: &str| {
+        authorized(client.get(format!("{url}{path}")), token)
+            .send()
+            .map_err(|err| OriginError::Unreachable {
+                url: String::from(url),
+                detail: err.to_string(),
+            })
+    };
+    let version: ProtocolVersion = decode(url, get("/version")?)?;
+    if get("/operations")?.status().as_u16() == 401 {
+        return Err(OriginError::Unauthorized);
+    }
+    Ok(version)
 }

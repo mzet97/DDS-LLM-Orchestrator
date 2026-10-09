@@ -447,4 +447,106 @@ mod tests {
 
         assert!(actuator.calls().iter().all(|(service, _)| service == "s"));
     }
+
+    /// P1: start × stop concorrentes para o mesmo serviço convergem para a
+    /// última intenção registrada — nunca para a atuação mais lenta.
+    #[tokio::test]
+    async fn concurrent_opposite_actuations_converge_to_latest_intention() {
+        use std::sync::{Arc, Mutex};
+        use studio_node::actuator::{Actuator, ActuatorError};
+        use studio_node::probe::Probe;
+        use studio_node::server::ServiceStatus;
+
+        /// Estado acoplado sonda↔atuador (a sonda reflete a última atuação,
+        /// como o systemd em produção — `FakeProbe` é estático e esconderia
+        /// a corrida).
+        #[derive(Debug, Default)]
+        struct Coupled {
+            active: Mutex<bool>,
+        }
+        #[derive(Debug)]
+        struct CoupledProbe {
+            state: Arc<Coupled>,
+        }
+        impl Probe for CoupledProbe {
+            fn is_active(&self, _service: &str) -> bool {
+                *self.state.active.lock().expect("sonda acessivel")
+            }
+        }
+        #[derive(Debug)]
+        struct CoupledActuator {
+            state: Arc<Coupled>,
+        }
+        impl Actuator for CoupledActuator {
+            fn set_active(&self, _service: &str, active: bool) -> Result<(), ActuatorError> {
+                // Alarga a janela da corrida: sem serialização + releitura,
+                // as duas sondas veem o mesmo estado inicial e a atuação
+                // stale vence.
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                *self.state.active.lock().expect("atuador acessivel") = active;
+                Ok(())
+            }
+        }
+
+        let coupled = Arc::new(Coupled::default());
+        let state = NodeState::with_parts(
+            vec![String::from("s")],
+            Arc::new(CoupledProbe {
+                state: coupled.clone(),
+            }),
+            Arc::new(CoupledActuator {
+                state: coupled.clone(),
+            }),
+        );
+        let app = router(state);
+        let act = |id: &str, action: &str| {
+            Request::post(format!("/services/s/{action}"))
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    serde_json::json!({"operation_id": id}).to_string(),
+                ))
+                .expect("request valido")
+        };
+
+        for round in 0..10 {
+            let start = app
+                .clone()
+                .oneshot(act(&format!("p1-{round}-start"), "start"));
+            let stop = app
+                .clone()
+                .oneshot(act(&format!("p1-{round}-stop"), "stop"));
+            let (start_res, stop_res) = tokio::join!(start, stop);
+            assert_eq!(start_res.expect("rota existe").status(), StatusCode::OK);
+            assert_eq!(stop_res.expect("rota existe").status(), StatusCode::OK);
+
+            // Última intenção registrada × estado efetivo: devem coincidir,
+            // seja qual for a ordem de log vencedora.
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::get("/services")
+                        .body(Body::empty())
+                        .expect("request valida"),
+                )
+                .await
+                .expect("rota existe");
+            assert_eq!(response.status(), StatusCode::OK);
+            let rows: Vec<ServiceStatus> =
+                serde_json::from_value(body_json(response).await).expect("lista de servicos");
+            let row = rows
+                .iter()
+                .find(|row| row.service == "s")
+                .expect("servico s");
+            let wanted = row.wanted.expect("intencao registrada");
+            assert_eq!(
+                *coupled.active.lock().expect("estado legivel"),
+                wanted,
+                "rodada {round}: estado final deve igualar a ultima intencao"
+            );
+            assert_eq!(
+                row.active, wanted,
+                "rodada {round}: sonda deve refletir a ultima intencao"
+            );
+        }
+    }
 }

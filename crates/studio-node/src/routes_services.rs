@@ -86,9 +86,10 @@ async fn actuate_blocking(
 /// Registra a intenção, age só se houver divergência e persiste. Repetir o
 /// mesmo `operation_id` já convergido não reexecuta (`acted: false`).
 ///
-/// Ordem do lock (REQ/T-820-18): o Mutex do log é tomado duas vezes em
-/// seções curtas (log da intenção; persistência) — as chamadas bloqueantes
-/// de probe/atuador rodam SEM o lock, em `spawn_blocking`.
+/// Ordem do lock (REQ/T-820-18): o Mutex do log é tomado em seções
+/// curtas (log da intenção; releitura da mais recente; persistência) — as
+/// chamadas bloqueantes de probe/atuador rodam SEM o lock, em
+/// `spawn_blocking`, serializadas pela trava de atuação (P1).
 pub(crate) async fn actuate_service(
     State(state): State<NodeState>,
     axum::extract::Path((service, action)): axum::extract::Path<(String, String)>,
@@ -117,14 +118,30 @@ pub(crate) async fn actuate_service(
     if let Err(err) = applied {
         return Err(domain_error(err));
     }
-    // 2. Sonda/ato sem o lock do log, fora da thread async.
-    let mut active = probe_active(&state.probe, &service).await?;
-    let mut acted = false;
-    if active != wanted {
-        actuate_blocking(&state.actuator, &service, wanted).await?;
-        acted = true;
-        active = probe_active(&state.probe, &service).await?;
-    }
+    // 2. Reconciliação serializada (P1), sem o lock do log e fora da thread
+    // async. Start × stop concorrentes para o mesmo serviço sondavam/atuavam
+    // independentes: a ordem de atuação podia divergir da ordem de log e o
+    // estado final contradizer a última intenção registrada. A trava
+    // serializa; a releitura pula a atuação quando a intenção própria já foi
+    // superada (o pedido mais recente converge o host).
+    let _guard = state.actuate_lock.lock().await;
+    let latest_is_mine = {
+        let log = state.log.lock().await;
+        log.wanted(&service) == Some(wanted)
+    };
+    let (active, acted) = if latest_is_mine {
+        let mut active = probe_active(&state.probe, &service).await?;
+        let mut acted = false;
+        if active != wanted {
+            actuate_blocking(&state.actuator, &service, wanted).await?;
+            acted = true;
+            active = probe_active(&state.probe, &service).await?;
+        }
+        (active, acted)
+    } else {
+        (probe_active(&state.probe, &service).await?, false)
+    };
+    drop(_guard);
     // 3. Persistência (lock curto de novo).
     if let Some(storage) = state.storage.clone() {
         let saved = {
