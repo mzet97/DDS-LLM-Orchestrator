@@ -225,8 +225,9 @@ enum FollowOutcome {
     Deleted(Vec<Event>),
     /// Criação/atualização presente: o evento NÃO carrega o valor, então o
     /// lote termina em snapshot fresco (convergência honesta da tabela).
+    /// Os eventos viajam para o feed (seq+id+rev de cada um).
     Applied {
-        count: usize,
+        events: Vec<Event>,
         snapshot: Result<Snapshot, String>,
     },
     /// 410 `CursorExpired`: ressincronização total pelo snapshot.
@@ -240,13 +241,62 @@ enum CatalogMsg {
     /// Resposta de leitura do snapshot.
     Snapshot(Result<Snapshot, String>),
     /// Resposta de mutação + releitura do snapshot (mesma sequência do
-    /// antigo `publish_form`/`delete_form`: muta, depois relê).
+    /// antigo `publish_form`/`delete_form`: muta, depois relê). O trio
+    /// (id, base, result) alimenta o conflito estruturado e o feed — o
+    /// `notice` em texto segue intacto (contrato com os testes de fio).
     Mutated {
         notice: String,
         then_snapshot: Option<Result<Snapshot, String>>,
+        id: String,
+        base: Option<u64>,
+        is_delete: bool,
+        result: Result<u64, SharedCatalogError>,
     },
     /// Resultado do acompanhamento de eventos (T-830-02).
     Followed(FollowOutcome),
+}
+
+/// Etiqueta honesta de uma entrada do feed (tela 3.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedTag {
+    /// Publicação aplicada (nossa ou acompanhada).
+    Committed,
+    /// Tombstone aplicado (nosso ou acompanhado).
+    Tombstone,
+    /// Mutação rejeitada com 409 (nada aplicado).
+    Rejected,
+    /// Snapshot (re)servido pela autoridade.
+    Snapshot,
+}
+
+impl FeedTag {
+    /// Rótulo do mockup 3.9.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            FeedTag::Committed => "REV_COMMITTED",
+            FeedTag::Tombstone => "TOMBSTONE",
+            FeedTag::Rejected => "409_OCC-REJECT",
+            FeedTag::Snapshot => "SNAPSHOT",
+        }
+    }
+}
+
+/// Entrada do feed com relógio (tela 3.9; mais nova no fim).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FeedEntry {
+    pub ts_ms: u64,
+    pub tag: FeedTag,
+    pub text: String,
+}
+
+/// Conflito OCC estruturado (banner 409 de 1ª classe, tela 3.9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ConflictInfo {
+    /// Base que o formulário tentou (None = criação).
+    pub attempted_base: Option<u64>,
+    /// Vigente devolvida pelo nó (None = sem vigente).
+    pub current: Option<u64>,
 }
 
 /// Estado do painel de catálogo compartilhado.
@@ -270,8 +320,18 @@ pub struct SharedCatalog {
     pub busy: bool,
     /// Filtro por kind (prefixo do id) da tabela — tela 3.9.
     pub kind_filter: Option<String>,
-    /// Feed das últimas mutações acompanhadas (tela 3.9; mais novo no fim).
-    pub feed: Vec<String>,
+    /// Busca livre por chave ou payload — tela 3.9.
+    pub search: String,
+    /// Gaveta de publicação recolhida — tela 3.9.
+    pub drawer_collapsed: bool,
+    /// Conflito OCC vigente (banner 409) — limpo ao ressincronizar.
+    pub conflict: Option<ConflictInfo>,
+    /// Tombstones aplicados nesta sessão (nossos + acompanhados).
+    pub session_tombstones: u64,
+    /// Feed das últimas mutações (tela 3.9; mais novo no fim; máx 16).
+    pub feed: Vec<FeedEntry>,
+    /// `force_sync` encadeia follow após o snapshot chegar.
+    follow_after: bool,
     receiver: Option<mpsc::Receiver<CatalogMsg>>,
 }
 
@@ -287,6 +347,8 @@ impl std::fmt::Debug for SharedCatalog {
             .field("notice", &self.notice)
             .field("token_definido", &!self.token.trim().is_empty())
             .field("busy", &self.busy)
+            .field("conflict", &self.conflict)
+            .field("feed_len", &self.feed.len())
             .field("receiver", &self.receiver.is_some())
             .finish()
     }
@@ -339,7 +401,8 @@ impl SharedCatalog {
         let auth = self.auth().map(String::from);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let notice = match publish_with_token(&url, &id, base, &value, auth.as_deref()) {
+            let result = publish_with_token(&url, &id, base, &value, auth.as_deref());
+            let notice = match &result {
                 Ok(revision) => format!("publicado em r{revision}"),
                 Err(err) => err.to_string(),
             };
@@ -349,6 +412,10 @@ impl SharedCatalog {
             let _ = tx.send(CatalogMsg::Mutated {
                 notice,
                 then_snapshot,
+                id,
+                base,
+                is_delete: false,
+                result,
             });
         });
         self.receiver = Some(rx);
@@ -368,7 +435,8 @@ impl SharedCatalog {
         let auth = self.auth().map(String::from);
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let notice = match delete_with_token(&url, &id, base, auth.as_deref()) {
+            let result = delete_with_token(&url, &id, base, auth.as_deref());
+            let notice = match &result {
                 Ok(revision) => format!("removido em r{revision}"),
                 Err(err) => err.to_string(),
             };
@@ -378,6 +446,10 @@ impl SharedCatalog {
             let _ = tx.send(CatalogMsg::Mutated {
                 notice,
                 then_snapshot,
+                id,
+                base: Some(base),
+                is_delete: true,
+                result,
             });
         });
         self.receiver = Some(rx);
@@ -406,7 +478,7 @@ impl SharedCatalog {
                     FollowOutcome::Deleted(events)
                 }
                 Ok(events) => FollowOutcome::Applied {
-                    count: events.len(),
+                    events,
                     snapshot: fetch_snapshot_with_token(&url, auth.as_deref())
                         .map_err(|err| err.to_string()),
                 },
@@ -422,29 +494,125 @@ impl SharedCatalog {
         self.notice = format!("acompanhando eventos desde o cursor {cursor}…");
     }
 
+    /// Registra no feed com carimbo de relógio (máx 16; mais novo no fim).
+    fn feed_push(&mut self, tag: FeedTag, text: String) {
+        self.feed.push(FeedEntry {
+            ts_ms: crate::machines::now_unix_ns() / 1_000_000,
+            tag,
+            text,
+        });
+        if self.feed.len() > 16 {
+            let drop = self.feed.len() - 16;
+            self.feed.drain(0..drop);
+        }
+    }
+
+    /// Snapshot + acompanhamento em sequência (botão Forçar Sincronização da
+    /// 3.9): o follow encadeia quando o snapshot chegar (ver `poll`).
+    pub fn force_sync(&mut self) {
+        if self.busy {
+            return;
+        }
+        self.follow_after = true;
+        self.refresh();
+    }
+
+    /// Snapshot atual em JSON no temporário (botão Exportar JSON da 3.9).
+    pub fn export_snapshot(&self) -> std::io::Result<std::path::PathBuf> {
+        let snapshot = self
+            .snapshot
+            .as_ref()
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "sem snapshot"))?;
+        let payload = serde_json::to_string_pretty(snapshot).map_err(std::io::Error::other)?;
+        let path = std::env::temp_dir().join("studio-catalog-snapshot.json");
+        std::fs::write(&path, payload)?;
+        Ok(path)
+    }
+
+    /// Novo registro: limpa o formulário e abre a gaveta (sem rede).
+    pub fn new_entry(&mut self) {
+        self.form_id.clear();
+        self.form_value.clear();
+        self.form_base.clear();
+        self.drawer_collapsed = false;
+        self.conflict = None;
+        self.notice = String::from("formulário limpo para novo registro");
+    }
+
     /// Drena o worker; chamar a cada frame enquanto `busy`.
     /// Nota: dentro de `poll` o snapshot é aplicado por atribuição direta de
     /// campos (`cursor` + `snapshot`) — um método `&mut self` conflitaria com
     /// o empréstimo de `receiver` no mesmo escopo.
     pub fn poll(&mut self) {
         let mut finished = false;
+        let mut chain_follow = false;
+        // Feed acumula local: `feed_push` (&mut self) conflitaria com o
+        // empréstimo de `receiver` (E0502) — descarrega após o bloco.
+        let mut pending_feed: Vec<(FeedTag, String)> = Vec::new();
         if let Some(rx) = &self.receiver {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
                     CatalogMsg::Snapshot(result) => match result {
                         Ok(snapshot) => {
                             self.cursor = snapshot.cursor.0;
+                            let items = snapshot.items.len();
                             self.snapshot = Some(snapshot);
+                            self.conflict = None;
+                            pending_feed.push((
+                                FeedTag::Snapshot,
+                                format!("{items} iten(s) · cursor {}", self.cursor),
+                            ));
                             self.notice.clear();
+                            chain_follow = self.follow_after;
+                            self.follow_after = false;
                         }
                         Err(err) => {
+                            self.follow_after = false;
                             self.notice = err;
                         }
                     },
                     CatalogMsg::Mutated {
                         notice,
                         then_snapshot,
+                        id,
+                        base,
+                        is_delete,
+                        result,
                     } => {
+                        match &result {
+                            Ok(revision) => {
+                                self.conflict = None;
+                                if is_delete {
+                                    self.session_tombstones += 1;
+                                    pending_feed.push((
+                                        FeedTag::Tombstone,
+                                        format!("tombstone rev.{revision} para {id}"),
+                                    ));
+                                } else {
+                                    pending_feed.push((
+                                        FeedTag::Committed,
+                                        format!("rev.{revision} gravada para {id}"),
+                                    ));
+                                }
+                            }
+                            Err(SharedCatalogError::Conflict { current }) => {
+                                self.conflict = Some(ConflictInfo {
+                                    attempted_base: base,
+                                    current: *current,
+                                });
+                                pending_feed.push((
+                                    FeedTag::Rejected,
+                                    format!(
+                                        "{id}: base {} expirada; vigente {}",
+                                        base.map_or(String::from("—"), |b| format!("r{b}")),
+                                        current.map_or(String::from("—"), |c| format!("r{c}")),
+                                    ),
+                                ));
+                            }
+                            Err(_) => {
+                                self.conflict = None;
+                            }
+                        }
                         self.notice = notice;
                         if let Some(result) = then_snapshot {
                             match result {
@@ -467,8 +635,14 @@ impl SharedCatalog {
                             let removed: Vec<DefinitionId> =
                                 events.iter().map(|event| event.id.clone()).collect();
                             for event in &events {
-                                self.feed
-                                    .push(format!("r{} · TOMBSTONE · {}", event.seq, event.id.0));
+                                self.session_tombstones += 1;
+                                pending_feed.push((
+                                    FeedTag::Tombstone,
+                                    format!(
+                                        "seq{} · {} rev.{}",
+                                        event.seq, event.id.0, event.revision.0
+                                    ),
+                                ));
                             }
                             if let Some(snapshot) = &mut self.snapshot {
                                 // Id excluído ganha tombstone no nó: nunca
@@ -484,22 +658,37 @@ impl SharedCatalog {
                                 self.cursor
                             );
                         }
-                        FollowOutcome::Applied { count, snapshot } => match snapshot {
-                            Ok(fresh) => {
-                                let cursor = fresh.cursor.0;
-                                self.snapshot = Some(fresh);
-                                self.cursor = cursor;
-                                self.feed.push(format!(
-                                    "{count} evento(s) aplicado(s) · snapshot r{cursor}"
+                        FollowOutcome::Applied { events, snapshot } => {
+                            let count = events.len();
+                            for event in &events {
+                                let tag = if event.kind == EventKind::Deleted {
+                                    self.session_tombstones += 1;
+                                    FeedTag::Tombstone
+                                } else {
+                                    FeedTag::Committed
+                                };
+                                pending_feed.push((
+                                    tag,
+                                    format!(
+                                        "seq{} · {} rev.{}",
+                                        event.seq, event.id.0, event.revision.0
+                                    ),
                                 ));
-                                self.notice = format!(
-                                    "{count} novo(s) evento(s) aplicado(s) (cursor {cursor})"
-                                );
                             }
-                            Err(err) => {
-                                self.notice = err;
+                            match snapshot {
+                                Ok(fresh) => {
+                                    let cursor = fresh.cursor.0;
+                                    self.snapshot = Some(fresh);
+                                    self.cursor = cursor;
+                                    self.notice = format!(
+                                        "{count} novo(s) evento(s) aplicado(s) (cursor {cursor})"
+                                    );
+                                }
+                                Err(err) => {
+                                    self.notice = err;
+                                }
                             }
-                        },
+                        }
                         FollowOutcome::Resync(snapshot) => match snapshot {
                             Ok(fresh) => {
                                 let cursor = fresh.cursor.0;
@@ -525,10 +714,12 @@ impl SharedCatalog {
             self.receiver = None;
             self.busy = false;
         }
-        // Feed é um log curto: mantém só as últimas 16 entradas.
-        if self.feed.len() > 16 {
-            let drop = self.feed.len() - 16;
-            self.feed.drain(0..drop);
+        for (tag, text) in pending_feed {
+            self.feed_push(tag, text);
+        }
+        // `force_sync`: o follow só dispara com o worker livre.
+        if chain_follow && !self.busy {
+            self.follow_events();
         }
     }
 }

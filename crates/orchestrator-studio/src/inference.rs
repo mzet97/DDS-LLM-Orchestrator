@@ -19,11 +19,14 @@ pub enum Role {
     Assistant,
 }
 
-/// Mensagem do contrato de chat.
+/// Mensagem do contrato de chat. `ts_unix_ms` é o relógio LOCAL de
+/// recebimento/criação (só GUI — `skip` no fio, o contrato OpenAI não muda).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
     pub content: String,
+    #[serde(skip)]
+    pub ts_unix_ms: u64,
 }
 
 /// Requisição de geração: modelo, mensagens e parâmetros que atravessam o fio.
@@ -39,7 +42,7 @@ pub struct ChatRequest {
 
 /// Estatísticas reais de um turno assistente (tela 3.3): duração medida +
 /// tokens do `usage` quando o servidor os retorna.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize)]
 pub struct TurnStats {
     pub elapsed_ms: u64,
     pub prompt_tokens: Option<u64>,
@@ -111,8 +114,8 @@ fn send(
 
 /// Mensagem do worker de HTTP (modelo de `LaunchMsg`).
 enum InferMsg {
-    /// Resposta de `Modelos` (`GET /v1/models`).
-    Models(Result<Vec<ModelInfo>, String>),
+    /// Resposta de `Modelos` (`GET /v1/models`) + RTT medido (ms).
+    Models(Result<Vec<ModelInfo>, String>, u64),
     /// Resposta de `Enviar` (`POST /v1/chat/completions`) com stats reais.
     Reply(Result<(String, Option<UsageInfo>, u64), String>),
 }
@@ -132,6 +135,9 @@ pub struct InferenceState {
     pub history: Vec<Message>,
     /// Estatísticas por turno assistente (paralelo ao histórico; tela 3.3).
     pub stats: Vec<TurnStats>,
+    /// RTT da última verificação `/v1/models` (ms) — `None` sem verificação
+    /// bem-sucedida (a 3.3 mostra "HTTP 200 OK · Nms" só com este valor).
+    pub last_verify_ms: Option<u64>,
     /// `true` enquanto há HTTP em background (`poll` drena e libera).
     pub busy: bool,
     /// Momento do envio da geração em curso (timer vivo "GERANDO · N.Ns";
@@ -141,11 +147,11 @@ pub struct InferenceState {
 }
 
 impl InferenceState {
-    /// Padrões honestos: servidor local, temperatura 0.2, 256 tokens.
+    /// Padrões do mockup 3.3: endpoint do lab, temperatura 0.2, 256 tokens.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            server_url: String::from("http://127.0.0.1:8082"),
+            server_url: String::from("http://192.168.1.61:8081"),
             model: String::new(),
             temperature: 0.2,
             top_p: 0.95,
@@ -155,6 +161,7 @@ impl InferenceState {
             models: Vec::new(),
             history: Vec::new(),
             stats: Vec::new(),
+            last_verify_ms: None,
             busy: false,
             pending_since: None,
             receiver: None,
@@ -170,8 +177,11 @@ impl InferenceState {
         let url = self.server_url.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let result = list_models(&url).map_err(|err| err.to_string());
             let _ = tx.send(InferMsg::Models(
-                list_models(&url).map_err(|err| err.to_string()),
+                result,
+                started.elapsed().as_millis() as u64,
             ));
         });
         self.receiver = Some(rx);
@@ -190,6 +200,7 @@ impl InferenceState {
         self.history.push(Message {
             role: Role::User,
             content: self.prompt.clone(),
+            ts_unix_ms: crate::machines::now_unix_ns() / 1_000_000,
         });
         let chat = ChatRequest {
             model: self.model.clone(),
@@ -219,7 +230,7 @@ impl InferenceState {
         if let Some(rx) = &self.receiver {
             while let Ok(msg) = rx.try_recv() {
                 match msg {
-                    InferMsg::Models(result) => match result {
+                    InferMsg::Models(result, elapsed_ms) => match result {
                         Ok(models) => {
                             if let Some(first) = models.first() {
                                 if self.model.is_empty() {
@@ -227,9 +238,11 @@ impl InferenceState {
                                 }
                             }
                             self.models = models.into_iter().map(|info| info.id).collect();
+                            self.last_verify_ms = Some(elapsed_ms);
                             self.reply.clear();
                         }
                         Err(err) => {
+                            self.last_verify_ms = None;
                             self.reply = format!("erro ao listar modelos: {err}");
                         }
                     },
@@ -238,6 +251,7 @@ impl InferenceState {
                             self.history.push(Message {
                                 role: Role::Assistant,
                                 content: content.clone(),
+                                ts_unix_ms: crate::machines::now_unix_ns() / 1_000_000,
                             });
                             self.stats.push(TurnStats {
                                 elapsed_ms,
@@ -269,6 +283,44 @@ impl InferenceState {
         self.stats.clear();
         self.prompt.clear();
         self.reply.clear();
+    }
+
+    /// Interrompe a geração em curso do ponto de vista da UI (botão "Parar
+    /// Geração" da 3.3): solta o canal — a thread bloqueante termina sozinha
+    /// e a resposta tardia é descartada (o `send` falha sem receptor). Sem
+    /// efeito fora de geração.
+    pub fn cancel(&mut self) {
+        if !self.busy {
+            return;
+        }
+        self.receiver = None;
+        self.busy = false;
+        self.pending_since = None;
+        self.reply = String::from("geração interrompida (resposta tardia descartada)");
+    }
+
+    /// Exporta o transcript da sessão (histórico + stats) como JSON em
+    /// `dir`, retornando o caminho escrito. Falha de IO propaga ao chamador.
+    pub fn export_session(&self, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        #[derive(serde::Serialize)]
+        struct Transcript<'a> {
+            history: &'a [Message],
+            stats: &'a [TurnStats],
+        }
+        let payload = serde_json::to_string_pretty(&Transcript {
+            history: &self.history,
+            stats: &self.stats,
+        })
+        .map_err(std::io::Error::other)?;
+        let name = format!(
+            "studio_transcript_{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs())
+        );
+        let path = dir.join(name);
+        std::fs::write(&path, payload)?;
+        Ok(path)
     }
 }
 

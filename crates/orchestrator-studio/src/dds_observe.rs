@@ -48,7 +48,7 @@ pub struct AgentRow {
 }
 
 /// Linha de tool call exibida na GUI.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ToolRow {
     pub call_id: String,
     pub tool_name: String,
@@ -430,7 +430,7 @@ impl DdsState {
                 .ok()
                 .and_then(|d| d.trim().parse().ok())
                 .unwrap_or(170),
-            window_secs: 3,
+            window_secs: 5,
             snapshot: DdsSnapshot::default(),
             error: String::new(),
             busy: false,
@@ -485,6 +485,20 @@ impl DdsState {
             self.receiver = None;
             self.busy = false;
         }
+    }
+
+    /// Tool calls da janela em JSON no temporário (botão Exportar JSON da
+    /// 3.13; padrão `SharedCatalog::export_snapshot`).
+    pub fn export_tools(&self) -> std::io::Result<std::path::PathBuf> {
+        let payload = serde_json::json!({
+            "domain": self.domain,
+            "window_secs": self.window_secs,
+            "tools": self.snapshot.tools,
+        });
+        let text = serde_json::to_string_pretty(&payload).map_err(std::io::Error::other)?;
+        let path = std::env::temp_dir().join("studio-tools.json");
+        std::fs::write(&path, text)?;
+        Ok(path)
     }
 }
 

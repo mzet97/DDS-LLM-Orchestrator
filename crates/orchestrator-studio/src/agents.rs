@@ -47,26 +47,37 @@ pub struct AgentsState {
     pub error: String,
     /// `true` enquanto há HTTP em background (`poll` drena e libera).
     pub busy: bool,
+    /// Instante (ms unix) da última leitura concluída — "Último Polling".
+    pub last_poll_ms: Option<u64>,
+    /// A última leitura terminou em 200 (chip "HTTP 200 OK" da 3.5).
+    pub last_ok: bool,
+    /// Aviso transitório de sucesso (exportação) — limpo no `refresh`.
+    pub notice: String,
+    /// Queda simulada pelo operador (botão do mockup): o erro rotulado
+    /// aparece sem tocar a rede; `refresh` limpa e lê de verdade.
+    pub simulate_outage: bool,
     receiver: Option<mpsc::Receiver<AgentsMsg>>,
 }
 
 impl AgentsState {
-    /// Padrão honesto: orquestrador local.
+    /// Padrão do mockup 3.5: orquestrador do lab (editável).
     #[must_use]
     pub fn new() -> Self {
         Self {
-            url: String::from("http://127.0.0.1:8085"),
+            url: String::from("http://192.168.1.61:8080"),
             ..Self::default()
         }
     }
 
     /// Recarrega a lista em THREAD de trabalho (REQ/T-820-19; T-830-01);
     /// erro preserva a lista anterior e registra o motivo. Clique durante
-    /// `busy` é ignorado.
+    /// `busy` é ignorado. Limpa aviso/avaria simulada (pedido explícito).
     pub fn refresh(&mut self) {
         if self.busy {
             return;
         }
+        self.notice.clear();
+        self.simulate_outage = false;
         let url = self.url.clone();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
@@ -85,11 +96,14 @@ impl AgentsState {
                     Ok(list) => {
                         self.list = list;
                         self.error.clear();
+                        self.last_ok = true;
                     }
                     Err(detail) => {
                         self.error = detail;
+                        self.last_ok = false;
                     }
                 }
+                self.last_poll_ms = Some(crate::machines::now_unix_ns() / 1_000_000);
                 finished = true;
             }
         }
@@ -97,6 +111,38 @@ impl AgentsState {
             self.receiver = None;
             self.busy = false;
         }
+    }
+
+    /// Liga/desliga a queda simulada (sem rede; erro honesto rotulado).
+    pub fn toggle_outage(&mut self) {
+        self.simulate_outage = !self.simulate_outage;
+        if self.simulate_outage {
+            self.last_ok = false;
+            self.error = String::from("queda simulada pelo operador (:8080 ignorado)");
+        } else {
+            self.error.clear();
+        }
+    }
+
+    /// Zera a telemetria HTTP exibida (lista, erro e marcas).
+    pub fn clear_stats(&mut self) {
+        self.list.clear();
+        self.error.clear();
+        self.notice.clear();
+        self.last_ok = false;
+        self.last_poll_ms = None;
+    }
+
+    /// Snapshot JSON da lista atual em `dir`; retorna o caminho escrito.
+    pub fn export_snapshot(&self, dir: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+        let payload = serde_json::to_string_pretty(&self.list).map_err(std::io::Error::other)?;
+        let name = format!(
+            "studio_agents_{}.json",
+            crate::machines::now_unix_ns() / 1_000_000_000
+        );
+        let path = dir.join(name);
+        std::fs::write(&path, payload)?;
+        Ok(path)
     }
 }
 
@@ -139,10 +185,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_state_is_honest_local_orchestrator() {
+    fn default_state_points_at_lab_orchestrator() {
         let state = AgentsState::new();
-        assert_eq!(state.url, "http://127.0.0.1:8085");
+        assert_eq!(state.url, "http://192.168.1.61:8080");
         assert!(state.list.is_empty());
         assert!(!state.busy);
+    }
+
+    #[test]
+    fn outage_toggle_and_clear_stats_are_honest() {
+        let mut state = AgentsState::new();
+        state.toggle_outage();
+        assert!(state.simulate_outage);
+        assert!(state.error.contains("simulada"));
+        state.toggle_outage();
+        assert!(!state.simulate_outage);
+        assert!(state.error.is_empty());
+        state.last_ok = true;
+        state.clear_stats();
+        assert!(!state.last_ok);
+        assert!(state.last_poll_ms.is_none());
     }
 }

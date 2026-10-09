@@ -21,6 +21,7 @@ pub mod origin;
 pub mod overview;
 pub mod panel_header;
 pub mod protected;
+pub mod runner;
 pub mod services;
 pub mod state;
 pub mod studio_log;

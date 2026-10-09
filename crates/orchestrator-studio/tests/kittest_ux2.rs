@@ -92,10 +92,10 @@ fn tools_inspector_shows_request_and_response_payloads() {
     // accesskit — o payload íntegro é coberto pelo teste unitário de ToolRow.
     // "N0 READ_ONLY" aparece no card E na tabela → ambíguo p/ get_by_label;
     // o vocabulário é garantido por security_level_labels_follow_prd.)
-    harness.get_by_label_contains("REQUEST (ARGUMENTS_JSON)");
-    harness.get_by_label_contains("RESPONSE (RESULT_JSON)");
+    harness.get_by_label("PAYLOAD DE ENTRADA (arguments_json)");
+    harness.get_by_label("RESULTADO (result_json)");
     harness.get_by_label_contains("COPIAR RAW");
-    harness.get_by_label("42 ms"); // duração real (completed−created)
+    harness.get_by_label("42ms"); // duração real (completed−created)
 }
 
 /// 3.14: a tabela carrega SUBSISTEMA e SLOT #; entradas marcadas
@@ -114,9 +114,9 @@ fn logs_table_carries_subsystem_and_slot() {
     harness.set_size(egui::vec2(1400.0, 900.0));
     harness.run_steps(5);
 
-    harness.get_by_label_contains("SLOT #"); // header da tabela
+    harness.get_by_label_contains("SLOT"); // header da tabela
     harness.get_by_label_contains("SUBSISTEMA");
-    harness.get_by_label("SYSTEMD");
+    harness.get_by_label("[SYSTEMD]");
     harness.get_by_label_contains("teste ux2 subsistema");
 }
 
@@ -136,6 +136,9 @@ fn dispatch_result_card_decomposes_latency() {
             transport_ms: 150,
             serial_ms: 3,
         }),
+        http_status: 200,
+        raw: String::from("{\"task_id\":\"t-1\"}"),
+        headers: String::from("content-type: application/json"),
     });
     let discovery = DiscoveryState::new_disabled(170);
 

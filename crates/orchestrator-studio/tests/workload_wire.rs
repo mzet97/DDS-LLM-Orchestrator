@@ -1,6 +1,7 @@
 //! Despacho contra stub HTTP real em porta efêmera (concluído e falha).
 
 use orchestrator_studio::workload::DispatchOutcome;
+use std::time::Duration;
 
 fn stub() -> axum::Router {
     axum::Router::new().route(
@@ -12,6 +13,13 @@ fn stub() -> axum::Router {
                     serde_json::json!({"task_id": "t-2", "status": "failed", "error": "sem agente"})
                 } else if model == "estranho" {
                     serde_json::json!({"task_id": "t-3", "status": "bizarro"})
+                } else if model == "echo" {
+                    // Ecoa os parâmetros recebidos: prova que vão no fio.
+                    let temp = body["temperature"].to_string();
+                    let max = body["max_tokens"].to_string();
+                    serde_json::json!({"task_id": "t-5", "status": "completed",
+                    "assigned_agent": "agent-echo", "latency_ms": 11,
+                    "content": format!("t={temp} m={max}")})
                 } else if model == "decomp" {
                     // Decomposição T1–T6 real do backend (ns).
                     serde_json::json!({"task_id": "t-4", "status": "completed",
@@ -46,21 +54,69 @@ async fn completed_returns_agent_and_latency() {
     let url = live_base_url().await;
 
     let outcome = tokio::task::spawn_blocking(move || {
-        orchestrator_studio::workload::dispatch_sync(&url, "m", "oi")
+        orchestrator_studio::workload::dispatch_sync(
+            &url,
+            "m",
+            "oi",
+            0.7,
+            256,
+            Duration::from_secs(10),
+        )
     })
     .await
     .expect("sem panic")
     .expect("stub responde");
 
+    // Corpo bruto e headers variam (serialização/data) — contém, não iguala.
+    let DispatchOutcome::Completed {
+        task_id,
+        assigned_agent,
+        latency_ms,
+        content,
+        breakdown,
+        http_status,
+        raw,
+        headers,
+    } = outcome
+    else {
+        panic!("deve concluir");
+    };
+    assert_eq!(task_id, "t-1");
+    assert_eq!(assigned_agent.as_deref(), Some("agent-teste"));
+    assert_eq!(latency_ms, 1234);
+    assert_eq!(content, None);
+    assert_eq!(breakdown, None);
+    assert_eq!(http_status, 200);
+    assert!(raw.contains("\"task_id\":\"t-1\""), "bruto íntegro: {raw}");
+    assert!(headers.contains("content-type"), "headers reais: {headers}");
+}
+
+/// Temperatura/max_tokens vão de verdade no corpo do POST.
+#[tokio::test]
+async fn params_travel_on_the_wire() {
+    let url = live_base_url().await;
+
+    let outcome = tokio::task::spawn_blocking(move || {
+        orchestrator_studio::workload::dispatch_sync(
+            &url,
+            "echo",
+            "oi",
+            0.2,
+            1024,
+            Duration::from_secs(10),
+        )
+    })
+    .await
+    .expect("sem panic")
+    .expect("stub responde");
+
+    let DispatchOutcome::Completed { content, .. } = outcome else {
+        panic!("deve concluir");
+    };
     assert_eq!(
-        outcome,
-        DispatchOutcome::Completed {
-            task_id: String::from("t-1"),
-            assigned_agent: Some(String::from("agent-teste")),
-            latency_ms: 1234,
-            content: None,
-            breakdown: None,
-        }
+        content.as_deref(),
+        Some("t=0.2 m=1024"),
+        "stub ecoa o que recebeu"
     );
 }
 
@@ -71,7 +127,14 @@ async fn completed_parses_t_breakdown_fields() {
     let url = live_base_url().await;
 
     let outcome = tokio::task::spawn_blocking(move || {
-        orchestrator_studio::workload::dispatch_sync(&url, "decomp", "oi")
+        orchestrator_studio::workload::dispatch_sync(
+            &url,
+            "decomp",
+            "oi",
+            0.7,
+            256,
+            Duration::from_secs(10),
+        )
     })
     .await
     .expect("sem panic")
@@ -92,7 +155,14 @@ async fn failed_returns_task_error() {
     let url = live_base_url().await;
 
     let outcome = tokio::task::spawn_blocking(move || {
-        orchestrator_studio::workload::dispatch_sync(&url, "falho", "oi")
+        orchestrator_studio::workload::dispatch_sync(
+            &url,
+            "falho",
+            "oi",
+            0.7,
+            256,
+            Duration::from_secs(10),
+        )
     })
     .await
     .expect("sem panic")
@@ -117,6 +187,9 @@ fn live_dispatch_smoke_when_requested() {
         "http://127.0.0.1:8085",
         "qwen3.5-0.8b",
         "responda só: VIVO",
+        0.7,
+        256,
+        Duration::from_secs(300),
     )
     .expect("orquestrador vivo despacha");
     assert!(
@@ -130,7 +203,14 @@ async fn unknown_status_becomes_typed_error() {
     let url = live_base_url().await;
 
     let err = tokio::task::spawn_blocking(move || {
-        orchestrator_studio::workload::dispatch_sync(&url, "estranho", "oi")
+        orchestrator_studio::workload::dispatch_sync(
+            &url,
+            "estranho",
+            "oi",
+            0.7,
+            256,
+            Duration::from_secs(10),
+        )
     })
     .await
     .expect("sem panic")

@@ -14,7 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 /// Capacidade do buffer (eventos mais antigos são descartados).
-const CAPACITY: usize = 500;
+pub const CAPACITY: usize = 500;
 
 /// Cap de retenção de stack trace/payload (inspetor legível, memória bornal).
 const DETAIL_CAP: usize = 2 * 1024;
@@ -46,6 +46,8 @@ pub struct LogEntry {
 static ENTRIES: Mutex<VecDeque<LogEntry>> = Mutex::new(VecDeque::new());
 static LAST_NS: AtomicU64 = AtomicU64::new(0);
 static NEXT_SLOT: AtomicU64 = AtomicU64::new(1);
+/// Espelho stderr ligado (checkbox "Espelhar stderr" da 3.14).
+static MIRROR_STDERR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
 
 fn now_unix_ns() -> u64 {
     std::time::SystemTime::now()
@@ -75,7 +77,7 @@ fn push(
     let last = LAST_NS.swap(now_ns, Ordering::Relaxed);
     let offset_ms = now_ns.saturating_sub(last) / 1_000_000;
     // Sob teste: sem poluir o stderr do cargo com centenas de eventos.
-    if !cfg!(test) {
+    if mirror() && !cfg!(test) {
         eprintln!("studio[{level}][{source}] {timestamp} {message}");
     }
     let backtrace = (level == "ERRO")
@@ -99,9 +101,10 @@ fn push(
     }
 }
 
-/// Hora local compacta (sem depender de chrono: HH:MM:SS do sistema).
-fn chrono_now(secs_unix: u64) -> String {
-    let secs = secs_unix;
+/// Hora compacta (sem depender de chrono: HH:MM:SS UTC do sistema).
+/// Recebe nanos (era o bug cosmético: tratado como segundos — 3.14).
+fn chrono_now(ns_unix: u64) -> String {
+    let secs = ns_unix / 1_000_000_000;
     let (h, m, s) = ((secs / 3600) % 24, (secs / 60) % 60, secs % 60);
     format!("{h:02}:{m:02}:{s:02}")
 }
@@ -159,25 +162,62 @@ pub fn entries() -> Vec<LogEntry> {
 }
 
 /// Estado de apresentação do painel de Logs (tela 3.14): filtro por nível,
-/// busca por substring, auto-scroll e entrada selecionada no inspetor.
-#[derive(Debug, Default)]
+/// busca por substring, auto-scroll, espelho stderr, pausa com lista
+/// congelada e entrada selecionada no inspetor.
+#[derive(Debug)]
 pub struct LogsPanel {
     pub filter_level: Option<&'static str>,
     pub search: String,
     pub auto_scroll: bool,
+    /// Espelho stderr ligado (comanda o `MIRROR_STDERR` global).
+    pub mirror: bool,
+    /// Lista congelada (pausa de DISPLAY — o buffer segue absorvendo).
+    pub paused: bool,
+    pub frozen: Vec<LogEntry>,
     /// Slot da entrada selecionada no inspetor lateral (3.14).
     pub selected: Option<u64>,
 }
 
-impl LogsPanel {
-    /// Padrão com auto-scroll ligado (tail de console).
-    #[must_use]
-    pub fn new() -> Self {
+impl Default for LogsPanel {
+    fn default() -> Self {
         Self {
+            filter_level: None,
+            search: String::new(),
             auto_scroll: true,
-            ..Self::default()
+            mirror: true,
+            paused: false,
+            frozen: Vec::new(),
+            selected: None,
         }
     }
+}
+
+impl LogsPanel {
+    /// Padrão de console: cauda travada no novo + espelho ligado.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+/// Espelho stderr ligado?
+#[must_use]
+pub fn mirror() -> bool {
+    MIRROR_STDERR.load(Ordering::Relaxed)
+}
+
+/// Liga/desliga o espelho stderr (checkbox da 3.14).
+pub fn set_mirror(on: bool) {
+    MIRROR_STDERR.store(on, Ordering::Relaxed);
+}
+
+/// Eventos saídos do buffer (evicção FIFO + limpezas manuais): slots
+/// emitidos menos retidos.
+#[must_use]
+pub fn evicted() -> u64 {
+    let pushed = NEXT_SLOT.load(Ordering::Relaxed).saturating_sub(1);
+    let kept = entries().len() as u64;
+    pushed.saturating_sub(kept)
 }
 
 /// Limpa o ring buffer (ação explícita do operador na tela 3.14).
@@ -212,6 +252,13 @@ pub fn export() -> std::io::Result<std::path::PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chrono_now_reads_unix_nanos() {
+        // 2026-10-08T09:00:00Z = 1791450000 s (`date -u`).
+        assert_eq!(chrono_now(1_791_450_000_000_000_000), "09:00:00");
+        assert_eq!(chrono_now(0), "00:00:00");
+    }
 
     #[test]
     fn push_caps_the_buffer_and_keeps_order() {

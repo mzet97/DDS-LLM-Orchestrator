@@ -82,8 +82,12 @@ pub fn apply(ctx: &egui::Context) {
     apply_visuals(ctx);
 }
 
-/// Fontes: Inter (UI) + JetBrains Mono (dados) embutidas; glifos
-/// (●◐◌🛰🛡) preservados via fallback para as fontes de emoji do egui.
+/// Fontes: Inter (UI) + JetBrains Mono (dados) embutidas, com as 4 do
+/// egui como fallback (Hack, Ubuntu-Light, NotoEmoji, emoji-icon-font).
+/// Glifos verificados por captura (2026-10-08): SÓ usar ● ○ ✓ × · — … ↻ ↑ →
+/// ▶ ■ ⚠ + Latin-1 — NotoEmoji/emoji-icon-font NÃO rendem fallback confiável
+/// neste build (◌ ◐ ✔ ✖ ✘ 🛰 🛡 ▌ ⇄ viram tofu; verificar com fontTools +
+/// captura antes de adotar qualquer glifo novo).
 fn apply_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
@@ -100,8 +104,8 @@ fn apply_fonts(ctx: &egui::Context) {
         ))),
     );
 
-    // Proportional: Inter primeiro; Ubuntu-Light e NotoEmoji ficam como
-    // fallback para glifos que a Inter não cobre (●◐◌→🛰🛡✔✘).
+    // Proportional: Inter primeiro; as 3 padrão do egui seguem como
+    // fallback (na prática só Inter/Ubuntu rendem — ver doc acima).
     if let Some(proportional) = fonts.families.get_mut(&FontFamily::Proportional) {
         let fallbacks = proportional.clone();
         proportional.clear();

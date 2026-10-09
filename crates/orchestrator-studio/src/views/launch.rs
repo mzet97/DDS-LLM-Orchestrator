@@ -1,244 +1,650 @@
-//! Painel 3.4 Subir Inferência (runner local §9.3, P2): parâmetros da
-//! unidade própria do nó, CLI preview copiável, wizard nas 5 etapas
-//! canônicas do PRD com duração MEDIDA, console de saídas reais das
-//! operações e chip ServerStatus ao vivo (publicação ⑤).
+//! Painel 3.4 Subir Inferência: fiel ao mockup Stitch — runner LOCAL de
+//! subprocesso (spawn direto, sem systemd), parâmetros + presets, CLI
+//! preview, status/PID/VRAM reais, wizard das 5 etapas com tempos medidos,
+//! console stdout/stderr ao vivo e chip ServerStatus do domínio.
+//!
+//! Só dados reais: PID/saída/exit do filho, `/health` medido, VRAM do hwmon
+//! AMD quando existe (ausente = "indisponível"), SHA-256 calculado em worker.
+//! Desvios honestos do mockup: sem cgroup/systemd (spawn direto), bind padrão
+//! em loopback (0.0.0.0 expõe inferência sem token), sem GUID/build
+//! inventados (build vem do `--version` real).
 
 use crate::discovery::DiscoveryState;
 use crate::kit;
-use crate::launch::{Device, LaunchState};
-use crate::panel_header::panel_header;
+use crate::runner::{fmt_gb, fmt_uptime, Preset, RunnerState, RunnerStatus};
 use crate::theme;
 use eframe::egui;
+
+/// Moldura dos cards da 3.4 (mesmo idioma das demais).
+fn card_frame() -> egui::Frame {
+    egui::Frame::NONE
+        .fill(theme::SURFACE_CONTAINER)
+        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
+        .corner_radius(egui::CornerRadius::same(theme::RADIUS_MD as u8))
+        .inner_margin(egui::Margin::same(10))
+}
+
+/// Cabeçalho de card: título à esquerda + etiqueta à direita.
+fn card_title(ui: &mut egui::Ui, title: &str, tag: &str) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .monospace()
+                .size(11.5)
+                .strong()
+                .color(theme::ON_SURFACE),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(tag)
+                    .monospace()
+                    .small()
+                    .color(theme::OUTLINE),
+            );
+        });
+    });
+}
+
+/// Campo numérico com parse honesto (inválido mantém o anterior).
+fn num_field(ui: &mut egui::Ui, value: &mut u32, label: &str) -> bool {
+    let mut raw = value.to_string();
+    ui.label(
+        egui::RichText::new(label)
+            .monospace()
+            .small()
+            .color(theme::OUTLINE),
+    );
+    let changed = ui
+        .add(egui::TextEdit::singleline(&mut raw).desired_width(90.0))
+        .changed();
+    if changed {
+        if let Ok(parsed) = raw.trim().parse::<u32>() {
+            *value = parsed;
+        }
+        return true;
+    }
+    false
+}
 
 /// `go_chat` vira `true` quando o operador pede "Abrir no Chat (3.3)".
 pub fn show(
     ui: &mut egui::Ui,
-    launch: &mut LaunchState,
-    known_services: &[String],
+    runner: &mut RunnerState,
     go_chat: &mut bool,
     discovery: &DiscoveryState,
 ) {
-    panel_header(
-        ui,
-        "SEC 3.4 · SUBIR INFERÊNCIA · RUNNER LOCAL",
-        "Subir inferência",
-        "Sobe a unidade PRÓPRIA do nó (start de unidade existente — nada é \
-         criado no host) e comprova com geração real no llama-server",
-    );
-    // DoD PRD: chip do alvo único (mesma URL da descoberta nas 14 telas).
-    if let Some(target) = discovery.selected_url() {
-        kit::target_chip(ui, &target, "alvo da descoberta", true);
-        ui.add_space(theme::SPACE_SM);
-    }
-    launch.poll();
-    if launch.running {
+    runner.poll();
+    runner.ensure_build();
+    runner.ensure_sha();
+    if runner.running() {
         ui.ctx().request_repaint();
+    } else {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_secs(1));
     }
 
-    // ── Parâmetros de inicialização ──
-    kit::section_label(ui, "PARÂMETROS DE INICIALIZAÇÃO");
+    // ── Cabeçalho (mockup; shell global novo já vem do main) ──
     ui.horizontal(|ui| {
-        ui.label("Unidade do nó:");
-        egui::ComboBox::from_id_salt("launch-service")
-            .selected_text(if launch.plan.service.is_empty() {
-                "escolha…".to_owned()
-            } else {
-                launch.plan.service.clone()
-            })
-            .show_ui(ui, |ui| {
-                for name in known_services {
-                    ui.selectable_value(&mut launch.plan.service, name.clone(), name);
-                }
-            });
-        if known_services.is_empty() {
-            ui.label(
-                egui::RichText::new("lista vazia — abra Serviços e clique Ler plano primeiro.")
-                    .small()
-                    .color(theme::WARN),
-            );
-        }
+        ui.label(
+            egui::RichText::new("3.4 Subir Inferência")
+                .size(22.0)
+                .strong()
+                .color(theme::ON_SURFACE),
+        );
+        kit::badge(ui, "RUNNER LOCAL", theme::PRIMARY_FIXED_DIM);
     });
-    ui.horizontal(|ui| {
-        ui.label("llama-server (HTTP):");
-        ui.text_edit_singleline(&mut launch.plan.llama_url);
-        ui.label("dispositivo:");
-        ui.selectable_value(&mut launch.plan.device, Device::Gpu, "GPU");
-        ui.selectable_value(&mut launch.plan.device, Device::Cpu, "CPU");
-    });
-    ui.horizontal(|ui| {
-        let mut ctx = launch.plan.ctx_tokens.to_string();
-        ui.label("contexto:");
-        if ui.text_edit_singleline(&mut ctx).changed() {
-            launch.plan.ctx_tokens = ctx.parse().unwrap_or(launch.plan.ctx_tokens);
-        }
-        let mut slots = launch.plan.slots.to_string();
-        ui.label("slots:");
-        if ui.text_edit_singleline(&mut slots).changed() {
-            launch.plan.slots = slots.parse().unwrap_or(launch.plan.slots);
-        }
-        ui.label("rota DDS:");
-        ui.text_edit_singleline(&mut launch.plan.dds_route);
-    });
-    ui.horizontal(|ui| {
-        ui.label("prompt da prova:");
-        ui.text_edit_singleline(&mut launch.plan.proof_prompt);
-    });
+    ui.label(
+        egui::RichText::new(
+            "Gerenciamento de subprocesso local do llama-server (spawn direto) & publicação de status DDS",
+        )
+        .small()
+        .color(theme::ON_SURFACE_VARIANT),
+    );
     ui.add_space(theme::SPACE_SM);
 
-    // ── CLI preview (copiável) ──
-    kit::section_label(ui, "PLANO — LEIA ANTES DE APLICAR (CLI PREVIEW)");
-    let preview = launch.plan.preview();
-    egui::Frame::NONE
-        .fill(theme::SURFACE_LOW)
-        .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
-        .inner_margin(theme::SPACE_MD)
-        .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
-        .show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            ui.horizontal(|ui| {
-                if ui.button("Copiar").clicked() {
-                    ui.ctx().copy_text(preview.clone());
-                    crate::studio_log::info("subir: CLI preview copiado");
-                }
+    // ── Faixa de estado: subprocesso · acelerador · VRAM ──
+    card_frame().show(ui, |ui| {
+        ui.set_min_width(ui.available_width());
+        ui.columns(3, |cols| {
+            cols[0].vertical(|ui| {
                 ui.label(
-                    egui::RichText::new("NADA é criado no nó: só start de unidade própria.")
+                    egui::RichText::new("SUBPROCESS STATE")
+                        .monospace()
                         .small()
+                        .color(theme::OUTLINE),
+                );
+                ui.label(match &runner.status {
+                    RunnerStatus::Stopped => egui::RichText::new("○ PARADO")
+                        .monospace()
+                        .strong()
+                        .color(theme::STALE),
+                    RunnerStatus::Starting => egui::RichText::new("○ SUBINDO…")
+                        .monospace()
+                        .strong()
                         .color(theme::WARN),
+                    RunnerStatus::Running { pid, since, .. } => egui::RichText::new(format!(
+                        "● PID {pid} (ATIVO · {})",
+                        fmt_uptime(since.elapsed().as_secs())
+                    ))
+                    .monospace()
+                    .strong()
+                    .color(theme::OK),
+                    RunnerStatus::Stopping { pid, .. } => {
+                        egui::RichText::new(format!("○ PID {pid} (PARANDO…)"))
+                            .monospace()
+                            .strong()
+                            .color(theme::WARN)
+                    }
+                    RunnerStatus::Failed { .. } => egui::RichText::new("× FALHOU")
+                        .monospace()
+                        .strong()
+                        .color(theme::ERROR),
+                });
+            });
+            cols[1].vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("TARGET ACCELERATOR")
+                        .monospace()
+                        .small()
+                        .color(theme::OUTLINE),
+                );
+                ui.label(
+                    egui::RichText::new(runner.gpu_label.as_deref().unwrap_or("CPU (sem GPU DRI)"))
+                        .monospace()
+                        .strong()
+                        .color(theme::PRIMARY_FIXED_DIM),
                 );
             });
-            ui.label(egui::RichText::new(&preview).monospace().small());
+            cols[2].vertical(|ui| {
+                ui.label(
+                    egui::RichText::new("VRAM ALOCADA")
+                        .monospace()
+                        .small()
+                        .color(theme::OUTLINE),
+                );
+                match runner.vram {
+                    Some((used, total)) if total > 0 => {
+                        let frac = (used as f32 / total as f32).clamp(0.0, 1.0);
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} / {} GB  {:.1}%",
+                                fmt_gb(used),
+                                fmt_gb(total),
+                                frac * 100.0
+                            ))
+                            .monospace()
+                            .small()
+                            .strong()
+                            .color(theme::ON_SURFACE_VARIANT),
+                        );
+                        ui.add(egui::ProgressBar::new(frac));
+                    }
+                    _ => {
+                        ui.label(
+                            egui::RichText::new("indisponível (sem hwmon)")
+                                .monospace()
+                                .small()
+                                .color(theme::OUTLINE),
+                        );
+                    }
+                }
+            });
         });
-    ui.add_space(theme::SPACE_MD);
-
-    if !launch.error.is_empty() {
-        kit::error_banner(ui, &launch.error);
-    }
-
-    // ── Ação + atalho para o chat ──
-    ui.horizontal(|ui| {
-        let apply = ui.add_enabled(
-            !launch.running && !launch.plan.service.is_empty(),
-            egui::Button::new(
-                egui::RichText::new(if launch.running {
-                    "◐ aplicando… a UI segue livre"
-                } else {
-                    "Aplicar e Comprovar"
-                })
-                .monospace()
-                .color(theme::ON_PRIMARY),
-            )
-            .fill(theme::PRIMARY_CONTAINER),
-        );
-        if apply.clicked() {
-            launch.start(known_services);
-        }
-        if ui.button("Abrir no Chat (3.3)").clicked() {
-            *go_chat = true;
-        }
     });
-    ui.add_space(theme::SPACE_MD);
+    ui.add_space(theme::SPACE_LG);
 
-    // ── Wizard de etapas com duração medida ──
-    if !launch.steps.is_empty() {
-        let done_count = launch.steps.iter().filter(|step| step.ok).count();
-        let total_ms: u64 = launch.steps.iter().map(|step| step.duration_ms).sum();
-        kit::section_label(
-            ui,
-            &format!(
-                "ETAPAS DE INICIALIZAÇÃO · {}/{} CONCLUÍDAS · {} ms",
-                done_count,
-                launch.steps.len(),
-                total_ms
-            ),
-        );
-        for step in &launch.steps {
-            let (mark, color) = if step.ok {
-                ("✔", theme::OK)
-            } else {
-                ("✘", theme::ERROR)
-            };
-            kit::accent_card(ui, color, |ui| {
+    ui.columns(2, |cols| {
+        // ── Parâmetros de inicialização (mockup) ──
+        cols[0].vertical(|ui| {
+            card_frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                card_title(
+                    ui,
+                    "Parâmetros de Inicialização",
+                    "SPAWN DIRETO · SEM SYSTEMD",
+                );
+                ui.add_space(theme::SPACE_XS);
+                ui.label(
+                    egui::RichText::new("EXECUTÁVEL LLAMA-SERVER")
+                        .monospace()
+                        .small()
+                        .color(theme::OUTLINE),
+                );
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(mark).monospace().strong().color(color));
-                    ui.strong(step.step);
+                    ui.add_enabled_ui(!runner.running(), |ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut runner.params.exe)
+                                .desired_width(ui.available_width() - 92.0)
+                                .hint_text("/usr/bin/llama-server"),
+                        );
+                        if ui.button("Detectar").clicked() {
+                            if let Some(exe) = crate::runner::detect_exe() {
+                                runner.params.exe = exe;
+                            } else {
+                                runner.error =
+                                    String::from("nenhum llama-server no PATH conhecido");
+                            }
+                        }
+                    });
+                });
+                ui.label(
+                    egui::RichText::new(if runner.build_line.is_empty() {
+                        String::from("build: —")
+                    } else {
+                        format!("build: {}", runner.build_line)
+                    })
+                    .monospace()
+                    .small()
+                    .color(theme::PRIMARY_FIXED_DIM),
+                );
+                ui.add_space(theme::SPACE_XS);
+                ui.horizontal(|ui| {
                     ui.label(
-                        egui::RichText::new(format!("· {} ms", step.duration_ms))
+                        egui::RichText::new("ARTEFATO DE MODELO GGUF (DISCO)")
                             .monospace()
                             .small()
                             .color(theme::OUTLINE),
                     );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.small_button("Recarregar").clicked() {
+                            runner.refresh_models();
+                        }
+                    });
                 });
-                ui.label(egui::RichText::new(&step.detail).small().weak());
-            });
-        }
-        if launch.proved() {
-            ui.label(
-                egui::RichText::new("● INFERÊNCIA COMPROVADA COM GERAÇÃO REAL")
-                    .monospace()
-                    .strong()
-                    .color(theme::OK),
-            );
-        }
-
-        // ── Console de saídas reais (PRD 3.4): o que o nó/servidor ──
-        //    responderiu a cada etapa — stdout/stderr do subprocesso não
-        //    atravessam a API do nó; aqui vão as respostas literais.
-        ui.add_space(theme::SPACE_SM);
-        kit::section_label(
-            ui,
-            "CONSOLE · SAÍDAS REAIS DAS OPERAÇÕES (RESPOSTAS DO NÓ/SERVIDOR)",
-        );
-        egui::Frame::NONE
-            .fill(theme::SURFACE_LOW)
-            .corner_radius(egui::CornerRadius::same(theme::RADIUS_SM as u8))
-            .inner_margin(theme::SPACE_MD)
-            .stroke(egui::Stroke::new(1.0, theme::SURFACE_HIGHEST))
-            .show(ui, |ui| {
-                ui.set_min_width(ui.available_width());
-                for step in &launch.steps {
-                    let prefix = if step.ok { "OUT" } else { "ERR" };
-                    let color = if step.ok {
-                        theme::ON_SURFACE_VARIANT
-                    } else {
-                        theme::ERROR
-                    };
+                if runner.models.is_empty() {
                     ui.label(
-                        egui::RichText::new(format!(
-                            "[{prefix} · {} ms] {} → {}",
-                            step.duration_ms, step.step, step.detail
-                        ))
-                        .monospace()
+                        egui::RichText::new(if runner.models_error.is_empty() {
+                            "sem modelos no diretório".to_owned()
+                        } else {
+                            runner.models_error.clone()
+                        })
                         .small()
-                        .color(color),
+                        .weak(),
                     );
+                } else {
+                    let current = std::path::Path::new(&runner.params.model)
+                        .file_name()
+                        .map(|raw| raw.to_string_lossy().into_owned())
+                        .unwrap_or_default();
+                    egui::ComboBox::from_id_salt("runner-model")
+                        .selected_text(if current.is_empty() {
+                            "— escolha o GGUF —".to_owned()
+                        } else {
+                            current
+                        })
+                        .show_ui(ui, |ui| {
+                            for artifact in &runner.models {
+                                let label = format!(
+                                    "{} ({:.2} GB)",
+                                    artifact.file_name,
+                                    artifact.size_bytes as f64 / 1_000_000_000.0
+                                );
+                                let path = format!("{}/{}", runner.models_dir, artifact.file_name);
+                                ui.selectable_value(&mut runner.params.model, path, label);
+                            }
+                        });
                 }
                 ui.label(
-                    egui::RichText::new(
-                        "stdout/stderr do subprocesso não atravessam a API do nó — \
-                         as linhas acima são as respostas literais das operações.",
-                    )
+                    egui::RichText::new(format!("Path: {}", runner.params.model))
+                        .monospace()
+                        .small()
+                        .color(theme::ON_SURFACE_VARIANT),
+                );
+                ui.label(
+                    egui::RichText::new(if runner.sha_busy {
+                        String::from("SHA-256: calculando…")
+                    } else if let Some(hex) = &runner.sha_hex {
+                        format!("SHA-256 OK {}…", &hex[..hex.len().min(12)])
+                    } else {
+                        String::from("SHA-256: selecione o modelo")
+                    })
+                    .monospace()
                     .small()
-                    .weak(),
+                    .color(theme::PRIMARY_FIXED_DIM),
+                );
+                ui.add_space(theme::SPACE_XS);
+                ui.label(
+                    egui::RichText::new("PRESETS DE PERFIL OPERACIONAL")
+                        .monospace()
+                        .small()
+                        .color(theme::OUTLINE),
+                );
+                ui.horizontal(|ui| {
+                    for (preset, title, sub) in [
+                        (Preset::Precisao, "Alta Precisão", "Ctx 32k · Offload 0"),
+                        (Preset::Latencia, "Baixa Latência", "Ctx 8k · Batch 1024"),
+                        (
+                            Preset::Agente,
+                            "Codificação / Agente",
+                            "Ctx 32k · 8 Threads",
+                        ),
+                    ] {
+                        let selected = runner.active_preset == Some(preset);
+                        if ui
+                            .selectable_label(selected, format!("{title}\n{sub}"))
+                            .clicked()
+                        {
+                            runner.apply_preset(preset);
+                        }
+                    }
+                });
+                ui.add_space(theme::SPACE_XS);
+                ui.columns(2, |fields| {
+                    fields[0].vertical(|ui| {
+                        let mut raw = runner.params.port.to_string();
+                        ui.label(
+                            egui::RichText::new("PORTA HTTP")
+                                .monospace()
+                                .small()
+                                .color(theme::OUTLINE),
+                        );
+                        if ui
+                            .add(egui::TextEdit::singleline(&mut raw).desired_width(90.0))
+                            .changed()
+                        {
+                            if let Ok(port) = raw.trim().parse::<u16>() {
+                                runner.params.port = port;
+                            }
+                        }
+                        if num_field(ui, &mut runner.params.gpu_layers, "GPU LAYERS") {
+                            runner.active_preset = None;
+                        }
+                        ui.label(
+                            egui::RichText::new("(0 = CPU puro)")
+                                .small()
+                                .color(theme::OUTLINE),
+                        );
+                        let mut threads_raw = runner.params.threads.to_string();
+                        ui.label(
+                            egui::RichText::new("CPU THREADS")
+                                .monospace()
+                                .small()
+                                .color(theme::OUTLINE),
+                        );
+                        if ui
+                            .add(egui::TextEdit::singleline(&mut threads_raw).desired_width(90.0))
+                            .changed()
+                        {
+                            if let Ok(threads) = threads_raw.trim().parse::<u32>() {
+                                runner.params.threads = threads;
+                                runner.active_preset = None;
+                            }
+                        }
+                    });
+                    fields[1].vertical(|ui| {
+                        if num_field(ui, &mut runner.params.ctx, "CONTEXTO (TOKENS)") {
+                            runner.active_preset = None;
+                        }
+                        if num_field(ui, &mut runner.params.batch, "BATCH SIZE") {
+                            runner.active_preset = None;
+                        }
+                        ui.label(
+                            egui::RichText::new("BIND ADDRESS")
+                                .monospace()
+                                .small()
+                                .color(theme::OUTLINE),
+                        );
+                        ui.add(
+                            egui::TextEdit::singleline(&mut runner.params.bind)
+                                .desired_width(120.0),
+                        );
+                    });
+                });
+                if runner.params.bind.trim() == "0.0.0.0" {
+                    ui.label(
+                        egui::RichText::new(
+                            "BIND 0.0.0.0 ATIVO: endpoint acessível via rede LAN/VPN \
+                             sem token bearer nem TLS interno.",
+                        )
+                        .small()
+                        .color(theme::WARN),
+                    );
+                }
+                ui.add_space(theme::SPACE_XS);
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("COMANDO GERADO (CLI PREVIEW)")
+                            .monospace()
+                            .small()
+                            .color(theme::OUTLINE),
+                    );
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let preview = runner.params.cli_preview();
+                        if ui.small_button("COPIAR").clicked() {
+                            ui.ctx().copy_text(preview);
+                        }
+                    });
+                });
+                ui.label(
+                    egui::RichText::new(runner.params.cli_preview())
+                        .monospace()
+                        .small()
+                        .color(theme::SECONDARY_FIXED),
+                );
+                ui.add_space(theme::SPACE_SM);
+                let busy = runner.running();
+                if ui
+                    .add_sized(
+                        [ui.available_width(), 36.0],
+                        egui::Button::new(
+                            egui::RichText::new(if busy {
+                                "○ subindo… a UI segue livre"
+                            } else {
+                                "SUBIR LLAMA-SERVER LOCAL"
+                            })
+                            .monospace()
+                            .strong()
+                            .color(theme::ON_PRIMARY),
+                        )
+                        .fill(theme::PRIMARY_CONTAINER),
+                    )
+                    .clicked()
+                    && !busy
+                {
+                    runner.start();
+                    crate::studio_log::info(format!(
+                        "runner: subida pedida ({})",
+                        runner.params.cli_preview()
+                    ));
+                }
+                if !runner.error.is_empty() {
+                    ui.add_space(theme::SPACE_XS);
+                    kit::error_banner(ui, &runner.error);
+                }
+            });
+        });
+
+        // ── Status + etapas + console (mockup) ──
+        cols[1].vertical(|ui| {
+            card_frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                let (status_text, status_color) = match &runner.status {
+                    RunnerStatus::Stopped => (
+                        String::from("○ STATUS: PARADO · HTTP HEALTH: —"),
+                        theme::STALE,
+                    ),
+                    RunnerStatus::Starting => (
+                        String::from("○ STATUS: SUBINDO · HTTP HEALTH: aguardando…"),
+                        theme::WARN,
+                    ),
+                    RunnerStatus::Running { healthy, .. } => match healthy {
+                        Some((true, ms)) => (
+                            format!(
+                                "● STATUS: PROCESSO ATIVO · HTTP HEALTH: 200 OK (/health · {ms}ms)"
+                            ),
+                            theme::OK,
+                        ),
+                        Some((false, _)) => (
+                            String::from(
+                                "● STATUS: PROCESSO ATIVO · HTTP HEALTH: FALHOU (/health)",
+                            ),
+                            theme::WARN,
+                        ),
+                        None => (
+                            String::from("● STATUS: PROCESSO ATIVO · HTTP HEALTH: verificando…"),
+                            theme::WARN,
+                        ),
+                    },
+                    RunnerStatus::Stopping { .. } => (
+                        String::from("○ STATUS: PARANDO · HTTP HEALTH: —"),
+                        theme::WARN,
+                    ),
+                    RunnerStatus::Failed { detail } => {
+                        (format!("× STATUS: FALHOU · {detail}"), theme::ERROR)
+                    }
+                };
+                ui.label(
+                    egui::RichText::new(status_text)
+                        .monospace()
+                        .small()
+                        .strong()
+                        .color(status_color),
+                );
+                ui.add_space(theme::SPACE_XS);
+                ui.horizontal(|ui| {
+                    let live = runner.pid().is_some();
+                    if ui
+                        .add_enabled(
+                            live,
+                            egui::Button::new("Parar (SIGTERM)")
+                                .fill(theme::tint(theme::ERROR, 25)),
+                        )
+                        .clicked()
+                    {
+                        runner.stop();
+                    }
+                    if ui
+                        .add_enabled(live, egui::Button::new("Reiniciar"))
+                        .clicked()
+                    {
+                        runner.restart();
+                    }
+                    if ui.button("Abrir no Chat (3.3)").clicked() {
+                        *go_chat = true;
+                    }
+                });
+            });
+            ui.add_space(theme::SPACE_SM);
+            card_frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                let done = runner.steps.iter().filter(|step| step.ok).count();
+                let total_ms: u64 = runner.steps.iter().map(|step| step.duration_ms).sum();
+                card_title(
+                    ui,
+                    "ETAPAS DE INICIALIZAÇÃO DO RUNNER",
+                    &format!(
+                        "{done}/{} CONCLUÍDOS (TEMPO TOTAL: {:.2}s)",
+                        crate::runner::TOTAL_STEPS,
+                        total_ms as f64 / 1000.0
+                    ),
+                );
+                ui.add_space(theme::SPACE_XS);
+                if runner.steps.is_empty() {
+                    kit::empty_state(ui, "nenhuma execução ainda — preencha e suba.");
+                }
+                for step in &runner.steps {
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(if step.ok { "✓" } else { "×" })
+                                .strong()
+                                .color(if step.ok { theme::OK } else { theme::ERROR }),
+                        );
+                        ui.label(
+                            egui::RichText::new(step.step)
+                                .small()
+                                .color(theme::ON_SURFACE),
+                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            kit::badge(
+                                ui,
+                                &format!("{}ms", step.duration_ms),
+                                theme::PRIMARY_FIXED_DIM,
+                            );
+                            ui.label(
+                                egui::RichText::new(&step.detail)
+                                    .monospace()
+                                    .small()
+                                    .color(theme::ON_SURFACE_VARIANT),
+                            );
+                        });
+                    });
+                }
+            });
+            ui.add_space(theme::SPACE_SM);
+            card_frame().show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                ui.horizontal(|ui| {
+                    ui.label(
+                        egui::RichText::new("LIVE OUTPUT: LLAMA-SERVER STDOUT / STDERR")
+                            .monospace()
+                            .size(11.5)
+                            .strong()
+                            .color(theme::ON_SURFACE),
+                    );
+                    if runner.pid().is_some() {
+                        kit::badge(ui, "STREAM LIVE", theme::PRIMARY_FIXED_DIM);
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        ui.toggle_value(&mut runner.autoscroll, "AUTOSCROLL: ON");
+                        if ui.small_button("LIMPAR").clicked() {
+                            runner.console.clear();
+                        }
+                    });
+                });
+                ui.add_space(theme::SPACE_XS);
+                egui::ScrollArea::vertical()
+                    .id_salt("runner-console")
+                    .max_height(260.0)
+                    .stick_to_bottom(runner.autoscroll)
+                    .show(ui, |ui| {
+                        ui.set_min_width(ui.available_width());
+                        if runner.console.is_empty() {
+                            kit::empty_state(ui, "console vazia — a saída do filho aparece aqui.");
+                        }
+                        for line in &runner.console {
+                            ui.label(
+                                egui::RichText::new(line)
+                                    .monospace()
+                                    .small()
+                                    .color(theme::ON_SURFACE_VARIANT),
+                            );
+                        }
+                    });
+                let bytes: usize = runner.console.iter().map(String::len).sum();
+                ui.label(
+                    egui::RichText::new(format!(
+                        "TAIL: {} LINHAS · {} BUFFER",
+                        runner.console.len(),
+                        if bytes > 1_000_000 {
+                            format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+                        } else {
+                            format!("{:.1} KB", bytes as f64 / 1000.0)
+                        }
+                    ))
+                    .monospace()
+                    .small()
+                    .color(theme::OUTLINE),
                 );
             });
-
-        // ⑤ publicação ServerStatus ao vivo (sinal de convergência DDS).
-        ui.add_space(theme::SPACE_XS);
-        if discovery.servers.is_empty() {
-            kit::badge(ui, "⑤ SERVERSTATUS: NENHUM NO DOMÍNIO AINDA", theme::WARN);
-        } else {
-            let servers: Vec<&str> = discovery
-                .servers
-                .iter()
-                .map(|server| server.server_id.as_str())
-                .collect();
-            kit::badge(
-                ui,
-                &format!("⑤ SERVERSTATUS NO DOMÍNIO: {}", servers.join(" · ")),
-                theme::OK,
+            ui.add_space(theme::SPACE_XS);
+            ui.label(
+                egui::RichText::new(if discovery.servers.is_empty() {
+                    String::from("○ SERVERSTATUS NO DOMÍNIO: nenhum anúncio")
+                } else {
+                    format!(
+                        "● SERVERSTATUS NO DOMÍNIO: {}",
+                        discovery
+                            .servers
+                            .iter()
+                            .map(|server| server.server_id.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })
+                .monospace()
+                .small()
+                .color(theme::PRIMARY_FIXED_DIM),
             );
-        }
-    } else if !launch.running {
-        kit::empty_state(ui, "nenhuma execução ainda — escolha a unidade e aplique.");
-    }
+        });
+    });
 }

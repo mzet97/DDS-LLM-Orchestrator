@@ -123,6 +123,8 @@ pub struct AuditEntry {
     pub action: String,
     /// Desfecho legível (ok com `acted/active` ou o motivo da falha).
     pub outcome: String,
+    /// Instante (ms unix) do registro (coluna de relógio da 3.8).
+    pub ts_ms: u64,
 }
 
 /// Estado do painel de serviços.
@@ -139,6 +141,8 @@ pub struct ServicesPanel {
     pub busy: bool,
     /// Instante do último plano lido com sucesso (tela 3.8).
     pub last_sync: Option<std::time::Instant>,
+    /// Mesmo instante em ms unix (relógio absoluto da 3.8).
+    pub last_sync_ms: Option<u64>,
     /// Log de auditoria das atuações aplicadas pela GUI (tela 3.8), mais
     /// recente por último.
     pub audit: Vec<AuditEntry>,
@@ -160,6 +164,7 @@ impl ServicesPanel {
             error: String::new(),
             busy: false,
             last_sync: None,
+            last_sync_ms: None,
             audit: Vec::new(),
             audit_manual_list: false,
             receiver: None,
@@ -279,14 +284,16 @@ impl ServicesPanel {
                         // auto-carga de 5 s).
                         if self.audit_manual_list {
                             self.audit_manual_list = false;
-                            self.audit.push(AuditEntry {
-                                action: String::from("GET /services (Ler plano)"),
-                                outcome: format!("ok · {} unidade(s)", list.len()),
-                            });
+                            self.audit_push(
+                                String::from("GET /services (Ler plano)"),
+                                format!("ok · {} unidade(s)", list.len()),
+                            );
                         }
                         self.list = list;
                         self.error.clear();
                         self.last_sync = Some(std::time::Instant::now());
+                        self.last_sync_ms = Some(crate::machines::now_unix_ns() / 1_000_000);
+                        self.last_sync_ms = Some(crate::machines::now_unix_ns() / 1_000_000);
                     }
                     Err(err) => {
                         self.error = err;
@@ -307,37 +314,28 @@ impl ServicesPanel {
                 } => {
                     // Auditoria do reinício: duas entradas (stop e start).
                     match stop {
-                        Ok(out) => self.audit.push(AuditEntry {
-                            action: format!("POST /services/{service}/stop"),
-                            outcome: format!("ok · acted={} active={}", out.acted, out.active),
-                        }),
+                        Ok(out) => self.audit_push(
+                            format!("POST /services/{service}/stop"),
+                            format!("ok · acted={} active={}", out.acted, out.active),
+                        ),
                         Err(err) => {
                             self.error = err.clone();
-                            self.audit.push(AuditEntry {
-                                action: format!("POST /services/{service}/stop"),
-                                outcome: err,
-                            });
+                            self.audit_push(format!("POST /services/{service}/stop"), err);
                         }
                     }
                     if let Some(start) = start {
                         match start {
                             Ok(out) => {
                                 self.error.clear();
-                                self.audit.push(AuditEntry {
-                                    action: format!("POST /services/{service}/start"),
-                                    outcome: format!(
-                                        "ok · acted={} active={}",
-                                        out.acted, out.active
-                                    ),
-                                });
+                                self.audit_push(
+                                    format!("POST /services/{service}/start"),
+                                    format!("ok · acted={} active={}", out.acted, out.active),
+                                );
                                 self.apply_list(then_list);
                             }
                             Err(err) => {
                                 self.error = err.clone();
-                                self.audit.push(AuditEntry {
-                                    action: format!("POST /services/{service}/start"),
-                                    outcome: err,
-                                });
+                                self.audit_push(format!("POST /services/{service}/start"), err);
                             }
                         }
                     }
@@ -355,6 +353,15 @@ impl ServicesPanel {
         }
     }
 
+    /// Registra na auditoria com carimbo de relógio (tela 3.8).
+    fn audit_push(&mut self, action: String, outcome: String) {
+        self.audit.push(AuditEntry {
+            action,
+            outcome,
+            ts_ms: crate::machines::now_unix_ns() / 1_000_000,
+        });
+    }
+
     /// Aplica o desfecho de uma atuação start/stop (+ relista o plano).
     fn apply_actuated(
         &mut self,
@@ -365,9 +372,9 @@ impl ServicesPanel {
         match outcome {
             Ok(out) => {
                 self.error.clear();
-                self.audit.push(AuditEntry {
-                    action: String::from(route),
-                    outcome: format!(
+                self.audit_push(
+                    String::from(route),
+                    format!(
                         "{} · acted={} active={}",
                         if out.acted {
                             "aplicada"
@@ -377,7 +384,7 @@ impl ServicesPanel {
                         out.acted,
                         out.active
                     ),
-                });
+                );
                 self.apply_list(then_list);
                 if !out.acted {
                     self.error = format!("{} já estava convergido", out.service);
@@ -385,10 +392,7 @@ impl ServicesPanel {
             }
             Err(err) => {
                 self.error = err.clone();
-                self.audit.push(AuditEntry {
-                    action: String::from(route),
-                    outcome: err,
-                });
+                self.audit_push(String::from(route), err);
             }
         }
     }
@@ -401,6 +405,7 @@ impl ServicesPanel {
                     self.list = list;
                     self.error.clear();
                     self.last_sync = Some(std::time::Instant::now());
+                    self.last_sync_ms = Some(crate::machines::now_unix_ns() / 1_000_000);
                 }
                 Err(err) => {
                     self.error = err;

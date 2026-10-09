@@ -22,6 +22,8 @@ futures = { workspace = true, optional = true }
 tokio = { workspace = true }
 # T-890-07: wf-run pela GUI — cadeia A→B→C real via lib client (feature dds).
 client = { path = "../client", version = "0.1", optional = true }
+# 3.4: SIGTERM ao runner local (std só tem SIGKILL).
+libc = "0.2"
 
 [features]
 default = []

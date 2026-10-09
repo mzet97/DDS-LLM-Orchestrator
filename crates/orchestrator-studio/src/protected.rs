@@ -84,9 +84,9 @@ impl ProtectedGuard {
     #[must_use]
     pub fn label(&self) -> &'static str {
         if self.armed {
-            "🛡 protegido: LIGADO"
+            "protegido: LIGADO"
         } else {
-            "🛡 protegido: DESARMADO"
+            "protegido: DESARMADO"
         }
     }
 }

@@ -217,6 +217,13 @@ pub struct MachinesState {
     pub modal_url: Option<String>,
     /// Token digitado no modal (SÓ memória — RNF-04).
     pub modal_token: String,
+    /// Sondas em voo (probe_all conta N; `poll` libera `busy` só no zero).
+    pending_probes: usize,
+    /// "Testar & Registrar": publica o formulário quando o probe em voo
+    /// voltar `Online`; qualquer outro estado cancela com aviso.
+    pending_publish_after_probe: bool,
+    /// Token do formulário visível (alternador Exibir/Ocultar da 3.10).
+    pub form_token_visible: bool,
     receiver: Option<mpsc::Receiver<MachinesMsg>>,
 }
 
@@ -243,13 +250,35 @@ impl std::fmt::Debug for MachinesState {
             .field("probes", &self.probes)
             .field("modal_url", &self.modal_url)
             .field("modal_token_definido", &!self.modal_token.trim().is_empty())
+            .field("pending_probes", &self.pending_probes)
+            .field(
+                "pending_publish_after_probe",
+                &self.pending_publish_after_probe,
+            )
+            .field("form_token_visible", &self.form_token_visible)
             .field("receiver", &self.receiver.is_some())
             .finish()
     }
 }
 
+/// Extrai o host de uma URL `esquema://host[:porta][/...]` (userinfo e
+/// porta removidos; IPv6 com colchetes preservado). Usado para preencher o
+/// registro quando o formulário traz só `node_url` (design 3.10).
+fn host_from_url(node_url: &str) -> String {
+    let after_scheme = node_url.split("://").nth(1).unwrap_or(node_url);
+    let authority = after_scheme
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or_default();
+    let host_port = authority.rsplit('@').next().unwrap_or_default();
+    if let Some(bracketed) = host_port.strip_prefix('[') {
+        return bracketed.split(']').next().unwrap_or_default().to_string();
+    }
+    host_port.split(':').next().unwrap_or_default().to_string()
+}
+
 /// Normaliza a chave de `node_url` (trim + barra final removida).
-fn normalize_url(url: &str) -> String {
+pub(crate) fn normalize_url(url: &str) -> String {
     url.trim().trim_end_matches('/').to_string()
 }
 
@@ -292,9 +321,19 @@ impl MachinesState {
         }
     }
 
-    /// Token efetivo da autoridade (campo de UI → `Option`).
-    fn auth(&self) -> Option<&str> {
-        optional_token(&self.authority_token)
+    /// Token efetivo da autoridade: campo explícito, ou o token em memória
+    /// guardado para a URL da autoridade (modal/formulário da 3.10), ou o
+    /// token de deploy em disco (mesma fonte do painel Nó/auto-carga) — a
+    /// autoridade é o alvo global (`main` sincroniza `url` a cada frame).
+    fn auth(&self) -> Option<String> {
+        if let Some(token) = optional_token(&self.authority_token) {
+            return Some(token.to_string());
+        }
+        let normalized = normalize_url(&self.url);
+        if let Some(token) = self.tokens.get(&normalized) {
+            return Some(token.clone());
+        }
+        crate::discovery::token_for_url(&self.url, std::env::var("HOME").ok().as_deref())
     }
 
     /// Token em memória da máquina (chave normalizada) — nunca sai da GUI.
@@ -334,7 +373,7 @@ impl MachinesState {
             return;
         }
         let url = self.url.clone();
-        let auth = self.auth().map(String::from);
+        let auth = self.auth();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let _ = tx.send(MachinesMsg::Snapshot(
@@ -394,9 +433,19 @@ impl MachinesState {
         if let Some(token) = optional_token(&self.form_token) {
             self.tokens.insert(node_url.clone(), String::from(token));
         }
+        let host = {
+            let explicit = self.form_host.trim();
+            if explicit.is_empty() {
+                // Design 3.10: o formulário traz só alias + URL — o host é
+                // derivado da URL real (nada inventado).
+                host_from_url(&node_url)
+            } else {
+                explicit.to_string()
+            }
+        };
         let machine = MachineRecord {
             machine_id,
-            host: self.form_host.trim().to_string(),
+            host,
             user: self.form_user.trim().to_string(),
             node_url,
             services_hint: non_empty(&self.form_services_hint),
@@ -409,7 +458,7 @@ impl MachinesState {
         let id = machine.catalog_id();
         let base = self.form_base.trim().parse::<u64>().ok();
         let url = self.url.clone();
-        let auth = self.auth().map(String::from);
+        let auth = self.auth();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
             let (notice, fill_base) =
@@ -470,7 +519,61 @@ impl MachinesState {
         });
         self.receiver = Some(rx);
         self.busy = true;
+        self.pending_probes = 1;
         self.notice = String::from("sondando…");
+    }
+
+    /// Sonda TODAS as URLs descobertas (botão "Forçar Probe" da 3.10): uma
+    /// thread por URL no mesmo canal; `poll` drena e só libera `busy` quando
+    /// a última responder. Clique durante `busy` ou lista vazia é ignorado.
+    pub fn probe_all(&mut self, node_urls: &[String]) {
+        if self.busy || node_urls.is_empty() {
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        for node_url in node_urls {
+            let url = normalize_url(node_url);
+            let token = self.tokens.get(&url).cloned();
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let status = probe_status(&url, token.as_deref());
+                let _ = tx.send(MachinesMsg::Probed {
+                    node_url: url,
+                    status,
+                });
+            });
+        }
+        self.receiver = Some(rx);
+        self.busy = true;
+        self.pending_probes = node_urls.len();
+        self.notice = format!("sondando {} nó(s)…", node_urls.len());
+    }
+
+    /// "Testar & Registrar" (design 3.10): valida o formulário com um probe
+    /// imediato e SÓ publica no catálogo se voltar `Online`. Exige
+    /// `machine_id` + `node_url` (mesma regra do publicar direto).
+    pub fn test_and_register(&mut self) {
+        if self.busy {
+            return;
+        }
+        let node_url = normalize_url(&self.form_node_url);
+        if self.form_machine_id.trim().is_empty() || node_url.is_empty() {
+            self.notice = String::from("machine_id e node_url são obrigatórios");
+            return;
+        }
+        if let Some(token) = optional_token(&self.form_token) {
+            self.tokens.insert(node_url.clone(), String::from(token));
+        }
+        self.pending_publish_after_probe = true;
+        self.probe_url(&node_url);
+        self.notice = format!("validando {node_url} antes de registrar…");
+    }
+
+    /// Limpa o formulário de registro manual (botão "Limpar" da 3.10).
+    pub fn clear_form(&mut self) {
+        self.form_machine_id.clear();
+        self.form_node_url.clear();
+        self.form_token.clear();
     }
 
     /// Guarda token de uma URL descoberta na memória local (modal 3.10
@@ -491,10 +594,18 @@ impl MachinesState {
     /// aplicado por atribuição direta de campos).
     pub fn poll(&mut self) {
         let mut finished = false;
-        if let Some(rx) = &self.receiver {
-            while let Ok(msg) = rx.try_recv() {
-                match msg {
-                    MachinesMsg::Snapshot(result) => match result {
+        // Drena para um Vec antes de processar: os braços podem rearmar
+        // `busy`/`receiver` (encadeamento do "Testar & Registrar") sem
+        // conflitar com o borrow do canal.
+        let pending: Vec<MachinesMsg> = self
+            .receiver
+            .as_ref()
+            .map(|rx| rx.try_iter().collect())
+            .unwrap_or_default();
+        for msg in pending {
+            match msg {
+                MachinesMsg::Snapshot(result) => {
+                    match result {
                         Ok(snapshot) => {
                             self.cursor = snapshot.cursor.0;
                             self.snapshot = Some(snapshot);
@@ -503,38 +614,61 @@ impl MachinesState {
                         Err(err) => {
                             self.notice = err;
                         }
-                    },
-                    MachinesMsg::Mutated {
-                        notice,
-                        fill_base,
-                        then_snapshot,
-                    } => {
-                        if let Some(current) = fill_base {
-                            // 409: base do formulário preenchida com a vigente
-                            // para o próximo clique (T-840-03c).
-                            self.form_base = current.to_string();
-                            self.notice = format!("{notice}; base preenchida com a vigente");
-                        } else {
-                            self.notice = notice;
-                        }
-                        if let Some(result) = then_snapshot {
-                            match result {
-                                Ok(snapshot) => {
-                                    self.cursor = snapshot.cursor.0;
-                                    self.snapshot = Some(snapshot);
-                                }
-                                Err(err) => {
-                                    self.notice = err;
-                                }
+                    }
+                    finished = true;
+                }
+                MachinesMsg::Mutated {
+                    notice,
+                    fill_base,
+                    then_snapshot,
+                } => {
+                    if let Some(current) = fill_base {
+                        // 409: base do formulário preenchida com a vigente
+                        // para o próximo clique (T-840-03c).
+                        self.form_base = current.to_string();
+                        self.notice = format!("{notice}; base preenchida com a vigente");
+                    } else {
+                        self.notice = notice;
+                    }
+                    if let Some(result) = then_snapshot {
+                        match result {
+                            Ok(snapshot) => {
+                                self.cursor = snapshot.cursor.0;
+                                self.snapshot = Some(snapshot);
+                            }
+                            Err(err) => {
+                                self.notice = err;
                             }
                         }
                     }
-                    MachinesMsg::Probed { node_url, status } => {
-                        self.notice = status.detail.clone();
-                        self.probes.insert(node_url, status);
+                    finished = true;
+                }
+                MachinesMsg::Probed { node_url, status } => {
+                    let online = status.state == ProbeState::Online;
+                    let detail = status.detail.clone();
+                    self.notice = detail.clone();
+                    self.probes.insert(node_url.clone(), status);
+                    self.pending_probes = self.pending_probes.saturating_sub(1);
+                    if self.pending_publish_after_probe {
+                        // "Testar & Registrar": Online publica, resto cancela.
+                        self.pending_publish_after_probe = false;
+                        if online {
+                            self.busy = false;
+                            self.receiver = None;
+                            let _ = self.publish_machine();
+                        } else {
+                            self.notice = format!(
+                                "probe de {node_url} não passou ({detail}); registro NÃO \
+                                     persistido"
+                            );
+                            if self.pending_probes == 0 {
+                                finished = true;
+                            }
+                        }
+                    } else if self.pending_probes == 0 {
+                        finished = true;
                     }
                 }
-                finished = true;
             }
         }
         if finished {
@@ -669,5 +803,162 @@ mod tests {
         assert!(state.machines().is_empty());
         assert!(state.missing_token_urls().is_empty());
         assert_eq!(ProbeState::Unknown.dot(), "?");
+    }
+
+    #[test]
+    fn probe_all_ignores_empty_and_counts_pending() {
+        // Given: painel ocioso.
+        let mut state = MachinesState::with_url("http://127.0.0.1:1");
+        // When: lista vazia.
+        state.probe_all(&[]);
+        // Then: nada acontece.
+        assert!(!state.busy);
+        assert_eq!(state.pending_probes, 0);
+        // When: duas URLs (loopback fechado = falha rápida determinística).
+        state.probe_all(&[
+            String::from("http://127.0.0.1:1"),
+            String::from("http://127.0.0.1:2"),
+        ]);
+        // Then: ocupado com 2 sondas em voo.
+        assert!(state.busy);
+        assert_eq!(state.pending_probes, 2);
+    }
+
+    #[test]
+    fn poll_releases_busy_only_on_last_probe() {
+        // Given: 2 sondas em voo com canal injetado (sem rede).
+        let mut state = MachinesState::with_url("http://127.0.0.1:1");
+        let (tx, rx) = mpsc::channel();
+        state.receiver = Some(rx);
+        state.busy = true;
+        state.pending_probes = 2;
+        let probed = |url: &str| MachinesMsg::Probed {
+            node_url: String::from(url),
+            status: ProbeStatus {
+                state: ProbeState::Offline,
+                detail: String::from("fechado"),
+            },
+        };
+        // When: primeira resposta.
+        tx.send(probed("http://a:4317")).expect("canal vivo");
+        state.poll();
+        // Then: ainda ocupado (falta 1).
+        assert_eq!(state.pending_probes, 1);
+        assert!(state.busy);
+        assert!(state.receiver.is_some());
+        // When: última resposta.
+        tx.send(probed("http://b:4317")).expect("canal vivo");
+        state.poll();
+        // Then: liberado com as 2 sondas aplicadas.
+        assert_eq!(state.pending_probes, 0);
+        assert!(!state.busy);
+        assert_eq!(state.probes.len(), 2);
+    }
+
+    #[test]
+    fn test_and_register_requires_identity() {
+        // Given: formulário vazio.
+        let mut state = MachinesState::with_url("http://127.0.0.1:1");
+        // When: Testar & Registrar sem identidade.
+        state.test_and_register();
+        // Then: aviso, sem sonda.
+        assert!(!state.busy);
+        assert!(state.notice.contains("obrigatórios"));
+    }
+
+    #[test]
+    fn publish_after_probe_chains_only_on_online() {
+        // Given: formulário válido + probe em voo com publicação pendente.
+        let mut state = MachinesState::with_url("http://127.0.0.1:1");
+        state.form_machine_id = String::from("novo-70");
+        state.form_node_url = String::from("http://127.0.0.1:1");
+        let (tx, rx) = mpsc::channel();
+        state.receiver = Some(rx);
+        state.busy = true;
+        state.pending_probes = 1;
+        state.pending_publish_after_probe = true;
+        // When: probe volta Online.
+        tx.send(MachinesMsg::Probed {
+            node_url: String::from("http://127.0.0.1:1"),
+            status: ProbeStatus {
+                state: ProbeState::Online,
+                detail: String::from("protocolo 1.0"),
+            },
+        })
+        .expect("canal vivo");
+        state.poll();
+        // Then: publicação encadeada (busy rearmado pelo publish).
+        assert!(state.busy);
+        assert!(state.receiver.is_some());
+        assert!(!state.pending_publish_after_probe);
+
+        // Given: mesma pendência, outro estado.
+        let mut state = MachinesState::with_url("http://127.0.0.1:1");
+        state.form_machine_id = String::from("novo-70");
+        state.form_node_url = String::from("http://127.0.0.1:1");
+        let (tx, rx) = mpsc::channel();
+        state.receiver = Some(rx);
+        state.busy = true;
+        state.pending_probes = 1;
+        state.pending_publish_after_probe = true;
+        // When: probe volta Offline.
+        tx.send(MachinesMsg::Probed {
+            node_url: String::from("http://127.0.0.1:1"),
+            status: ProbeStatus {
+                state: ProbeState::Offline,
+                detail: String::from("fechado"),
+            },
+        })
+        .expect("canal vivo");
+        state.poll();
+        // Then: cancelado com aviso, sem publicar.
+        assert!(!state.busy);
+        assert!(state.notice.contains("NÃO persistido"));
+    }
+
+    #[test]
+    fn clear_form_empties_manual_fields() {
+        // Given: formulário preenchido.
+        let mut state = MachinesState::with_url("http://127.0.0.1:1");
+        state.form_machine_id = String::from("x");
+        state.form_node_url = String::from("http://x:4317");
+        state.form_token = String::from("segredo");
+        // When: Limpar.
+        state.clear_form();
+        // Then: os 3 campos do design vazios.
+        assert!(state.form_machine_id.is_empty());
+        assert!(state.form_node_url.is_empty());
+        assert!(state.form_token.is_empty());
+    }
+
+    #[test]
+    fn host_from_url_parses_authority() {
+        assert_eq!(host_from_url("http://192.168.1.70:4317"), "192.168.1.70");
+        assert_eq!(host_from_url("http://lab-01:4317/rpc"), "lab-01");
+        assert_eq!(host_from_url("http://lab-01"), "lab-01");
+        assert_eq!(host_from_url("http://user@h:4317/x?y=1"), "h");
+        assert_eq!(host_from_url("http://[fe80::1]:4317"), "fe80::1");
+    }
+
+    #[test]
+    fn auth_prefers_field_then_memory_token() {
+        // Given: autoridade sem campo explícito, com token em memória.
+        // (host `.invalid`: nunca tem token em disco — RFC 2606.)
+        let mut state = MachinesState::with_url("http://no-existe.invalid:4317");
+        state.tokens.insert(
+            String::from("http://no-existe.invalid:4317"),
+            String::from("mem"),
+        );
+        // Then: usa o da memória.
+        assert_eq!(state.auth().as_deref(), Some("mem"));
+        // When: campo explícito preenchido.
+        state.authority_token = String::from("campo");
+        // Then: o campo vence.
+        assert_eq!(state.auth().as_deref(), Some("campo"));
+        // When: ambos vazios.
+        state.authority_token.clear();
+        state.tokens.clear();
+        // Then: sem auth.
+        assert_eq!(state.auth(), None);
     }
 }

@@ -168,3 +168,4 @@ certificates are test fixtures only; do not reuse them in production.
 - [`PLANO_EXECUCAO.md`](./PLANO_EXECUCAO.md) — detailed build/validation log with measured numbers per subsystem
 - [`AGENTS.md`](./AGENTS.md) — conventions for whoever works in this crate
 - [`specs/`](./specs/) — spec-driven-development docs (spec/plan/tasks/report) per subsystem
+- [`docs/rust/`](../../docs/rust/) — official documentation (PT-BR): hub + one page per crate + Studio user manual

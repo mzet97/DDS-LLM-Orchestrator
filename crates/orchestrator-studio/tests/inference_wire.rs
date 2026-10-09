@@ -57,6 +57,7 @@ fn chat(model: &str) -> ChatRequest {
         messages: vec![Message {
             role: Role::User,
             content: String::from("diga OK"),
+            ts_unix_ms: 0,
         }],
         temperature: 0.7,
         top_p: 0.95,

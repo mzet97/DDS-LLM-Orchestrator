@@ -38,7 +38,7 @@ fn topology_panel_renders_kicker_counters_and_tabs() {
     harness.set_size(egui::vec2(1400.0, 900.0));
     harness.run_steps(5);
     harness.get_by_label_contains("TOPOLOGIA DE REDE DDS");
-    harness.get_by_label_contains("EVENTOS NA JANELA"); // card de métrica
+    harness.get_by_label_contains("TOTAL DRENADO"); // card de métrica (design 3.11)
     harness.get_by_label_contains("Agentes DDS"); // aba de coleções
     harness.get_by_label_contains("Instalações"); // aba de coleções
 }
@@ -49,9 +49,10 @@ fn topology_panel_renders_kicker_counters_and_tabs() {
 fn services_interlock_banner_arms_from_screen() {
     let mut panel = ServicesPanel::with_url(String::from("http://127.0.0.1:1"));
     let mut guard = ProtectedGuard::new();
+    let discovery = DiscoveryState::new_disabled(170);
     let mut harness = egui_kittest::Harness::new_ui_state(
-        |ui, (panel, guard)| views::services::show(ui, panel, guard),
-        (&mut panel, &mut guard),
+        |ui, (panel, guard, discovery)| views::services::show(ui, panel, guard, discovery),
+        (&mut panel, &mut guard, &discovery),
     );
     harness.set_size(egui::vec2(1000.0, 700.0));
     harness.run_steps(5);
@@ -63,7 +64,7 @@ fn services_interlock_banner_arms_from_screen() {
     harness.get_by_label("ARM / HABILITAR ATUAÇÃO").click();
     harness.run_steps(3);
 
-    let (_panel, guard) = harness.state();
+    let (_panel, guard, _) = harness.state();
     assert!(guard.armed, "botão ARM da tela arma o guard");
     harness.get_by_label("DISARM / PROTEGER NÓ");
 }
@@ -109,7 +110,7 @@ fn overview_sixth_tile_shows_catalog_snapshot() {
     harness.set_size(egui::vec2(1400.0, 900.0));
     harness.run_steps(5);
 
-    harness.get_by_label_contains("Catálogo compartilhado");
+    harness.get_by_label_contains("Catálogo Compartilhado"); // design 3.1
     harness.get_by_label_contains("1 registro(s) no snapshot · cursor 9");
 }
 

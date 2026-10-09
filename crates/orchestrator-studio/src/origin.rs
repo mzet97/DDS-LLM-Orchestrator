@@ -96,6 +96,8 @@ pub fn fetch_node_summary_with_token(
     let url = base_url.trim_end_matches('/');
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
+        // Keepalive TCP explícito (a 3.2 anuncia `TCP_KEEPALIVE: ATIVO`).
+        .tcp_keepalive(std::time::Duration::from_secs(60))
         .build()
         .map_err(|err| OriginError::Unreachable {
             url: String::from(url),
@@ -130,6 +132,8 @@ pub fn fetch_node_version_with_token(
     let url = base_url.trim_end_matches('/');
     let client = reqwest::blocking::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
+        // Keepalive TCP explícito (a 3.2 anuncia `TCP_KEEPALIVE: ATIVO`).
+        .tcp_keepalive(std::time::Duration::from_secs(60))
         .build()
         .map_err(|err| OriginError::Unreachable {
             url: String::from(url),

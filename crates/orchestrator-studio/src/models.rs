@@ -416,6 +416,20 @@ impl ModelsState {
         }
     }
 
+    /// Re-verifica a lista ATUAL sem re-inventariar (botão "Verificar Tudo"
+    /// da 3.7): limpa SHAs/status e re-hasha tudo do zero. Lista vazia = no-op.
+    pub fn verify_all(&mut self) {
+        if self.list.is_empty() || self.is_busy() {
+            return;
+        }
+        for artifact in &mut self.list {
+            artifact.sha256_hex.clear();
+            artifact.manifest_status = ManifestStatus::Pendente;
+        }
+        self.error.clear();
+        self.spawn_hash();
+    }
+
     /// Carrega o manifesto do caminho dado e RECUCOMPÕE os status da lista
     /// (T-890-08, G-09..11). Erro não descarta o manifesto anterior.
     pub fn load_manifest(&mut self) {

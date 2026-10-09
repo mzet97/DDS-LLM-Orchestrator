@@ -405,6 +405,7 @@ fn run_launch(plan: LaunchPlan) -> Vec<StepResult> {
             messages: vec![Message {
                 role: Role::User,
                 content: plan.proof_prompt.clone(),
+                ts_unix_ms: crate::machines::now_unix_ns() / 1_000_000,
             }],
             temperature: 0.0,
             top_p: 1.0,
