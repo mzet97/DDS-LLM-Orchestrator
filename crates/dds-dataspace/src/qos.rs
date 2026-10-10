@@ -43,6 +43,15 @@ pub mod profiles {
 
     /// `Tasks` com QoS configurável por perfil (para campanha experimental).
     /// Aplica políticas estruturais do perfil + strength do papel.
+    ///
+    /// **Knobs online DESCARTADOS deliberadamente (T-820-20/P3 — documentado):**
+    /// o `OnlineKnobs` devolvido por `qos_profile()` é ignorado e o
+    /// TransportPriority (8) e o LatencyBudget (50 ms) são FORÇADOS aqui — os
+    /// mesmos valores do perfil de produção `tasks()`. O perfil só muda as
+    /// políticas estruturais (Reliability/Durability/History/Ownership/
+    /// Liveliness/Deadline), que é o que afeta matching e retenção; os knobs
+    /// quentes do decisor continuam tendo efeito apenas via
+    /// `tasks_with_knobs`/`apply_tasks_knobs`.
     pub fn tasks_with_profile(profile_name: &str, strength: Option<i32>) -> DdsResult<Qos> {
         use dds_contract::qos::qos_profile;
 
@@ -237,24 +246,53 @@ pub mod profiles {
             .build()
     }
 
-    /// `Context.Update`: Reliable(10s), Volatile, KeepLast(10), Exclusive.
+    /// `Context.Update`: Reliable(10s), TransientLocal, KeepLast(10), Exclusive.
+    ///
+    /// T-850-03/D2: Durability alinhada ao Python (`qos_context_update()` —
+    /// Reliable+**TransientLocal**+KeepLast(10)+Exclusive). O Rust usava
+    /// Volatile: Durability é Requested-Offered — um writer Volatile NÃO
+    /// satisfaz readers TransientLocal (quebra o context-store late-joiner,
+    /// que precisa receber a última atualização após (re)conectar), enquanto
+    /// um writer TransientLocal serve tanto readers TL quanto Volatile.
+    /// KeepLast(10) retém as 10 atualizações mais recentes por instância.
     pub fn context_update() -> DdsResult<Qos> {
         QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
-            .durability(Durability::Volatile)
+            .durability(Durability::TransientLocal)
             .history(History::KeepLast(10))
             .ownership(Ownership::Exclusive)
             .build()
     }
 
-    /// `ToolCall.Request`: Reliable(10s), TransientLocal, KeepLast(5), Exclusive.
+    /// `ToolCall.Request`: Reliable(10s), TransientLocal, KeepLast(10),
+    /// Exclusive.
+    ///
+    /// T-850-03/D3: histórico alinhado ao Python (`qos_tool_call()` —
+    /// KeepLast(10)); o Rust usava KeepLast(5), o que reduzia o backlog
+    /// disponível para consumidores tardios do gateway MCP (a instância é
+    /// atualizada in-place pelo contrato — sem tópico de resposta — e um
+    /// consumer lento depende do histórico retido).
     pub fn tool_call() -> DdsResult<Qos> {
-        QosBuilder::new()
+        tool_call_with_strength(None)
+    }
+
+    /// `ToolCall.Request` com strength por papel (T-890-06, espelho do
+    /// protocolo de Tasks): quem PUBLICA o pedido escreve sem querer ser
+    /// dono (`Some(STRENGTH_CLIENT)`), e o GATEWAY reivindica/evoluí a
+    /// MESMA instância com força de agente (`Some(STRENGTH_AGENT)`) — com
+    /// `Ownership=Exclusive`, escritas de strength menor/igual de outro
+    /// writer são rejeitadas pelo RHC enquanto o primeiro writer vive
+    /// (mesma semântica do P0-1 do T-820 nas Tasks).
+    pub fn tool_call_with_strength(strength: Option<i32>) -> DdsResult<Qos> {
+        let mut b = QosBuilder::new()
             .reliability(Reliability::Reliable, TEN_S)
             .durability(Durability::TransientLocal)
-            .history(History::KeepLast(5))
-            .ownership(Ownership::Exclusive)
-            .build()
+            .history(History::KeepLast(10))
+            .ownership(Ownership::Exclusive);
+        if let Some(s) = strength {
+            b = b.ownership_strength(s);
+        }
+        b.build()
     }
 
     /// `Security.PolicySnapshot`/`Security.PolicyUpdate`: no Python ambos usam
@@ -284,6 +322,29 @@ pub mod profiles {
             .durability(Durability::TransientLocal)
             .history(History::KeepLast(1))
             .transport_priority(9)
+            .build()
+    }
+
+    /// `Studio.NodePresence` (T-890, 19º tópico): perfil aprovado igual ao de
+    /// `AgentRegistry` — Reliable(10s), TransientLocal, KeepLast(1), Shared,
+    /// deadline 30 s, Liveliness **ManualByTopic** lease 10 s, latency 50 ms,
+    /// tprio 8.
+    ///
+    /// Presença de instalações do Studio (descoberta DDS-nativa — mDNS
+    /// eliminado): TransientLocal+KeepLast(1) entrega a ÚLTIMA presença a um
+    /// Studio/GUI que chega tarde; o heartbeat do publicador é de 5 s
+    /// (aplicação) contra lease 10 s ManualByTopic — uma instalação morta
+    /// sem `dispose` some da malha em ≤ 10 s (mesma mecânica de morte de
+    /// agente em `AgentRegistry`).
+    pub fn studio_node_presence() -> DdsResult<Qos> {
+        QosBuilder::new()
+            .reliability(Reliability::Reliable, TEN_S)
+            .durability(Durability::TransientLocal)
+            .history(History::KeepLast(1))
+            .deadline(THIRTY_S)
+            .liveliness(Liveliness::ManualByTopic, TEN_S)
+            .latency_budget(LATENCY_50MS)
+            .transport_priority(8)
             .build()
     }
 }
@@ -358,5 +419,77 @@ mod tests {
             .expect("configured");
         assert_eq!(limits.max_samples, result_depth);
         assert_eq!(limits.max_samples_per_instance, result_depth);
+    }
+
+    // T-850-03/D2: `Context.Update` no Rust usava Volatile enquanto o Python
+    // usava TransientLocal. Durability é RxO — writer Volatile não satisfaz
+    // readers TransientLocal (context-store late-joiner ficaria sem a última
+    // atualização); writer TL serve ambos. O Rust é que cedia, nunca o Python.
+    #[test]
+    fn context_update_is_transient_local_for_late_joiners() {
+        let qos = profiles::context_update().expect("Context.Update QoS should build");
+
+        assert_eq!(
+            qos.durability().expect("durability").expect("configured"),
+            Durability::TransientLocal
+        );
+        assert_eq!(
+            qos.history().expect("history").expect("configured"),
+            History::KeepLast(10)
+        );
+        assert_eq!(
+            qos.reliability().expect("reliability").expect("configured"),
+            (Reliability::Reliable, 10_000_000_000)
+        );
+    }
+
+    // T-850-03/D3: `ToolCall.Request` no Rust usava KeepLast(5) contra
+    // KeepLast(10) no Python — backlog maior para consumidores tardios.
+    #[test]
+    fn tool_call_matches_python_history_depth() {
+        let qos = profiles::tool_call().expect("ToolCall.Request QoS should build");
+
+        assert_eq!(
+            qos.history().expect("history").expect("configured"),
+            History::KeepLast(10)
+        );
+        assert_eq!(
+            qos.durability().expect("durability").expect("configured"),
+            Durability::TransientLocal
+        );
+    }
+
+    // T-890: `Studio.NodePresence` usa o perfil aprovado, igual ao de
+    // `AgentRegistry` (Reliable+TransientLocal+KeepLast(1)+ManualByTopic) —
+    // late joiner recebe a última presença; morte silenciosa some em ≤ 10 s.
+    #[test]
+    fn studio_node_presence_is_agent_registry_like() {
+        use cyclonedds::Liveliness;
+
+        let studio = profiles::studio_node_presence().expect("Studio QoS should build");
+        let agents = profiles::agent_registry().expect("Agent QoS should build");
+
+        assert_eq!(
+            studio.reliability().expect("reliability").expect("cfg"),
+            (Reliability::Reliable, 10_000_000_000)
+        );
+        assert_eq!(
+            studio.durability().expect("durability").expect("cfg"),
+            Durability::TransientLocal
+        );
+        assert_eq!(
+            studio.history().expect("history").expect("cfg"),
+            History::KeepLast(1)
+        );
+        assert_eq!(
+            studio.liveliness().expect("liveliness").expect("cfg"),
+            (Liveliness::ManualByTopic, 10_000_000_000)
+        );
+        // Structural equality com AgentRegistry: mesmas políticas nos mesmos
+        // campos (o perfil aprovado é o do registro de agentes).
+        assert_eq!(
+            studio.deadline().expect("deadline").expect("cfg"),
+            agents.deadline().expect("deadline").expect("cfg")
+        );
     }
 }

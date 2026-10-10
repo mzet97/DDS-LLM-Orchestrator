@@ -81,6 +81,21 @@ async fn publica_snapshot_na_mudanca_de_versao() {
     assert!(service.load_and_publish().await.expect("mudou conteúdo"));
     let snap2 = snaps.next().await.expect("2º snapshot");
     assert!(snap2.policy_json.contains("AgenteB"));
+
+    // T-890-06: o tick periódico (republish) republica MESMO sem mudança —
+    // renovar o timestamp é a razão de ser do intervalo (late-joiners
+    // recusam snapshot com mais de DEFAULT_POLICY_MAX_AGE; sem isso o
+    // gateway ficava permanentemente sem política).
+    assert!(
+        service
+            .republish()
+            .await
+            .expect("republish força publicação"),
+        "republish com conteúdo idêntico DEVE publicar (renova timestamp)"
+    );
+    let snap3 = snaps.next().await.expect("3º snapshot");
+    assert_eq!(snap3.version, 1);
+    assert!(snap3.policy_json.contains("AgenteB"));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -155,6 +170,90 @@ async fn delta_sobre_policy_ausente_usa_documento_vazio() {
     assert!(service.handle_update(&update).await.expect("aplica"));
     let (v, _doc) = service.current_state("nova-policy").expect("estado criado");
     assert_eq!(v, 1);
+}
+
+/// REQ/T-820-16: update que NÃO avança a versão é rejeitado (StaleVersion)
+/// e o estado local permanece intacto — update atrasado não regride
+/// versão+documento.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn update_regressivo_e_rejeitado() {
+    let file = TempPolicyFile::new(POLICY_V1);
+    let ds = Arc::new(InMemoryDataSpace::new());
+    let service = PolicyEngineService::new(Arc::clone(&ds), file.0.clone());
+    assert!(service.load_and_publish().await.expect("carga inicial"));
+
+    let mk = |new_version: i32| SecurityPolicyUpdate {
+        policy_id: "default".into(),
+        previous_version: 1,
+        new_version,
+        operation: "UPDATE_RULE".into(),
+        rule_delta_json:
+            r#"{"rules": {"llm_inference": {"allowed_agents": ["AgenteA", "AgenteC"]}}}"#.into(),
+        published_by: "teste".into(),
+        timestamp_ns: 1,
+    };
+    // Avanço legítimo 1 → 2.
+    assert!(service.handle_update(&mk(2)).await.expect("aplica"));
+    let (v2, _) = service.current_state("default").expect("estado v2");
+
+    // Repetição (2) e regressão (1) são rejeitadas.
+    assert!(matches!(
+        service.handle_update(&mk(2)).await,
+        Err(policy_engine::PolicyError::StaleVersion)
+    ));
+    assert!(matches!(
+        service.handle_update(&mk(1)).await,
+        Err(policy_engine::PolicyError::StaleVersion)
+    ));
+
+    // Estado preservado: versão e documento continuam os da v2 aplicada.
+    let (v, _) = service.current_state("default").expect("estado preservado");
+    assert_eq!(v, v2);
+    let doc = policy_engine::PolicyDocument::from_json_str(
+        &service
+            .current_state("default")
+            .unwrap()
+            .1
+            .as_value()
+            .to_string(),
+    )
+    .expect("json");
+    assert_eq!(doc.version(), 2);
+}
+
+/// REQ/T-820-16: o re-publish periódico NUNCA sobrescreve o estado com uma
+/// versão de arquivo defasada (deltas dinâmicos avançaram a versão).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn republish_nao_reverte_delta_dinamico() {
+    let file = TempPolicyFile::new(POLICY_V1);
+    let ds = Arc::new(InMemoryDataSpace::new());
+    let service = PolicyEngineService::new(Arc::clone(&ds), file.0.clone());
+    assert!(service.load_and_publish().await.expect("carga inicial"));
+
+    // Delta dinâmico: 1 → 2 (sem tocar no arquivo).
+    let update = SecurityPolicyUpdate {
+        policy_id: "default".into(),
+        previous_version: 1,
+        new_version: 2,
+        operation: "UPDATE_RULE".into(),
+        rule_delta_json:
+            r#"{"rules": {"llm_inference": {"allowed_agents": ["AgenteA", "AgenteC"]}}}"#.into(),
+        published_by: "teste".into(),
+        timestamp_ns: 1,
+    };
+    assert!(service.handle_update(&update).await.expect("aplica"));
+
+    // Arquivo "volta no tempo" (ex.: restore de backup) para a v1.
+    file.rewrite(POLICY_V1);
+    assert!(
+        !service.load_and_publish().await.expect("skip sem erro"),
+        "re-publish defasado deve ser ignorado (Ok(false))"
+    );
+    assert_eq!(
+        service.current_state("default").map(|(v, _)| v),
+        Some(2),
+        "estado dinâmico v2 preservado"
+    );
 }
 
 #[test]

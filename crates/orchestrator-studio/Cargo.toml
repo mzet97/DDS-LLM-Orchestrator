@@ -8,8 +8,37 @@ description = "Desktop nativo do DDS Orchestrator Studio (egui), fase 800."
 
 [dependencies]
 studio-core = { path = "../studio-core", version = "0.1" }
+studio-node = { path = "../studio-node", version = "0.1" }
 eframe = "0.36"
 anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = "0.10"
+thiserror = { workspace = true }
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+dds-dataspace = { path = "../dds-dataspace", version = "=0.1.0", optional = true }
+dds-contract = { path = "../dds-contract", version = "=0.1.0", features = ["dds"], optional = true }
+futures = { workspace = true, optional = true }
+tokio = { workspace = true }
+# T-890-07: wf-run pela GUI — cadeia A→B→C real via lib client (feature dds).
+client = { path = "../client", version = "0.1", optional = true }
+# 3.4: SIGTERM ao runner local (std só tem SIGKILL).
+libc = "0.2"
+
+[features]
+default = []
+dds = ["dep:dds-dataspace", "dep:dds-contract", "dep:futures", "dep:client", "client/dds", "dds-dataspace/dds"]
+
+[dev-dependencies]
+axum = { workspace = true }
+serde_json = { workspace = true }
+# T-890-08 (G-37): testes de UI automatizados (egui_kittest). EXCEÇÃO
+# dev-only de MSRV: o egui_kittest 0.36.2 (par do egui 0.36) exige rustc
+# 1.95 — o código DE PRODUÇÃO do workspace permanece 1.85; apenas
+# `cargo test -p orchestrator-studio` exige toolchain ≥1.95.
+# default-features = false: SEM wgpu/snapshot — os testes são de interação
+# (árvore accesskit), 100% headless, sem GPU nem diffs de imagem.
+egui_kittest = { version = "=0.36.2", default-features = false }
 
 [[bin]]
 name = "studio"

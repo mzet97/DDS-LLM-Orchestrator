@@ -80,21 +80,30 @@ impl Scheduler {
         }
     }
 
-    /// Enfileira uma task. Descarta a task de menor prioridade se a fila
-    /// atingiu `MAX_SCHEDULER_SIZE` (best-effort — DDS é a fonte de verdade).
+    /// Enfileira uma task. Ao atingir `MAX_SCHEDULER_SIZE`, descarta a task de
+    /// MENOR prioridade (empate: a mais recente) — a menos valiosa para o
+    /// escalonamento (best-effort: DDS é a fonte de verdade).
+    ///
+    /// T-820-10: o código original fazia `items.sort(); items.pop()` — mas
+    /// `Vec::pop` remove o ÚLTIMO do vetor ordenado em ordem CRESCENTE, ou
+    /// seja, o MÁXIMO do [`Ord`] implementado (maior prioridade, mais antiga):
+    /// exatamente a próxima task a ser servida. O warn dizia "descartando
+    /// task mais antiga" e mentia. Corrigido para remover o mínimo (menor
+    /// prioridade); sem chamador em produção (`OrchestratorDds::publish_task`
+    /// não alimenta o scheduler — ver o doc lá), correção mantida por
+    /// compatibilidade do tipo.
     pub fn push(&mut self, task: Task) {
         if self.queue.len() >= MAX_SCHEDULER_SIZE {
-            // BinaryHeap é max-heap; para remover o menor, drena parcialmente.
-            // Simples: descarta a task mais recente (menor prioridade temporal)
-            // reconstruindo sem ela. Como é best-effort, apenas logamos.
             tracing::warn!(
                 size = self.queue.len(),
-                "scheduler: capacidade máxima atingida, descartando task mais antiga"
+                "scheduler: capacidade máxima atingida, descartando a task de menor prioridade"
             );
-            // Remove o item com menor prioridade (último no sort order).
+            // BinaryHeap é max-heap: para remover o MÍNIMO, drena, ordena em
+            // ordem crescente e remove a cabeça (menor prioridade; empate:
+            // mais recente — o `Ord` prefere as mais antigas).
             let mut items: Vec<_> = self.queue.drain().collect();
-            items.sort();
-            items.pop(); // remove lowest priority
+            items.sort_unstable();
+            items.remove(0);
             self.queue = items.into_iter().collect();
         }
         let prioritized = PrioritizedTask {

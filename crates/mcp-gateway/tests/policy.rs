@@ -142,8 +142,10 @@ fn rejects_malformed_future_stale_and_conflicting_snapshots() {
         given_policy.ingest_snapshot_at(&snapshot(1, 0), NOW),
         Err(PolicyIngestError::InvalidTimestamp)
     ));
+    // T-890-06: futuro ALÉM do skew (default 5 s) continua rejeitado —
+    // com tolerância, o estado `active` permanece vazio para os passos abaixo.
     assert!(matches!(
-        given_policy.ingest_snapshot_at(&snapshot(1, NOW + 1), NOW),
+        given_policy.ingest_snapshot_at(&snapshot(1, NOW + 5_000_000_001), NOW),
         Err(PolicyIngestError::InvalidTimestamp)
     ));
     assert!(matches!(
@@ -172,6 +174,22 @@ fn rejects_malformed_future_stale_and_conflicting_snapshots() {
         given_policy.ingest_snapshot_at(&conflict, NOW),
         Err(PolicyIngestError::StaleVersion)
     ));
+}
+
+/// T-890-06: timestamp levemente no futuro (skew de relógio entre hosts,
+/// medido ≈0,2-0,8 s) é ACEITO; sem tolerância o snapshot fresco chegava
+/// "do futuro" e o gateway ficava permanentemente sem política.
+#[test]
+fn accepts_snapshot_within_future_skew() {
+    let policy = DistributedPolicy::new("default", Duration::from_secs(300));
+    policy
+        .ingest_snapshot_at(&snapshot(1, NOW + 300_000_000), NOW) // +0,3 s
+        .expect("futuro dentro do skew é aceito");
+
+    // decide NO MESMO relógio fictício do snapshot (evaluate real usaria o
+    // relógio da máquina, que está 1,7e18 ns à frente do NOW de teste).
+    let decision = policy.evaluate_at(&request("AgentA", "filesystem.read_file", 0), NOW);
+    assert!(decision.is_allowed(), "política ativa decide normalmente");
 }
 
 #[test]

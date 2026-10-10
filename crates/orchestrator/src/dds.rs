@@ -2,8 +2,11 @@
 //!
 //! - `publish_task`: API → Task no tópico `Tasks` (agentes claim — data-centric).
 //! - `spawn_registry_monitor`: assina AgentRegistry + liveliness; agente morto
-//!   reatribui suas tasks não-terminais para PENDING (strength 200) e publica
-//!   `QoS.Violation("liveliness_lost")`.
+//!   reatribui suas tasks não-terminais para PENDING e publica
+//!   `QoS.Violation("liveliness_lost")`. T-820-03: a reatribuição é publicada
+//!   SEM ownership (strength de cliente) e passa por `state_machine::reassign`
+//!   (teto de retries + renovação de `created_at_ns`); o reaper de progresso
+//!   recolhe tasks ASSIGNED/RUNNING estagnadas de agentes vivos.
 //! - `spawn_control_loop`: NFCM decide perfil QoS periodicamente e aplica os
 //!   knobs online (TransportPriority/LatencyBudget/OwnershipStrength) no writer
 //!   de Tasks; cada decisão é tracejada (`qos_decision`).
@@ -33,6 +36,28 @@ fn now_ns() -> u64 {
         .as_nanos() as u64
 }
 
+/// T-820-03: teto de reatribuições por task. Ao atingi-lo, `state_machine::
+/// reassign` transiciona para FAILED("MAX_RETRIES_EXCEEDED") em vez de
+/// devolver a task para PENDING — sem isso uma task repetidamente estagnada
+/// ficaria em retry infinito (o cliente nunca observaria terminalidade).
+const MAX_TASK_RETRIES: u32 = 3;
+
+/// T-820-03: janela de estagnação de tasks ASSIGNED para o reaper de
+/// progresso (agentes VIVOS). Fecha o vazamento de confirmação
+/// falso-negativa (`agent/src/dds.rs`: readback do claim perdido → agente
+/// desiste, mas o ASSIGNED dele pode vencer a arbitragem depois → task presa
+/// em ASSIGNED para sempre, pois `is_eligible` filtra status ≠ PENDING e o
+/// reaper de liveliness só enxerga agentes mortos). 30 s ≫ `CONFIRM_DELAY`
+/// (250 ms) + `CONFIRM_TIMEOUT` (10 s) do agente: qualquer tentativa de
+/// claim legítima resolve dentro da janela.
+const ASSIGNED_STALL_AFTER: Duration = Duration::from_secs(30);
+
+/// T-820-03: janela de estagnação de tasks RUNNING para o reaper de
+/// progresso. 60 s cobre inferências longas legítimas (o agente deriva seu
+/// timeout do `deadline_ns` da task, tipicamente 120 s) sem reciclar tasks
+/// saudáveis — o custo de um falso positivo é apenas retry_count+1.
+const RUNNING_STALL_AFTER: Duration = Duration::from_secs(60);
+
 /// Runtime do orchestrator sobre o DataSpace real.
 pub struct OrchestratorDds {
     dataspace: Arc<DataSpace>,
@@ -60,6 +85,19 @@ pub struct OrchestratorDds {
     /// exceder `REPORTED_DEADLINES_MAX`).
     reported_deadlines: dashmap::DashSet<String>,
     qos_last_publish_ns: std::sync::atomic::AtomicU64,
+    /// T-820-03: reatribuições aguardando visibilidade no mesh. O write de
+    /// reatribuição sai em strength de CLIENTE (10) e, sob Exclusive
+    /// Ownership, é descartado pelo RHC enquanto o dono anterior (ASSIGNED/
+    /// RUNNING do agente, strength 100+) seguir registrado — o ownership só
+    /// é liberado quando o writer do dono é DESTRUÍDO
+    /// (`dds_rhc_default_unregister_wr` → `relinquish_ownership`; num kill
+    /// real isso leva o lease do DDSI). O republisher re-publica a cada tick
+    /// até o mesh refletir o PENDING (ver `republishe_reatribuicoes_pendentes`).
+    pending_reassignment: dashmap::DashMap<String, (Task, std::time::Instant)>,
+    /// EXP1b (dissertação §3.7.4): `--dispatch-mode` — despacho central
+    /// emulado via `target_agent` (quem decide a atribuição passa a ser o
+    /// orquestrador; claim+readback do agente permanecem).
+    dispatch_mode: std::sync::atomic::AtomicBool,
 }
 
 impl OrchestratorDds {
@@ -114,6 +152,8 @@ impl OrchestratorDds {
             qos_window_deltas: dashmap::DashMap::new(),
             reported_deadlines: dashmap::DashSet::new(),
             qos_last_publish_ns: std::sync::atomic::AtomicU64::new(now_ns()),
+            pending_reassignment: dashmap::DashMap::new(),
+            dispatch_mode: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -121,6 +161,34 @@ impl OrchestratorDds {
     pub fn with_fuzzy_routing(mut self, enabled: bool) -> Self {
         self.fuzzy_routing = enabled;
         self
+    }
+
+    /// EXP1b: ativa o despacho central emulado (`--dispatch-mode`).
+    pub fn with_dispatch_mode(self, enabled: bool) -> Self {
+        self.dispatch_mode
+            .store(enabled, std::sync::atomic::Ordering::Relaxed);
+        self
+    }
+
+    /// EXP1b: despacho central emulado — escolhe o agente menos ocupado
+    /// entre os disponíveis e fixa `target_agent` (task segue PENDING; o
+    /// claim do agente permanece). Retorna `false` quando o modo está
+    /// desligado ou não há agente disponível.
+    pub fn dispatch_task(&self, task: &mut Task) -> bool {
+        if !self
+            .dispatch_mode
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return false;
+        }
+        let mut candidates = self.registry.available();
+        if candidates.is_empty() {
+            tracing::warn!(task_id = %task.task_id, "dispatch: sem agente disponível — task segue em claim aberto");
+            return false;
+        }
+        candidates.sort_by_key(|a| a.slots_busy);
+        task.target_agent = candidates.remove(0).agent_id;
+        true
     }
 
     pub fn dataspace(&self) -> &Arc<DataSpace> {
@@ -276,36 +344,97 @@ impl OrchestratorDds {
 
     /// Alimenta os caches de Tasks/TaskOutput do orchestrator (visão do mesh).
     /// O orquestrador observa o espaço de dados — sem isto os caches ficam vazios.
+    ///
+    /// T-820-10: supervisão com recriação dos streams. Antes, `break` no
+    /// primeiro `None` encerrava o feeder PARA SEMPE — `/sync` virava 504
+    /// eterno, o reaper e as métricas congelavam, e só um log registrava o
+    /// óbito. Agora: stream que termina é recriado após backoff crescente
+    /// (1 s → dobra → teto 30 s; zera ao receber amostra saudável). A
+    /// recriação é barata (reader novo sobre o mesmo `DataSpace`) e roda na
+    /// MESMA task via `select!` com precondições — sem `tokio::spawn` filho,
+    /// que ficaria órfão no abort externo (ver [`Self::spawn_registry_monitor`]).
+    /// O sleep de backoff não bloqueia o OUTRO feeder: ele só desabilita a
+    /// branch do stream morto (`if retry.is_none()`) até o prazo chegar.
     pub fn spawn_cache_feeders(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+        const BASE_BACKOFF_MS: u64 = 1_000;
+        const MAX_BACKOFF_MS: u64 = 30_000;
         let ds = Arc::clone(&self.dataspace);
         tokio::spawn(async move {
-            let mut t = Box::pin(ds.stream_tasks());
-            let mut o = Box::pin(ds.stream_task_outputs());
+            let mut tasks_stream = Box::pin(ds.stream_tasks());
+            let mut outputs_stream = Box::pin(ds.stream_task_outputs());
+            let mut tasks_backoff_ms = BASE_BACKOFF_MS;
+            let mut outputs_backoff_ms = BASE_BACKOFF_MS;
+            // `Some(prazo)` = stream morto aguardando recriação (backoff).
+            let mut tasks_retry_at: Option<tokio::time::Instant> = None;
+            let mut outputs_retry_at: Option<tokio::time::Instant> = None;
             loop {
+                let now = tokio::time::Instant::now();
+                if tasks_retry_at.is_some_and(|at| now >= at) {
+                    tracing::info!("stream_tasks recriado (supervisão T-820-10)");
+                    tasks_stream = Box::pin(ds.stream_tasks());
+                    tasks_retry_at = None;
+                }
+                if outputs_retry_at.is_some_and(|at| now >= at) {
+                    tracing::info!("stream_task_outputs recriado (supervisão T-820-10)");
+                    outputs_stream = Box::pin(ds.stream_task_outputs());
+                    outputs_retry_at = None;
+                }
+                let next_retry = match (tasks_retry_at, outputs_retry_at) {
+                    (Some(a), Some(b)) => Some(a.min(b)),
+                    (Some(a), None) | (None, Some(a)) => Some(a),
+                    (None, None) => None,
+                };
                 tokio::select! {
-                    msg = t.next() => {
-                        if msg.is_none() {
-                            tracing::error!("stream_tasks ended — cache feeder stopping");
-                            break;
+                    msg = tasks_stream.next(), if tasks_retry_at.is_none() => {
+                        match msg {
+                            Some(_) => tasks_backoff_ms = BASE_BACKOFF_MS, // amostra saudável
+                            None => {
+                                tracing::error!(
+                                    backoff_ms = tasks_backoff_ms,
+                                    "stream_tasks terminou — recriando com backoff (T-820-10)"
+                                );
+                                tasks_retry_at = Some(tokio::time::Instant::now()
+                                    + Duration::from_millis(tasks_backoff_ms));
+                                tasks_backoff_ms = (tasks_backoff_ms * 2).min(MAX_BACKOFF_MS);
+                            }
                         }
                     }
-                    msg = o.next() => {
-                        if msg.is_none() {
-                            tracing::warn!("stream_task_outputs ended — output feeder stopping");
-                            break;
+                    msg = outputs_stream.next(), if outputs_retry_at.is_none() => {
+                        match msg {
+                            Some(_) => outputs_backoff_ms = BASE_BACKOFF_MS,
+                            None => {
+                                tracing::error!(
+                                    backoff_ms = outputs_backoff_ms,
+                                    "stream_task_outputs terminou — recriando com backoff (T-820-10)"
+                                );
+                                outputs_retry_at = Some(tokio::time::Instant::now()
+                                    + Duration::from_millis(outputs_backoff_ms));
+                                outputs_backoff_ms = (outputs_backoff_ms * 2).min(MAX_BACKOFF_MS);
+                            }
                         }
+                    }
+                    _ = tokio::time::sleep_until(
+                        next_retry.unwrap_or_else(tokio::time::Instant::now),
+                    ), if next_retry.is_some() => {
+                        // Acorda para recriar o(s) stream(s) cujo backoff venceu.
                     }
                 }
             }
         })
     }
 
-    /// T-403: monitor do registry + reaper.
+    /// T-403: monitor do registry + reapers.
     /// Assina AgentRegistry (alimenta o cache e o last_seen por agente) e, a cada
-    /// `check_every`, marca como mortos os agentes com heartbeat parado há mais de
-    /// `stale_after` — suas tasks ASSIGNED/RUNNING voltam para PENDING (retry+1).
+    /// `check_every`, executa DOIS reapers:
+    /// - [`Self::reap_dead_agents`]: heartbeat parado há mais de `stale_after`
+    ///   → agente morto; suas tasks ASSIGNED/RUNNING voltam para PENDING
+    ///   (retry+1) e publica `QoS.Violation("liveliness_lost")`;
+    /// - [`Self::reap_stalled_tasks`] (T-820-03): tasks ASSIGNED/RUNNING sem
+    ///   transição além das janelas de progresso (30s/60s) voltam para PENDING
+    ///   mesmo com o agente vivo — confirmação falso-negativa não prende mais
+    ///   task (ver doc do método).
     ///
-    /// Feeder do stream e reaper periódico rodam na MESMA task via `select!`
+    /// Feeder do stream e reapers periódicos rodam na MESMA task via `select!`
     /// (não em uma task filha separada): um `tokio::spawn` interno ficaria
     /// órfão para sempre quando esta task fosse abortada externamente —
     /// `JoinHandle::abort` derruba esta future, mas `Drop` de um
@@ -335,6 +464,14 @@ impl OrchestratorDds {
                     }
                     _ = interval.tick() => {
                         this.reap_dead_agents(stale_after).await;
+                        // T-820-03: reaper de progresso no MESMO tick — as
+                        // janelas (30s/60s) são ordens de grandeza maiores
+                        // que o ciclo típico (`check_every` = 2s), então o
+                        // custo extra é uma varredura de cache por tick.
+                        this.reap_stalled_tasks().await;
+                        // T-820-03: republisher de reatribuições ainda não
+                        // visíveis no mesh (relinquish de ownership pendente).
+                        this.republishe_reatribuicoes_pendentes().await;
                     }
                 }
             }
@@ -388,15 +525,180 @@ impl OrchestratorDds {
         let tasks = self.dataspace.caches().all_tasks();
         for t in tasks {
             if dead.contains(&t.assigned_agent) && (t.status == 1 || t.status == 2) {
-                let mut reassigned = (*t).clone();
-                reassigned.status = 0; // PENDING
-                reassigned.assigned_agent = String::new();
-                reassigned.retry_count += 1;
-                if let Err(e) = self.dataspace.write_task(reassigned.clone()).await {
-                    tracing::warn!(task_id = %t.task_id, error = %e, "reaper: falha ao reatribuir");
-                } else {
-                    tracing::info!(task_id = %t.task_id, retry = reassigned.retry_count, "reaper: task reatribuída para PENDING");
+                self.reassign_and_publish(&t, "liveliness_lost").await;
+            }
+        }
+    }
+
+    /// T-820-03: reatribui UMA task estagnada via [`crate::state_machine::
+    /// reassign`] e republica SEM assumir ownership da instância.
+    ///
+    /// Por que `write_task_without_ownership` e não `write_task` (P0-1 do
+    /// code review de 2026-10-04): o tópico `Tasks` usa
+    /// `Ownership::Exclusive` com o writer do papel ORQUESTRATOR em strength
+    /// 200 e os agentes em 100–163. A publicação pelo pool do orquestrador
+    /// transferia o dono da instância para o orquestrador e os writes
+    /// seguintes dos agentes (ASSIGNED do claim, RUNNING, DONE) perdiam a
+    /// arbitragem do RHC para sempre — a task congelava em PENDING (o
+    /// readback devolvia sempre PENDING; o cliente pendurava até o timeout).
+    /// Publicando com strength de CLIENTE (10), o agente que reclamar vence
+    /// a arbitragem normalmente; a proteção contra o write atrasado do
+    /// agente "morto" original vem do `retry_count` no guard monotônico do
+    /// cache (`cache::is_regression`) e no `confirm_ownership`.
+    ///
+    /// A transição passa por `state_machine::reassign` (não mutação manual):
+    /// ganha o teto [`MAX_TASK_RETRIES`] → FAILED("MAX_RETRIES_EXCEEDED"),
+    /// o guard de terminalidade e a renovação de `created_at_ns` (P0-2 —
+    /// task re-emitida com nascimento antigo era rejeitada pelo filtro de
+    /// idade de `claim::is_eligible` e ficava permanentemente in-claimável).
+    /// `Ok(false)` (foi para FAILED) ainda é publicado: a terminalidade é
+    /// justamente o que destrava o cliente.
+    async fn reassign_and_publish(&self, task: &Task, cause: &str) {
+        let mut reassigned = task.clone();
+        match crate::state_machine::reassign(&mut reassigned, MAX_TASK_RETRIES) {
+            Ok(requeued) => {
+                match self
+                    .dataspace
+                    .write_task_without_ownership(reassigned.clone())
+                    .await
+                {
+                    Ok(()) => {
+                        if requeued {
+                            tracing::info!(
+                                task_id = %task.task_id,
+                                retry = reassigned.retry_count,
+                                cause,
+                                "reaper: task reatribuída para PENDING (sem ownership)"
+                            );
+                            // T-820-03: o write em strength 10 pode ter sido
+                            // REJEITADO pelo RHC (dono anterior — ASSIGNED do
+                            // agente, strength 100+ — ainda registrado até a
+                            // destruição do seu writer). Fica no republisher
+                            // até o mesh confirmar o PENDING.
+                            self.pending_reassignment.insert(
+                                task.task_id.clone(),
+                                (reassigned.clone(), std::time::Instant::now()),
+                            );
+                        } else {
+                            tracing::warn!(
+                                task_id = %task.task_id,
+                                retries = reassigned.retry_count,
+                                cause,
+                                "reaper: teto de retries atingido — task publicada como FAILED(MAX_RETRIES_EXCEEDED)"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            task_id = %task.task_id,
+                            error = %e,
+                            "reaper: falha ao reatribuir"
+                        );
+                    }
                 }
+            }
+            Err(e) => {
+                // Status desconhecido no wire ou transição inválida: não toca
+                // na task (a rede de segurança passa a ser o reaper de
+                // progresso em ciclos futuros com estado de cache fresco).
+                tracing::warn!(
+                    task_id = %task.task_id,
+                    status = task.status,
+                    error = %e,
+                    "reaper: transição de reatribuição inválida — task intocada"
+                );
+            }
+        }
+    }
+
+    /// T-820-03: republisher das reatribuições ainda não visíveis no mesh.
+    ///
+    /// O write de reatribuição sai em strength de CLIENTE (10); sob Exclusive
+    /// Ownership o RHC o descarta enquanto o writer do dono anterior seguir
+    /// registrado — o ownership só é liberado pela DESTRUIÇÃO desse writer
+    /// (`relinquish_ownership`; morte real do processo → lease do DDSI, ou
+    /// delete gracioso → imediato). A cada tick, para cada entrada em
+    /// `pending_reassignment`: se o mesh já reflete o PENDING (status 0,
+    /// mesmo `retry_count`, sem dono) a entrada sai; se o TTL de 60 s estoura
+    /// (ownership nunca liberado — p.ex. writer vazado), a entrada sai com
+    /// warn; caso contrário, o PENDING é re-publicado.
+    async fn republishe_reatribuicoes_pendentes(&self) {
+        const REASSIGN_VISIBILITY_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+        let mut done: Vec<String> = Vec::new();
+        for e in self.pending_reassignment.iter() {
+            let (task_id, (pending, since)) = (e.key().clone(), e.value());
+            let visible = match self.dataspace.read_task_mesh(&task_id) {
+                Ok(Some(mesh)) => {
+                    mesh.status == 0
+                        && mesh.retry_count == pending.retry_count
+                        && mesh.assigned_agent.is_empty()
+                }
+                _ => false,
+            };
+            if visible {
+                done.push(task_id);
+                continue;
+            }
+            if since.elapsed() > REASSIGN_VISIBILITY_TTL {
+                tracing::warn!(
+                    task_id = %task_id,
+                    retry = pending.retry_count,
+                    "republisher: reatribuição sem visibilidade após TTL — ownership do dono anterior nunca liberado?"
+                );
+                done.push(task_id);
+                continue;
+            }
+            // T-880/EXP4: renova `created_at_ns` a cada re-publicação — sem
+            // isto, quando a visibilidade só chega após o lease do writer
+            // morto (SIGSTOP/lease do DDSI), o `is_eligible` do agente
+            // rejeita a task por idade (>10 s) e o workflow pendura.
+            let mut republished = pending.clone();
+            republished.created_at_ns = now_ns();
+            if let Err(err) = self
+                .dataspace
+                .write_task_without_ownership(republished)
+                .await
+            {
+                tracing::debug!(task_id = %task_id, error = %err, "republisher: falha de write");
+            }
+        }
+        for task_id in done {
+            self.pending_reassignment.remove(&task_id);
+        }
+    }
+
+    /// T-820-03: reaper de PROGRESSO — recolhe tasks ASSIGNED/RUNNING de
+    /// agentes possivelmente VIVOS cujo estado não transiciona dentro das
+    /// janelas [`ASSIGNED_STALL_AFTER`] / [`RUNNING_STALL_AFTER`] (medidas
+    /// por `assigned_at_ns`/`started_at_ns`, sempre locais ao claim — ver
+    /// `claim_task`). Complementa [`Self::reap_dead_agents`], que só cobre
+    /// agentes com heartbeat parado: o caso "agente deu o claim como perdido
+    /// mas o ASSIGNED dele venceu a arbitragem depois" (confirmação
+    /// falso-negativa) deixa a task presa com o registry saudável — e a task
+    /// nunca mais é elegível (`is_eligible` filtra status ≠ PENDING).
+    async fn reap_stalled_tasks(&self) {
+        let now = now_ns();
+        for t in self.dataspace.caches().all_tasks() {
+            let stalled = match t.status {
+                s if s == orch_common::TaskStatus::Assigned as i32 => {
+                    t.assigned_at_ns > 0
+                        && now.saturating_sub(t.assigned_at_ns)
+                            > ASSIGNED_STALL_AFTER.as_nanos() as u64
+                }
+                s if s == orch_common::TaskStatus::Running as i32 => {
+                    t.started_at_ns > 0
+                        && now.saturating_sub(t.started_at_ns)
+                            > RUNNING_STALL_AFTER.as_nanos() as u64
+                }
+                _ => continue,
+            };
+            if stalled {
+                tracing::info!(
+                    task_id = %t.task_id,
+                    status = t.status,
+                    "reaper de progresso: task estagnada detectada"
+                );
+                self.reassign_and_publish(&t, "progresso_estagnado").await;
             }
         }
     }

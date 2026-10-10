@@ -294,6 +294,19 @@ impl crate::decider::QosDecider for Nfcm {
             metrics.estimated_complexity,
             metrics.streaming_need,
         ];
+        // Guarda de finitude (REQ/T-820-08, mesmo contrato de FCM/Zadeh):
+        // sem ela, NaN propaga — `f64::max` ignora NaN ⇒ delta=0 ⇒
+        // "convergiu" com winner=Critical e confidence=NaN, diferenciando os
+        // braços sob entrada ruim (contamina a comparação do E4).
+        if arr.iter().any(|v| !v.is_finite()) {
+            return crate::decider::QoSDecision {
+                profile: crate::QoSProfile::Balanced,
+                converged: false,
+                confidence: 0.0,
+                explanation: "nfcm: fallback (métrica não finita)".into(),
+                runner_up: 0.0,
+            };
+        }
         let r = self.infer(&arr);
         let profile = match r.winner {
             0 => crate::QoSProfile::Critical,

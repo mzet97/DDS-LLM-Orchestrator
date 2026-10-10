@@ -46,13 +46,27 @@ impl StabilityController {
     }
 
     /// Recebe a decisão bruta e devolve o perfil EFETIVO a aplicar.
+    ///
+    /// Off-by-one corrigido (REQ/T-820-08): o teste de bloqueio usa o valor
+    /// do cooldown ANTES do decremento do ciclo — antes, o decremento no
+    /// topo fazia `cooldown_left == 0` bater um ciclo cedo demais e
+    /// `cooldown = N` produzia N−1 ticks de bloqueio efetivo. O ciclo agora
+    /// é: troca → bloqueia os próximos `cooldown` updates → libera.
     pub fn update(&mut self, winner: usize, confidence: f64, runner_up: f64) -> usize {
         let cfg = self.cfg;
         self.dwell = self.dwell.saturating_add(1);
+        // Estado do cooldown DESTE ciclo (antes do decremento — o decremento
+        // é por update recebido, o bloqueio vale para o ciclo inteiro).
+        let in_cooldown = self.cooldown_left > 0;
         if self.cooldown_left > 0 {
             self.cooldown_left -= 1;
         }
         if confidence < cfg.min_confidence {
+            // Confiança baixa: mantém o perfil corrente e zera o processo de
+            // troca (candidato/streak) — uma sequência interrompida por ruído
+            // não pode retomar a contagem de persistência.
+            self.candidate = None;
+            self.streak = 0;
             let cur = *self.current.get_or_insert(cfg.fallback);
             return cur;
         }
@@ -79,7 +93,7 @@ impl StabilityController {
         let can_switch = margin_ok
             && self.streak >= cfg.persist_k
             && self.dwell >= cfg.min_dwell
-            && self.cooldown_left == 0;
+            && !in_cooldown;
         if can_switch {
             self.current = Some(winner);
             self.dwell = 0;
@@ -94,5 +108,57 @@ impl StabilityController {
 
     pub fn current(&self) -> Option<usize> {
         self.current
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn cfg_custom(persist_k: u32, min_dwell: u32, cooldown: u32) -> StabilityConfig {
+        StabilityConfig {
+            margin_m: 0.10,
+            persist_k,
+            min_dwell,
+            cooldown,
+            min_confidence: 0.30,
+            fallback: 4,
+        }
+    }
+
+    /// REQ/T-820-08: cooldown=N bloqueia N updates completos (antes, o
+    /// decremento no topo fazia o teste bater cedo e valer N−1).
+    #[test]
+    fn cooldown_bloqueia_n_updates_completos() {
+        let mut c = StabilityController::new(cfg_custom(1, 0, 2));
+        assert_eq!(c.update(1, 0.9, 0.0), 1, "primeira decisão inicializa");
+        assert_eq!(c.update(2, 0.9, 0.0), 2, "troca inicia cooldown=2");
+        assert_eq!(c.update(1, 0.9, 0.0), 2, "bloqueado (cooldown 2→1)");
+        assert_eq!(c.update(1, 0.9, 0.0), 2, "bloqueado (cooldown 1→0)");
+        assert_eq!(c.update(1, 0.9, 0.0), 1, "cooldown expirado → troca");
+    }
+
+    /// REQ/T-820-08: confiança baixa reseta candidato/streak — sequência de
+    /// troca interrompida por ruído não retoma a contagem de persistência.
+    #[test]
+    fn confianca_baixa_reseta_candidato_e_streak() {
+        let mut c = StabilityController::new(cfg_custom(2, 0, 0));
+        assert_eq!(c.update(1, 0.9, 0.0), 1, "primeira decisão inicializa");
+        assert_eq!(c.update(2, 0.9, 0.0), 1, "candidato 2, streak=1 → mantém");
+        assert_eq!(c.update(2, 0.2, 0.0), 1, "confiança baixa → mantém");
+        assert_eq!(
+            c.update(2, 0.9, 0.0),
+            1,
+            "streak reiniciou (não retomou do ruído) → mantém"
+        );
+        assert_eq!(c.update(2, 0.9, 0.0), 2, "streak=2 (persist_k) → troca");
+    }
+
+    /// Primeira decisão com confiança baixa instala o fallback (Balanced).
+    #[test]
+    fn primeira_decisao_com_confianca_baixa_instala_fallback() {
+        let mut c = StabilityController::new(Default::default());
+        assert_eq!(c.update(0, 0.1, 0.0), 4, "fallback=4 (QoS_Balanced)");
+        assert_eq!(c.current(), Some(4));
     }
 }

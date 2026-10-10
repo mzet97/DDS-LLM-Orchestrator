@@ -4,6 +4,11 @@ Você é a **IA executora** desta migração. O líder/arquiteto definiu specs d
 `specs/`. Sua função é **executar** seguindo Spec-Driven Development (SDD), com disciplina
 e honestidade. Este arquivo é o seu manual.
 
+## Rastreabilidade (2026-10-04)
+- Estado vivo do projeto: **`notes.md` na raiz do workspace** (`../../notes.md`, Parte I). Auditoria crate-a-crate deste workspace: `THESIS_RUST_WORKSPACE_REPORT.md` na raiz.
+- Correção datada ao §4 abaixo: "dependência Git fixada por `rev`" está **stale** — desde T-814/T-815/patch `9c399bf` o binding vem do **crates.io pinado** `cyclonedds = "=3.0.1"` / `cyclonedds-rust-sys = "=1.2.1"` (sem `[patch]`; congelado pelo teste `t809_reproducibility.rs`).
+- Estado dos branches: `studio/phase-800-node` está **17 commits à frente de `main`** (todo o Studio existe só no branch); fase 700 com **T-814 aberta** (gate final/prerelease/REPORT); `README.md` ainda diz "14 members" (são 18).
+
 ## 0. Antes de qualquer coisa (toda sessão)
 1. Leia `specs/CONSTITUTION.md` (regras não-negociáveis).
 2. Leia `specs/CONTEXT.md` (o sistema inteiro) — se ainda não leu nesta sessão.
@@ -88,7 +93,8 @@ cargo run -p cyclonedds-idlc -- --input /path/to/main/project/src/llama_cpp/dds/
 - Não resolver conflito com a Constituição no escuro — reporte ao líder.
 
 ## 9b. Contrato canônico (não reinventar)
-- 18 tópicos + 2 IDLs + claim com releitura: ver `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md` §§9–13 e raiz `AGENTS.md` §CANONICAL CONTRACT. Paridade inclui mesmos nomes de tópicos/perfis/métricas do Python/IDL.
+- 19 tópicos (18 canônicos + `Studio.NodePresence`, T-890) + 2 IDLs + claim com releitura: ver `Entendimento_Tecnico_Dissertacao_DDS_LLM_Orchestrator.md` §§9–13 e raiz `AGENTS.md` §CANONICAL CONTRACT. Paridade inclui mesmos nomes de tópicos/perfis/métricas do Python/IDL.
+- **Aprovado (2026-10-05): 19º tópico `Studio.NodePresence`** (descoberta de instalações do Studio; padrão AgentRegistry; mDNS eliminado — DDS é requisito mínimo por máquina). Implementação concluída na fase 890 (T-890-1..4: `dds-contract` mock+codegen+gates, `dds-dataspace` tópico/QoS/cache/stream, `studio-node` `presence.rs` heartbeat 5 s, lockstep Python 56 testes) — o código vigente segue os 19 tópicos.
 
 ## 9. Fluxo de uma sessão típica
 1. Ler Constitution + Context + Roadmap → achar a fase ativa.

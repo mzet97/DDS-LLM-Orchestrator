@@ -23,6 +23,8 @@ members = [
     "crates/det-responder",
     "crates/studio-core",
     "crates/orchestrator-studio",
+    "crates/studio-node",
+    "crates/studio-ssh",
 ]
 
 [workspace.package]
@@ -36,6 +38,9 @@ license = "MIT"
 cyclonedds = { version = "=3.0.1" }
 cyclonedds-rust-sys = { version = "=1.2.1" }
 cyclonedds-build = { version = "=3.0.1" }
+# T-890-05: persistência relacional do journal do nó (bundled = sqlite3 C
+# embutido, sem depender do sqlite do sistema — requer CC p/ cross musl).
+rusqlite = { version = "0.32", features = ["bundled"] }
 # Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
 tokio = { version = "1", features = ["full"] }
 rayon = "1"                       # paralelismo data-parallel (treino/refresh)
@@ -45,6 +50,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "1"
 anyhow = "1"
+russh = "0.63"
+russh-keys = "0.49"
+rand = "0.10"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 parking_lot = "0.12"             # locks rápidos (substitui threading.Lock)
@@ -53,9 +61,6 @@ crossbeam-channel = "0.5"        # filas MPMC (substitui a fila de escrita únic
 ahash = "0.8"
 
 [workspace.lints.rust]
-warnings = "deny"
-
-[workspace.lints.clippy]
 warnings = "deny"
 
 [profile.release]

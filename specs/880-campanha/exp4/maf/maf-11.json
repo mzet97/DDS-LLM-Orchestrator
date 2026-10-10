@@ -1,0 +1,11 @@
+{
+ "t_total_nominal_ms": 332,
+ "t_recovery_ms": 382,
+ "resumed_output": true,
+ "stage_counts_delta": {
+  "A": 2,
+  "B": 2,
+  "C": 2
+ },
+ "rep": 11
+}

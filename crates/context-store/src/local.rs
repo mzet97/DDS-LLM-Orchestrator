@@ -17,7 +17,18 @@
 //! (`put_snapshot`/`apply_update`) passam por um `write_lock` que serializa
 //! journal + aplicação: assim a ordem do journal é exatamente a ordem de
 //! aplicação por contexto (o consumidor DDS é single-task, como no Python,
-//! então o lock é praticamente livre de contenção).
+//! então o lock é praticamente livre de contenção). `expire_ttl` usa o
+//! mesmo lock: tombstone no journal antes da remoção em memória
+//! (REQ/T-820-15).
+//!
+//! ## Crescimento do journal (follow-up)
+//! O journal é append-only e só removemos registros de contexto com os
+//! tombstones `expire` — o ARQUIVO cresce monotonicamente, e o replay do
+//! boot é O(nº de operações históricas). Compactação (rewrite do journal
+//! com o estado atual, estilo AOF rewrite do Redis) é trabalho futuro
+//! documentado — enquanto isso, o replay tolera linhas corrompidas (pula e
+//! loga) e a varredura TTL periódica do serviço (`service.rs`) mantém o
+//! estado em memória limitado aos contextos vivos.
 
 use crate::store::{
     apply_messages_delta, expires_from_now, now_ns, snapshot_from_update, ContextStore, StoreError,
@@ -66,6 +77,10 @@ enum JournalRecord {
         updated_at_ns: u64,
         expires_at_ns: u64,
     },
+    /// Remoção por TTL (`expire_ttl`) — tombstone (REQ/T-820-15): sem ele,
+    /// o replay do `Put` original ressuscitava o contexto expirado a cada
+    /// reboot e a varredura tinha que removê-lo de novo para sempre.
+    Expire { context_id: String },
 }
 
 impl JournalRecord {
@@ -214,6 +229,10 @@ impl LocalContextStore {
                     {
                         tracing::warn!(line = lineno + 1, error = %e, "journal: update ignorado");
                     }
+                }
+                JournalRecord::Expire { context_id } => {
+                    // Tombstone de TTL: replay NÃO ressuscita o expirado.
+                    self.entries.remove(&context_id);
                 }
             }
             applied += 1;
@@ -400,12 +419,28 @@ impl ContextStore for LocalContextStore {
 
     async fn expire_ttl(&self) -> Result<u64, StoreError> {
         let now = now_ns();
-        let before = self.entries.len();
-        self.entries.retain(|_, e| e.expires_at_ns > now);
-        let removed = before - self.entries.len();
+        // Mesma ordem do WAL das escritas: o tombstone entra no journal
+        // ANTES da remoção em memória, sob o write lock (REQ/T-820-15) —
+        // assim o replay pós-crash nunca ressuscita o expirado.
+        let _write = self.write_lock.lock().await;
+        let expired: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|entry| entry.value().expires_at_ns <= now)
+            .map(|entry| entry.key().clone())
+            .collect();
+        let mut removed = 0u64;
+        for context_id in expired {
+            self.journal_append(&JournalRecord::Expire {
+                context_id: context_id.clone(),
+            })
+            .await?;
+            self.entries.remove(&context_id);
+            removed += 1;
+        }
         if removed > 0 {
             tracing::info!(removed, "contextos expirados removidos");
         }
-        Ok(removed as u64)
+        Ok(removed)
     }
 }

@@ -1,0 +1,8 @@
+[advisories]
+# RUSTSEC-2023-0071 (rsa 0.10.0-rc.18, via russh->studio-ssh): sem upgrade
+# com fix disponivel (pre-release). Uso restrito a parsing de chaves no
+# handshake SSH da bridge administrativa; reavaliar quando russh subir o rsa.
+# RUSTSEC-2026-0192 (ttf-parser 0.25.1 unmaintained, via
+# ab_glyph->egui->orchestrator-studio): parsing local de fontes da GUI;
+# sem entrada remota. Reavaliar no upgrade do egui.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0192"]

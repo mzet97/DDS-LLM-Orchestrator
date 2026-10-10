@@ -133,8 +133,16 @@ impl Engine for DdsEngine {
                 }
             };
 
-            // Settle curto anti-corrida de discovery (primeira request do processo).
-            tokio::time::sleep(Duration::from_millis(250)).await;
+            // T-820-09: settle curto anti-corrida de discovery — UMA vez por
+            // processo (`SETTLED`): o comentário original dizia "primeira
+            // request do processo" mas o sleep de 250 ms rodava em TODA
+            // chamada do engine, somando ~+250 ms fixos por task ao
+            // `CONFIRM_DELAY` e contaminando as latências medidas.
+            static SETTLED: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+            if SETTLED.get().is_none() {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                let _ = SETTLED.set(());
+            }
 
             let llm_req = LLMInferenceRequest {
                 request_id: req.request_id.clone(),

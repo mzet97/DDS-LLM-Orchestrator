@@ -1,0 +1,41 @@
+{
+  "entry": "O serviço responde em 200ms no p99 com 100 conexões simultâneas.",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "[fixture stage=A h=774e29067cd886c1 n=2]",
+      "expects": [],
+      "finished_ms": 1791216100326,
+      "latency_ms": 304,
+      "stage": "A",
+      "started_ms": 1791216100022,
+      "task_id": "de009c71-671e-45ae-a408-446b2e82e12f"
+    },
+    {
+      "content": "[fixture stage=B h=f9394e9508ae0734 n=3]",
+      "expects": [
+        "[fixture stage=A h=774e29067cd886c1 n=2]"
+      ],
+      "finished_ms": 1791216100629,
+      "latency_ms": 303,
+      "stage": "B",
+      "started_ms": 1791216100326,
+      "task_id": "4a63de3f-d77d-46f2-82e1-ac10821a7d95"
+    },
+    {
+      "content": "[fixture stage=C h=6ca66c801c1f6343 n=4]",
+      "expects": [
+        "[fixture stage=A h=774e29067cd886c1 n=2]",
+        "[fixture stage=B h=f9394e9508ae0734 n=3]"
+      ],
+      "finished_ms": 1791216100933,
+      "latency_ms": 303,
+      "stage": "C",
+      "started_ms": 1791216100629,
+      "task_id": "7473929e-ad73-4832-85b6-4f2c25c4f5fb"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}

@@ -1,0 +1,41 @@
+{
+  "entry": "O cache expira em 60 segundos e deve ser invalidado por escrita.",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "[fixture stage=A h=0858a0ed833802d4 n=2]",
+      "expects": [],
+      "finished_ms": 1791217117942,
+      "latency_ms": 304,
+      "stage": "A",
+      "started_ms": 1791217117637,
+      "task_id": "9ef03224-98fd-4c45-9728-189b0e231850"
+    },
+    {
+      "content": "[fixture stage=B h=12e049875c48c6dc n=3]",
+      "expects": [
+        "[fixture stage=A h=0858a0ed833802d4 n=2]"
+      ],
+      "finished_ms": 1791217118247,
+      "latency_ms": 305,
+      "stage": "B",
+      "started_ms": 1791217117942,
+      "task_id": "78432d6d-2249-4bd0-b184-0c7b1733f933"
+    },
+    {
+      "content": "[fixture stage=C h=72f252cf93b31732 n=4]",
+      "expects": [
+        "[fixture stage=A h=0858a0ed833802d4 n=2]",
+        "[fixture stage=B h=12e049875c48c6dc n=3]"
+      ],
+      "finished_ms": 1791217118551,
+      "latency_ms": 303,
+      "stage": "C",
+      "started_ms": 1791217118247,
+      "task_id": "e41147b4-1442-43fe-8b14-a342d2567f2c"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}

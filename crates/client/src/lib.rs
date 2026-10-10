@@ -7,6 +7,8 @@
 //! - `submit(task) -> Future<Result>` + stream de chunks
 //! - ≥ 50 clientes concorrentes sem deadlock
 
+pub mod wf_assembly;
+
 use dds_contract::generated::dds_llm_orchestrator::Task;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -27,6 +29,23 @@ pub enum ClientError {
     RuntimeUnavailable,
     #[error("falha ao inicializar o pump DDS do tópico {0}")]
     EventPumpInit(&'static str),
+    /// T-820-11: stream de `TaskOutput` com buraco de `seq_num` — chunk
+    /// intermediário perdido no transporte. Sem esta checagem o cliente
+    /// concatenava o conteúdo truncado com `success: true` (corrupção
+    /// silenciosa). `expected` é o `seq_num` que deveria vir na posição;
+    /// `got` é o que veio.
+    #[error(
+        "stream incompleto da task {task_id}: esperado seq_num {expected}, recebido {got} (chunk perdido)"
+    )]
+    IncompleteStream {
+        task_id: String,
+        expected: u32,
+        got: u32,
+    },
+    /// T-820-11: o orchestrator respondeu HTTP não-2xx — `status` com o código
+    /// e `body` com o corpo truncado (256 chars) para diagnóstico.
+    #[error("HTTP {status} do orchestrator: {body}")]
+    HttpStatus { status: u16, body: String },
 }
 
 /// Configuração do cliente.
@@ -122,8 +141,11 @@ impl DdsClient {
         let client = reqwest::Client::new();
         let url = format!("{}/api/v1/chat/completions", orchestrator_url);
 
-        let messages: Vec<serde_json::Value> =
-            serde_json::from_str(&task.messages_json).unwrap_or_default();
+        // T-820-11: JSON malformado propaga erro — o `unwrap_or_default()`
+        // original enviava `messages: []` silenciosamente (mesma classe do
+        // fix do engine HTTP, T-820-09).
+        let messages: Vec<serde_json::Value> = serde_json::from_str(&task.messages_json)
+            .map_err(|e| ClientError::DdsError(format!("messages_json malformado: {e}")))?;
 
         let body = serde_json::json!({
             "model": task.model_name,
@@ -140,6 +162,19 @@ impl DdsClient {
             .await
             .map_err(|e| ClientError::DdsError(e.to_string()))?;
 
+        // T-820-11: não-2xx vira erro tipado com status + corpo truncado —
+        // antes o `.json()` sobre um corpo de erro HTML/texto falhava com
+        // "resposta sem task_id"/erro de decode, escondendo o status real.
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            let truncated: String = body.chars().take(256).collect();
+            return Err(ClientError::HttpStatus {
+                status: status.as_u16(),
+                body: truncated,
+            });
+        }
+
         let data: serde_json::Value = resp
             .json()
             .await
@@ -152,6 +187,51 @@ impl DdsClient {
     }
 }
 
+/// T-820-11: valida que os `seq_num` coletados de um `TaskOutput` começam em
+/// 0 e são contíguos. Retorna `Some((expected, got))` no primeiro buraco,
+/// `None` se completo.
+///
+/// Pública de propósito: [`dds_impl::DdsClientDds::submit`] usa a mesma
+/// checagem antes de reportar `success: true`, e consumidores de
+/// `submit_stream` (que recebem os chunks parciais e podem terminar sem o
+/// erro de contiguidade, ex.: cancelamento) precisam poder validar a coleção
+/// que acumularam. Compilada e testada também sem a feature `dds`.
+pub fn seq_gap(seq_nums: impl Iterator<Item = u32>) -> Option<(u32, u32)> {
+    let mut seq_nums: Vec<u32> = seq_nums.collect();
+    seq_nums.sort_unstable();
+    for (idx, seq) in seq_nums.iter().enumerate() {
+        let expected = idx as u32;
+        if *seq != expected {
+            return Some((expected, *seq));
+        }
+    }
+    None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::seq_gap;
+
+    /// T-820-11: sequência completa 0..n → sem buraco.
+    #[test]
+    fn seq_gap_aceita_sequencia_contigua_fora_de_ordem() {
+        assert_eq!(seq_gap([2u32, 0, 3, 1].into_iter()), None);
+        assert_eq!(seq_gap([0u32].into_iter()), None);
+        assert_eq!(seq_gap(std::iter::empty()), None);
+    }
+
+    /// T-820-11: chunk intermediário perdido → buraco detectado com o par
+    /// (esperado, recebido).
+    #[test]
+    fn seq_gap_detecta_chunk_perdido_no_meio() {
+        assert_eq!(seq_gap([0u32, 1, 3, 4].into_iter()), Some((2, 3)));
+        // Primeiro chunk perdido: esperado 0, recebido 1.
+        assert_eq!(seq_gap([1u32, 2].into_iter()), Some((0, 1)));
+        // Duplicado também vira "buraco" (posição não bate).
+        assert_eq!(seq_gap([0u32, 1, 1].into_iter()), Some((2, 1)));
+    }
+}
+
 // ── Implementação DDS real (T-410, REQ-410/411) ────────────────────────────
 
 /// Cliente DDS real — UM participante servindo N tasks async (resolve o
@@ -159,7 +239,7 @@ impl DdsClient {
 /// DDSDataSpace com 17 tópicos+threads e o GIL travava em 20).
 #[cfg(feature = "dds")]
 pub mod dds_impl {
-    use super::{ClientConfig, ClientError, TaskResult};
+    use super::{seq_gap, ClientConfig, ClientError, TaskResult};
     use async_stream::stream;
     use dds_contract::generated::dds_llm_orchestrator::{Task, TaskOutput};
     use dds_dataspace::api::DataSpaceApi;
@@ -296,6 +376,17 @@ pub mod dds_impl {
                 }
                 if done && chunks.iter().any(|c| c.is_final) {
                     chunks.sort_by_key(|c| c.seq_num);
+                    // T-820-11: gap-check ANTES de reportar sucesso — chunk
+                    // intermediário perdido produzia conteúdo truncado com
+                    // `success: true` (corrupção silenciosa). Os `seq_num`
+                    // devem começar em 0 e ser contíguos.
+                    if let Some((expected, got)) = seq_gap(chunks.iter().map(|c| c.seq_num)) {
+                        return Err(ClientError::IncompleteStream {
+                            task_id: task_id.clone(),
+                            expected,
+                            got,
+                        });
+                    }
                     let content: String = chunks.iter().map(|c| c.content.clone()).collect();
                     let tokens_completion = chunks.last().map(|c| c.token_count).unwrap_or(0);
                     return Ok(TaskResult {
@@ -311,6 +402,12 @@ pub mod dds_impl {
         }
 
         /// Submete e emite chunks até observar `is_final` e o estado `DONE`.
+        ///
+        /// T-820-11: os chunks são emitidos em streaming (o consumidor decide
+        /// o que fazer com o parcial), mas o término valida a contiguidade de
+        /// `seq_num` — se houver buraco, o erro [`ClientError::IncompleteStream`]
+        /// é o ÚLTIMO item do stream (o conteúdo parcial já foi entregue, mas o
+        /// consumidor não pode tratá-lo como completo).
         pub fn submit_stream(
             &self,
             task: Task,
@@ -328,6 +425,7 @@ pub mod dds_impl {
                 let deadline = Instant::now() + timeout;
                 let mut done = false;
                 let mut final_chunk_received = false;
+                let mut seq_nums: Vec<u32> = Vec::new();
 
                 loop {
                     let remaining = deadline.saturating_duration_since(Instant::now());
@@ -340,10 +438,22 @@ pub mod dds_impl {
                             match out {
                                 Ok(o) if o.task_id == task_id => {
                                     let is_final = o.is_final;
+                                    seq_nums.push(o.seq_num);
                                     yield Ok((*o).clone());
                                     if is_final {
                                         final_chunk_received = true;
-                                        if done { return; }
+                                        if done {
+                                            if let Some((expected, got)) =
+                                                seq_gap(seq_nums.iter().copied())
+                                            {
+                                                yield Err(ClientError::IncompleteStream {
+                                                    task_id: task_id.clone(),
+                                                    expected,
+                                                    got,
+                                                });
+                                            }
+                                            return;
+                                        }
                                     }
                                 }
                                 Ok(_) => continue,
@@ -358,7 +468,18 @@ pub mod dds_impl {
                                 Ok(t) if t.task_id == task_id => {
                                     if t.status == 3 {
                                         done = true;
-                                        if final_chunk_received { return; }
+                                        if final_chunk_received {
+                                            if let Some((expected, got)) =
+                                                seq_gap(seq_nums.iter().copied())
+                                            {
+                                                yield Err(ClientError::IncompleteStream {
+                                                    task_id: task_id.clone(),
+                                                    expected,
+                                                    got,
+                                                });
+                                            }
+                                            return;
+                                        }
                                     } else if t.status == 4 {
                                         yield Err(ClientError::TaskFailed(t.finish_reason.clone()));
                                         return;

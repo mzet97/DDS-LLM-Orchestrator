@@ -29,7 +29,10 @@ pub enum WriteRequest {
     OutputAck(TaskOutput, oneshot::Sender<Result<(), DataSpaceError>>),
 }
 
-type WriteFn = Arc<dyn Fn(WriteRequest) + Send + Sync>;
+/// Closure de escrita: devolve o resultado REAL do `dds_write` para que o
+/// pool conte `completed`/`failed` corretamente (T-820-06 — antes o
+/// `completed` incrementava mesmo com write falho e a falha era só log).
+pub type WriteFn = Arc<dyn Fn(WriteRequest) -> Result<(), DataSpaceError> + Send + Sync>;
 
 /// Pool de workers de escrita.
 pub struct WriterPool {
@@ -42,7 +45,7 @@ pub struct WriterPool {
 
 impl WriterPool {
     /// Cria o pool com `n_workers` drenando um canal bounded de `capacity`.
-    /// `write_fn` recebe o pedido e escreve no DDS (closure sobre os DataWriters).
+    /// `write_fn` recebe o pedido, escreve no DDS e devolve o resultado.
     /// Falível: spawn de thread pode falhar (exaustão de recursos) — `Err`
     /// em vez de panic na inicialização.
     pub fn new(
@@ -66,11 +69,21 @@ impl WriterPool {
                     .name(format!("dds-writer-{i}"))
                     .spawn(move || {
                         while let Ok(req) = rx.recv() {
-                            write_fn(req);
-                            completed.fetch_add(1, Ordering::Relaxed);
+                            // T-820-06: `completed` só conta `dds_write`
+                            // bem-sucedido; falha de write conta em `failed`
+                            // (além das falhas de enqueue já contadas em
+                            // `submit`).
+                            match write_fn(req) {
+                                Ok(()) => {
+                                    completed.fetch_add(1, Ordering::Relaxed);
+                                }
+                                Err(e) => {
+                                    tracing::error!(error = %e, "writer_pool: write falhou (dds_write)");
+                                    failed.fetch_add(1, Ordering::Relaxed);
+                                }
+                            }
                         }
                         // canal fechado + drenado → sai
-                        let _ = failed;
                     })
                     .map_err(|e| {
                         DataSpaceError::WriteFailed(format!("spawn dds-writer-{i}: {e}"))
@@ -121,21 +134,39 @@ impl WriterPool {
     pub fn submitted(&self) -> u64 {
         self.submitted.load(Ordering::Relaxed)
     }
+    /// Escritas concluídas com `dds_write` bem-sucedido (T-820-06: antes
+    /// contava também as falhas de write — métrica enganosa).
     pub fn completed(&self) -> u64 {
         self.completed.load(Ordering::Relaxed)
     }
+    /// Falhas: enqueue rejeitado (backpressure/pool encerrado) + `dds_write`
+    /// que retornou erro (T-820-06).
     pub fn failed(&self) -> u64 {
         self.failed.load(Ordering::Relaxed)
     }
 
-    /// Fecha o canal e espera os workers drenarem.
-    pub fn drain_and_shutdown(self) {
-        drop(self.tx);
-        for (i, w) in self.workers.into_iter().enumerate() {
+    /// Fecha o canal e espera os workers drenarem, devolvendo as estatísticas
+    /// finais `(submitted, completed, failed)` — só são estáveis após o join
+    /// dos workers (T-820-06: ler antes do drain é corrida).
+    pub fn drain_and_shutdown(self) -> (u64, u64, u64) {
+        let WriterPool {
+            tx,
+            workers,
+            submitted,
+            completed,
+            failed,
+        } = self;
+        drop(tx);
+        for (i, w) in workers.into_iter().enumerate() {
             if let Err(e) = w.join() {
                 tracing::error!(worker = i, error = ?e, "writer_pool: worker panou");
             }
         }
+        (
+            submitted.load(Ordering::Relaxed),
+            completed.load(Ordering::Relaxed),
+            failed.load(Ordering::Relaxed),
+        )
     }
 }
 
@@ -148,47 +179,70 @@ impl WriterPool {
 /// principal (`DataSpace::write_task`), para que `WriteRequest::Task` nunca
 /// reintroduza o desbalanceamento de carga entre agentes corrigido nesta
 /// sessão, caso algum dia passe a ter um chamador em produção.
+///
+/// Falível (T-820-06): `tasks_writers` vazio era panic por indexação
+/// (`tasks_writers[idx]`) no primeiro `WriteRequest::Task` — agora devolve
+/// `Err` na construção. Os logs de falha de write continuam aqui (contexto do
+/// request); o resultado é devolvido para o pool contabilizar `failed`.
 pub fn make_write_fn(
     tasks_writers: Vec<DataWriter<Task>>,
     agents_writer: DataWriter<AgentState>,
     outputs_writer: DataWriter<TaskOutput>,
-) -> WriteFn {
-    Arc::new(move |req| {
+) -> Result<WriteFn, DataSpaceError> {
+    if tasks_writers.is_empty() {
+        return Err(DataSpaceError::WriteFailed(
+            "make_write_fn: pool de writers de Tasks vazio".into(),
+        ));
+    }
+    Ok(Arc::new(move |req| {
         // Match único por valor: cada variante é tratada no próprio braço,
         // sem pré-checagem + `unreachable!`.
         match req {
             // Variante com confirmação: o resultado REAL do dds_write vai para o
             // canal de ack (RUST-PROTO-005). Se o receiver já desistiu (timeout/
             // cancelamento), o send falha sem custo — o erro continua logado.
-            WriteRequest::OutputAck(o, ack) => {
-                let result = write_output_loan(&outputs_writer, &o)
-                    .map_err(|e| DataSpaceError::WriteFailed(e.to_string()));
-                if let Err(e) = &result {
-                    tracing::error!(error = %e, "writer_pool: falha no write FINAL do DDS");
+            WriteRequest::OutputAck(o, ack) => match write_output_loan(&outputs_writer, &o) {
+                Ok(()) => {
+                    let _ = ack.send(Ok(()));
+                    Ok(())
                 }
-                let _ = ack.send(result);
-            }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let err = DataSpaceError::WriteFailed(msg.clone());
+                    tracing::error!(error = %err, "writer_pool: falha no write FINAL do DDS");
+                    let _ = ack.send(Err(DataSpaceError::WriteFailed(msg)));
+                    Err(err)
+                }
+            },
             WriteRequest::Task(t) => {
                 let idx = crate::select_task_writer_slot(&t.task_id, tasks_writers.len());
-                if let Err(e) = tasks_writers[idx].write(&t) {
-                    tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                match tasks_writers[idx].write(&t) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                        Err(DataSpaceError::WriteFailed(e.to_string()))
+                    }
                 }
             }
-            WriteRequest::Agent(a) => {
-                if let Err(e) = agents_writer.write(&a) {
+            WriteRequest::Agent(a) => match agents_writer.write(&a) {
+                Ok(()) => Ok(()),
+                Err(e) => {
                     tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                    Err(DataSpaceError::WriteFailed(e.to_string()))
                 }
-            }
+            },
             // Zero-copy: TaskOutput é o tópico de maior volume de samples (um
             // por chunk de streaming de inferência) — T-616. Ver
             // `write_output_loan` para o porquê do loan em vez de `.write()`.
-            WriteRequest::Output(o) => {
-                if let Err(e) = write_output_loan(&outputs_writer, &o) {
+            WriteRequest::Output(o) => match write_output_loan(&outputs_writer, &o) {
+                Ok(()) => Ok(()),
+                Err(e) => {
                     tracing::error!(error = %e, "writer_pool: falha ao escrever no DDS");
+                    Err(DataSpaceError::WriteFailed(e.to_string()))
                 }
-            }
+            },
         }
-    })
+    }))
 }
 
 /// Escreve um `TaskOutput` via loan zero-copy em vez de `.write()` (que

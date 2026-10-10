@@ -2,7 +2,11 @@
 //!
 //! Fiação: tópicos `LLM.*` com os perfis QoS de produção, fila limitada,
 //! atendentes limitados e log JSONL. A derivação da fixture vive em
-//! [`fixture`]; o atendimento, em [`endpoint`].
+//! [`fixture`]; o atendimento, em [`endpoint`] (com as divergências de
+//! paridade vs o stub HTTP Python documentadas no header daquele módulo).
+//!
+//! Os timestamps do log são relativos ao t0 do processo (o driver usa epoch
+//! ns — ver doc de [`endpoint`]).
 //!
 //! Uso: `det-responder -- --domain 78 --delay-ms 5 --capacity 4 --log resp.jsonl`
 
@@ -20,7 +24,13 @@ use futures_util::StreamExt;
 use std::fs::OpenOptions;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+/// Graça máxima do dreno pós-SIGINT (REQ/T-820-14): pendências na fila são
+/// concluídas dentro deste teto; o valor espelha o timeout do stub HTTP
+/// Python (30 s) — pendências mais velhas já foram abandonadas pelos
+/// clientes (timeout do driver = 30 s).
+const DRAIN_GRACE_S: u64 = 30;
 
 struct Config {
     domain: u32,
@@ -116,10 +126,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (tx, rx) =
         tokio::sync::mpsc::channel::<(LLMInferenceRequest, std::time::Duration)>(cfg.queue);
     let rx = Arc::new(tokio::sync::Mutex::new(rx));
+    let mut workers = Vec::new();
     for _ in 0..cfg.capacity {
         let rx = Arc::clone(&rx);
         let ep = Arc::clone(&ep);
-        tokio::spawn(async move {
+        workers.push(tokio::spawn(async move {
             loop {
                 let item = { rx.lock().await.recv().await };
                 match item {
@@ -127,11 +138,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     None => break,
                 }
             }
-        });
+        }));
     }
 
     eprintln!(
-        "det-responder READY domain={} delay_ms={} capacity={} queue={} log={}",
+        "det-responder READY domain={} delay_ms={} capacity={} queue={} log={} log_ns=relative_to_t0",
         cfg.domain, cfg.delay_ms, cfg.capacity, cfg.queue, cfg.log_path
     );
     let mut req_stream = Box::pin(req_reader.take_aiter_timeout(200_000_000));
@@ -149,15 +160,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
             _ = tokio::signal::ctrl_c() => {
-                eprintln!(
-                    "det-responder STOP ok={} err={} rejected_full={}",
-                    ep.n_ok.load(std::sync::atomic::Ordering::SeqCst),
-                    ep.n_err.load(std::sync::atomic::Ordering::SeqCst),
-                    ep.n_rejected.load(std::sync::atomic::Ordering::SeqCst)
-                );
+                eprintln!("det-responder SIGINT — parando de aceitar; drenando fila pendente");
                 break;
             }
         }
     }
+
+    // Encerramento gracioso (REQ/T-820-14): fecha a fila para novas admissões,
+    // drena as pendências com graça limitada e registra os contadores finais.
+    drop(tx);
+    let drain = async {
+        for w in workers {
+            let _ = w.await;
+        }
+    };
+    if tokio::time::timeout(Duration::from_secs(DRAIN_GRACE_S), drain)
+        .await
+        .is_err()
+    {
+        eprintln!(
+            "det-responder: graça de dreno de {DRAIN_GRACE_S}s esgotada — pendências abandonadas"
+        );
+    }
+    eprintln!(
+        "det-responder EXIT ok={} err={} rejected_full={}",
+        ep.n_ok.load(std::sync::atomic::Ordering::SeqCst),
+        ep.n_err.load(std::sync::atomic::Ordering::SeqCst),
+        ep.n_rejected.load(std::sync::atomic::Ordering::SeqCst)
+    );
     Ok(())
 }

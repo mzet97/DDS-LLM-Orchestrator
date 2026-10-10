@@ -1,0 +1,15 @@
+{
+  "system": "langgraph",
+  "workload": "seq_chain_v1",
+  "n": 1,
+  "delay_ms": 50,
+  "capacity": 4,
+  "t_total_s": 0.2131,
+  "t_backend_sum_s": 0.1503,
+  "speedup_backend": 0.7053,
+  "mean_latency_s": 0.2131,
+  "backend_calls": 3,
+  "workflows": [
+    "langgraph-000"
+  ]
+}

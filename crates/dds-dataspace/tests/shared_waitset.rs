@@ -237,3 +237,57 @@ async fn driver_sobrevive_a_registro_e_liberacao_concorrentes() {
         .expect("DataSpace ainda tem outras referências Arc vivas");
     ds.shutdown().await.unwrap();
 }
+
+/// T-820-05/P1-7: derrubar o DataSpace termina as streams graciosamente —
+/// o `Drop` do `SharedWaitSet` marca a flag de shutdown e acorda os
+/// registros (`notify_waiters`); o loop do gerador observa
+/// `Registration::is_shutdown()` e encerra o stream (`None`) em vez de
+/// pendurar para sempre num `Notified` que nunca mais dispararia (o driver
+/// do waitset é abortado no mesmo Drop).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn drop_do_dataspace_encerra_streams_graciosamente() {
+    use dds_contract::generated::dds_llm_orchestrator::AgentState;
+    use dds_dataspace::api::DataSpaceApi;
+
+    const DOMAIN_SHUTDOWN: u32 = 89;
+    let ds = DataSpace::new(DOMAIN_SHUTDOWN, DataSpace::STRENGTH_ORCHESTRATOR).unwrap();
+
+    let mut stream = Box::pin(ds.stream_agent_states());
+    // Registro EAGER (T-820-05): o reader já está anexado ao WaitSet quando
+    // a stream é devolvida — sem depender do primeiro poll.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        ds.shared_waitset().registration_count(),
+        1,
+        "registro eager esperado na criação da stream"
+    );
+
+    // Prova que a stream está viva antes do teardown: publica um AgentState
+    // e o recebe.
+    ds.write_agent_state(AgentState {
+        agent_id: "a-shutdown".into(),
+        ..AgentState::default()
+    })
+    .await
+    .expect("write_agent_state");
+    let first = tokio::time::timeout(Duration::from_secs(15), stream.next())
+        .await
+        .expect("stream vivo antes do shutdown")
+        .expect("stream não deveria terminar antes do shutdown");
+    assert_eq!(first.agent_id, "a-shutdown");
+
+    // Shutdown: o Drop marca a flag e acorda os registros pendentes.
+    ds.shutdown().await.expect("shutdown");
+
+    // O stream termina (None) em prazo finito, em vez de pendurar para
+    // sempre no `Notified` que nunca mais dispararia.
+    let ended = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+    assert!(
+        ended.is_ok(),
+        "stream deveria terminar após o shutdown do DataSpace (não pendurar)"
+    );
+    assert!(
+        ended.expect("timeout na verificação de fim").is_none(),
+        "fim gracioso do stream após shutdown deve ser None"
+    );
+}

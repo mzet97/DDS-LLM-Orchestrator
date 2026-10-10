@@ -8,6 +8,10 @@ use policy_engine::{PolicyDecision as DocumentDecision, PolicyDocument, Security
 
 /// Maximum time a policy sample remains usable.
 pub const DEFAULT_POLICY_MAX_AGE: Duration = Duration::from_secs(300);
+
+/// Skew de relógio tolerado entre o publicador da política e o validador
+/// (hosts NTP-defasados em centenas de ms — T-890-06).
+pub const DEFAULT_FUTURE_SKEW: Duration = Duration::from_secs(5);
 /// Policy instance consumed by the MCP gateway.
 pub const DEFAULT_POLICY_ID: &str = "default";
 
@@ -85,6 +89,11 @@ struct ActivePolicy {
 pub struct DistributedPolicy {
     policy_id: String,
     max_age_ns: u64,
+    /// Tolerância de skew para timestamp "no futuro" (T-890-06): relógios de
+    /// hosts diferentes divergem em centenas de ms (medido .62×.64 ≈ 0,2-0,8
+    /// s); com tolerância zero, o snapshot fresco chega "do futuro" e é
+    /// rejeitado — o gateway ficava permanentemente sem política.
+    future_skew_ns: u64,
     active: RwLock<Option<ActivePolicy>>,
 }
 
@@ -99,6 +108,7 @@ impl DistributedPolicy {
         Self {
             policy_id: policy_id.into(),
             max_age_ns: u64::try_from(max_age.as_nanos()).unwrap_or(u64::MAX),
+            future_skew_ns: u64::try_from(DEFAULT_FUTURE_SKEW.as_nanos()).unwrap_or(u64::MAX),
             active: RwLock::new(None),
         }
     }
@@ -226,7 +236,9 @@ impl DistributedPolicy {
                 reason: DenialReason::NoSnapshot,
             };
         };
-        if now_ns < policy.timestamp_ns
+        // Mesmo skew do ingest (T-890-06): snapshot levemente no futuro
+        // (relógio do publicador adiantado) ainda vale — não é expirado.
+        if now_ns.saturating_add(self.future_skew_ns) < policy.timestamp_ns
             || now_ns.saturating_sub(policy.timestamp_ns) > self.max_age_ns
         {
             return PolicyDecision::Denied {
@@ -275,7 +287,7 @@ impl DistributedPolicy {
             return Err(PolicyIngestError::MissingPublisher);
         }
         if timestamp_ns == 0
-            || timestamp_ns > now_ns
+            || timestamp_ns.saturating_sub(now_ns) > self.future_skew_ns
             || now_ns.saturating_sub(timestamp_ns) > self.max_age_ns
         {
             return Err(PolicyIngestError::InvalidTimestamp);

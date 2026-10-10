@@ -13,6 +13,18 @@ mod app {
     use anyhow::{bail, Result};
     use benchmarks::{BenchmarkDriver, DriverConfig};
     use std::path::PathBuf;
+    use std::str::FromStr;
+
+    /// Parse estrito de flag numérica (REQ/T-820-13): valor ausente ou
+    /// inválido é ERRO — fallback silencioso invalida a comparação entre
+    /// braços (ex.: `--duration abc` rodaria com a duração do cenário).
+    fn parse_flag<T: FromStr>(args: &[String], i: usize, flag: &str) -> Result<T> {
+        let raw = args
+            .get(i + 1)
+            .ok_or_else(|| anyhow::anyhow!("{flag} requer um valor"))?;
+        raw.parse::<T>()
+            .map_err(|_| anyhow::anyhow!("valor inválido para {flag}: '{raw}'"))
+    }
 
     #[tokio::main]
     pub async fn main() -> Result<()> {
@@ -23,26 +35,30 @@ mod app {
             )
             .init();
 
-        let mut scenario_id = "E4".to_string();
+        let mut scenario_id: Option<String> = None;
         let mut cfg = DriverConfig::default();
         let args: Vec<String> = std::env::args().collect();
         let mut i = 1;
         while i < args.len() {
             match args[i].as_str() {
                 "--scenario" => {
-                    scenario_id = args.get(i + 1).cloned().unwrap_or_else(|| "E4".into());
+                    scenario_id = Some(
+                        args.get(i + 1)
+                            .ok_or_else(|| anyhow::anyhow!("--scenario requer um valor"))?
+                            .clone(),
+                    );
                     i += 2;
                 }
                 "--domain" => {
-                    cfg.domain = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0);
+                    cfg.domain = parse_flag(&args, i, "--domain")?;
                     i += 2;
                 }
                 "--duration" => {
-                    cfg.duration_s = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(0.0);
+                    cfg.duration_s = parse_flag(&args, i, "--duration")?;
                     i += 2;
                 }
                 "--seed" => {
-                    cfg.seed = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(42);
+                    cfg.seed = parse_flag(&args, i, "--seed")?;
                     i += 2;
                 }
                 "--out" => {
@@ -64,14 +80,11 @@ mod app {
                     i += 2;
                 }
                 "--workers" => {
-                    cfg.workers = args.get(i + 1).and_then(|s| s.parse().ok()).unwrap_or(10);
+                    cfg.workers = parse_flag(&args, i, "--workers")?;
                     i += 2;
                 }
                 "--timeout-ms" => {
-                    cfg.timeout_ms = args
-                        .get(i + 1)
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(30_000);
+                    cfg.timeout_ms = parse_flag(&args, i, "--timeout-ms")?;
                     i += 2;
                 }
                 "--list" => {
@@ -84,6 +97,7 @@ mod app {
             }
         }
 
+        let scenario_id = scenario_id.unwrap_or_else(|| "E4".into());
         let scenario = benchmarks::get_scenario(&scenario_id)
             .ok_or_else(|| anyhow::anyhow!("cenário desconhecido: {scenario_id}"))?
             .clone();
@@ -94,19 +108,26 @@ mod app {
             domain = cfg.domain,
             duration_s = cfg.duration_s,
             arm = %cfg.qos_arm,
+            workers = cfg.workers,
             "dds-bench iniciando"
         );
 
         let driver = BenchmarkDriver::new(cfg, scenario)?;
         let summary = driver.run().await?;
 
+        let concurrency = if summary.concurrency_levels.is_empty() {
+            String::new()
+        } else {
+            format!(" concurrency={:?}", summary.concurrency_levels)
+        };
         println!(
-            "submetidas={} ok={} erros={} timeouts={} em {:.1}s → {}",
+            "submetidas={} ok={} erros={} timeouts={} em {:.1}s{} → {}",
             summary.submitted,
             summary.ok,
             summary.errors,
             summary.timeouts,
             summary.elapsed_s,
+            concurrency,
             summary.out_file.display()
         );
         Ok(())

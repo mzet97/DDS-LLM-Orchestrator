@@ -63,7 +63,7 @@ jobs:
       - run: cargo deny check
 
   real-dds:
-    name: Real CycloneDDS loopback, 18 topics, fail-closed MCP
+    name: Real CycloneDDS loopback, 19 topics, fail-closed MCP
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -75,7 +75,7 @@ jobs:
         with:
           key: stable-dds-${{ hashFiles('rust-toolchain.toml', 'Cargo.lock') }}
           cache-targets: false
-      - name: Canonical 18-topic contract
+      - name: Canonical 19-topic contract
         run: cargo test -p dds-contract --features dds --locked topics_match_context
       - name: Real DDS loopback
         run: cargo test -p dds-dataspace --features dds --locked --test contract contract_real_dds -- --exact --nocapture

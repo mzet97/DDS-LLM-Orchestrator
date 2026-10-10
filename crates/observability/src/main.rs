@@ -66,20 +66,46 @@ mod app {
 
         tracing::info!("coletores iniciados, aguardando eventos...");
 
-        // Loop principal: flush periódico
+        // Loop principal: flush periódico + SIGINT gracioso (REQ/T-820-04) —
+        // o Ctrl+C faz flush do sink e do trace_collector antes de sair, sem
+        // perder o buffer pendente.
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
-            interval.tick().await;
-            sink.flush().ok();
-            trace_collector.flush().ok();
-            let stats = qos.stats();
-            tracing::info!(
-                metrics = stats.total_metrics,
-                violations = stats.total_violations,
-                discoveries = stats.total_discoveries,
-                "observability snapshot"
-            );
+            tokio::select! {
+                _ = interval.tick() => {
+                    sink.flush().ok();
+                    trace_collector.flush().ok();
+                    let stats = qos.stats();
+                    tracing::info!(
+                        metrics = stats.total_metrics,
+                        violations = stats.total_violations,
+                        discoveries = stats.total_discoveries,
+                        "observability snapshot"
+                    );
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    tracing::info!("SIGINT recebido — flush final antes de sair");
+                    break;
+                }
+            }
         }
+
+        // Flush final (melhor esforço; erros logados, não silenciados).
+        if let Err(e) = sink.flush() {
+            tracing::warn!(error = %e, "flush final do sink falhou");
+        }
+        if let Err(e) = trace_collector.flush() {
+            tracing::warn!(error = %e, "flush final do trace_collector falhou");
+        }
+        let stats = qos.stats();
+        tracing::info!(
+            metrics = stats.total_metrics,
+            violations = stats.total_violations,
+            discoveries = stats.total_discoveries,
+            traces = trace_collector.event_count(),
+            "observability collector encerrado"
+        );
+        Ok(())
     }
 }
 

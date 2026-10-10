@@ -26,10 +26,24 @@ pub struct ClaimConfig {
     pub target_agent_prefix: String, // vazio = aceita qualquer target
 }
 
-/// Verifica se uma task é elegível para claim.
+/// Verifica se uma task é elegível para claim (variante com snapshot de
+/// `HashSet` — testes/compat).
 pub fn is_eligible(task: &Task, config: &ClaimConfig, claimed: &HashSet<String>) -> bool {
-    // Já claimed por outro?
-    if claimed.contains(&task.task_id) {
+    is_eligible_with(task, config, |id| claimed.contains(id))
+}
+
+/// Verifica se uma task é elegível para claim com checagem pontual de
+/// "já claimed por este agente?".
+///
+/// T-820-09: o caminho quente de ingestão DDS chamava `claimed_set().await`,
+/// que CLONAVA o `HashSet` inteiro por amostra recebida; com o predicado, o
+/// chamador faz um point-check (`read` + `contains`) sem cópia por amostra.
+pub fn is_eligible_with<P>(task: &Task, config: &ClaimConfig, is_claimed: P) -> bool
+where
+    P: Fn(&str) -> bool,
+{
+    // Já claimed por outro (por este agente)?
+    if is_claimed(&task.task_id) {
         return false;
     }
 

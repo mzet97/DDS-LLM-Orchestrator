@@ -171,6 +171,9 @@ Regras: IDLs-fonte em `third_party/llama.cpp_dds/dds/idl/OrchestratorDDS.idl`
 (LLM.*, keyless) e `…/v4/idl/OrchestratorV4.idl` (Task/TaskOutput/…); tipos
 `LLM.*` **keyless por requisito** (REQ-003, sem `@key`); `Task.status`:
 0=PENDING, 3=DONE, 4=FAILED; correlação sempre por `request_id == task_id`.
+19º tópico `Studio.NodePresence` (T-890, decisão 2026-10-05): presença das
+instalações do Studio — `StudioNodePresence` (@key `node_id`), perfil
+AgentRegistry-like; mDNS eliminado (DDS é requisito mínimo por máquina).
 
 ## 6. `dds-dataspace` — DataSpace, QoS e streams
 

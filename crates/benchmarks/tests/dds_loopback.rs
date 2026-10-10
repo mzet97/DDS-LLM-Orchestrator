@@ -25,6 +25,7 @@ async fn spawn_agent(id: &str) -> Arc<AgentDds> {
         specialization: Specialization::Text,
         slots: 8,
         dds_domain: DOMAIN,
+        target_agent_prefix: String::new(),
     };
     let runtime = Arc::new(AgentDds::new(config).unwrap());
     let engine = Arc::new(MockEngine::new("chunk", 2, 5));
@@ -90,6 +91,8 @@ async fn driver_closed_loop_workers_concorrentes() {
 
     let dir = tempfile::tempdir().unwrap();
     let scenario = get_scenario("OP1").unwrap().clone();
+    // workers=2 (>0) sobrescreve a grade do cenário com um único nível —
+    // sem override, o driver itera a grade declarada (REQ/T-820-13).
     let driver = BenchmarkDriver::new(cfg(dir.path().to_path_buf(), 3.0, 7), scenario).unwrap();
     let summary = driver.run().await.unwrap();
 
@@ -103,6 +106,14 @@ async fn driver_closed_loop_workers_concorrentes() {
         summary.timeouts
     );
     assert!(summary.ok >= 10, "ok={}", summary.ok);
+
+    // Override de workers vira um único nível, taggeado em todos os registros.
+    assert_eq!(summary.concurrency_levels, [2]);
+    let content = std::fs::read_to_string(&summary.out_file).unwrap();
+    for line in content.trim().lines() {
+        let v: serde_json::Value = serde_json::from_str(line).unwrap();
+        assert_eq!(v["concurrency"], 2, "registro sem tag de concorrência");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 8)]

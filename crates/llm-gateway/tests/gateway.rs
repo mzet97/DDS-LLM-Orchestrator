@@ -73,8 +73,12 @@ fn rate_limiter_never_grants_one_token_twice() {
     assert_eq!(grants, 1);
 }
 
+/// T-820-12: `agent_id` SAIU da chave do cache — hit cross-agent é o objetivo
+/// de um cache de LLM (a antiga "isolação por agente" fazia dois agentes com
+/// o mesmo prompt pagarem duas inferências). A desambiguação de fronteira de
+/// campos (delimitação por comprimento no hash) permanece.
 #[tokio::test]
-async fn cache_is_isolated_by_agent_and_unambiguous_at_field_boundaries() {
+async fn cache_hits_cross_agent_and_stays_unambiguous_at_field_boundaries() {
     let (local, _, calls) = mock(Provider::Local, 0);
     let providers = GatewayProviders::new(Some(local), None);
     let gateway = LlmGateway::new(1, 100, 16);
@@ -89,15 +93,25 @@ async fn cache_is_isolated_by_agent_and_unambiguous_at_field_boundaries() {
         .await
         .unwrap();
 
+    // Mesmo (constraint, model, messages), agent diferente → CACHE HIT.
     let mut other_agent = first.clone();
     other_agent.request_id = "other".into();
     other_agent.agent_id = "other-agent".into();
-    gateway
+    let hit = gateway
         .process_routed(&providers, other_agent)
         .await
         .unwrap();
-    assert_eq!(calls.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "conteúdo igual de outro agente deveria ser cache hit (T-820-12)"
+    );
+    // O conteúdo vem da 1ª inferência ("mock-first"); uma chamada fresca do
+    // "other" teria produzido "mock-other".
+    assert_eq!(hit.content, "mock-first", "hit devolve conteúdo cacheado");
 
+    // Fronteira de campos: (model="b:c") ≠ (model="c") mesmo com o hash —
+    // chaves distintas, ambas vão ao provider.
     let mut left = first.clone();
     left.request_id = "left".into();
     left.agent_id = "a".into();
@@ -110,7 +124,53 @@ async fn cache_is_isolated_by_agent_and_unambiguous_at_field_boundaries() {
     right.model_name = "c".into();
     gateway.process_routed(&providers, right).await.unwrap();
 
-    assert_eq!(calls.load(Ordering::Relaxed), 4);
+    assert_eq!(calls.load(Ordering::Relaxed), 3);
+}
+
+/// T-820-12: eviction FIFO REAL — despeja a entrada mais antiga por contador
+/// de inserção (antes: "primeiro do iterador" do DashMap, arbitrária).
+#[test]
+fn cache_eviction_fifo_despeja_mais_antigo() {
+    use llm_gateway::LlmCache;
+
+    fn result(id: &str) -> dds_contract::generated::orchestrator::LLMInferenceResult {
+        dds_contract::generated::orchestrator::LLMInferenceResult {
+            request_id: id.into(),
+            seq_num: 0,
+            content: format!("c-{id}"),
+            is_final: true,
+            finish_reason: 1,
+            model_used: "m".into(),
+            tokens_prompt: 0,
+            tokens_completion: 0,
+            emitted_at_ns: 0,
+        }
+    }
+
+    let cache = LlmCache::new(3);
+    cache.insert("k1".into(), result("1"));
+    cache.insert("k2".into(), result("2"));
+    cache.insert("k3".into(), result("3"));
+
+    // Re-inserção de k2: vira o mais novo da ordem FIFO.
+    cache.insert("k2".into(), result("2b"));
+
+    cache.insert("k4".into(), result("4")); // teto: despeja o mais antigo
+    assert!(
+        cache.get("k1").is_none(),
+        "k1 (mais antigo) deve ser despejado"
+    );
+    assert!(
+        cache.get("k2").is_some(),
+        "k2 foi re-inserido — não é mais o mais antigo (eviction arbitrária do iterador podia removê-lo)"
+    );
+    assert!(cache.get("k3").is_some());
+    assert!(cache.get("k4").is_some());
+
+    cache.insert("k5".into(), result("5")); // despeja k3 (agora o mais antigo)
+    assert!(cache.get("k3").is_none());
+    assert!(cache.get("k2").is_some());
+    assert_eq!(cache.get("k2").unwrap().content, "c-2b");
 }
 
 #[tokio::test]

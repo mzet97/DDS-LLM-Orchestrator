@@ -88,18 +88,29 @@ impl Engine for HttpEngine {
         let client = self.client.clone();
         let url = format!("{}/v1/chat/completions", self.base_url);
 
-        let messages: Vec<ChatMessage> =
-            serde_json::from_str(&req.messages_json).unwrap_or_default();
-
-        let body = ChatRequest {
-            model: req.model_name.clone(),
-            messages,
-            temperature: req.temperature,
-            max_tokens: req.max_tokens,
-            stream: false,
-        };
-
         Box::pin(stream! {
+            // T-820-09: `messages_json` malformado era silenciado com
+            // `unwrap_or_default()` — o engine enviava uma requisição com
+            // mensagens VAZIAS ao servidor (e o erro real da task virava um
+            // 400 opaco). Agora propaga erro tipado com a causa.
+            let messages: Vec<ChatMessage> = match serde_json::from_str(&req.messages_json) {
+                Ok(messages) => messages,
+                Err(error) => {
+                    yield Err(EngineError::InferenceFailed(format!(
+                        "messages_json malformado: {error}"
+                    )));
+                    return;
+                }
+            };
+
+            let body = ChatRequest {
+                model: req.model_name.clone(),
+                messages,
+                temperature: req.temperature,
+                max_tokens: req.max_tokens,
+                stream: false,
+            };
+
             let resp = client
                 .post(&url)
                 .json(&body)
@@ -113,6 +124,20 @@ impl Engine for HttpEngine {
                         EngineError::InferenceFailed(e.to_string())
                     }
                 })?;
+
+            // T-820-09: status não-2xx vira erro tipado com status + corpo
+            // truncado — antes o parse do JSON de erro falhava com mensagem
+            // genérica (ou pior, um body não-JSON casado com `unwrap` do
+            // consumidor).
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                let truncated: String = body.chars().take(256).collect();
+                yield Err(EngineError::InferenceFailed(format!(
+                    "llama-server HTTP {status}: {truncated}"
+                )));
+                return;
+            }
 
             let chat_resp: ChatResponse = resp
                 .json()
@@ -192,5 +217,66 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    /// T-820-09: `messages_json` malformado propaga erro tipado (não envia
+    /// requisição com mensagens vazias).
+    #[tokio::test]
+    async fn malformed_messages_json_yields_typed_error() {
+        let engine = HttpEngine::new("http://127.0.0.1:9").unwrap(); // porta morta
+        let mut stream = engine.infer_stream(InferRequest {
+            request_id: "bad-json".into(),
+            model_name: "test".into(),
+            messages_json: "isto não é json".into(),
+            temperature: 0.0,
+            max_tokens: 1,
+            stream: false,
+            timeout_ms: 1_000,
+        });
+        match stream.next().await.unwrap() {
+            Err(EngineError::InferenceFailed(msg)) => {
+                assert!(
+                    msg.contains("messages_json malformado"),
+                    "mensagem deveria citar a causa: {msg}"
+                );
+            }
+            other => panic!("esperava InferenceFailed por JSON malformado, veio {other:?}"),
+        }
+    }
+
+    /// T-820-09: status não-2xx vira erro com status + corpo truncado.
+    #[tokio::test]
+    async fn non_2xx_status_yields_typed_error_with_body() {
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = server.local_addr().unwrap();
+        let handle = tokio::spawn(async move {
+            let (mut socket, _) = server.accept().await.unwrap();
+            let mut request = [0u8; 1024];
+            let _ = socket.read(&mut request).await.unwrap();
+            socket
+                .write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/plain\r\nContent-Length: 26\r\nConnection: close\r\n\r\nboom: modelo nao carregado",
+                )
+                .await
+                .unwrap();
+        });
+        let engine = HttpEngine::new(&format!("http://{address}")).unwrap();
+        let mut stream = engine.infer_stream(InferRequest {
+            request_id: "err-500".into(),
+            model_name: "test".into(),
+            messages_json: r#"[{"role":"user","content":"oi"}]"#.into(),
+            temperature: 0.0,
+            max_tokens: 1,
+            stream: false,
+            timeout_ms: 2_000,
+        });
+        match stream.next().await.unwrap() {
+            Err(EngineError::InferenceFailed(msg)) => {
+                assert!(msg.contains("500"), "deveria citar o status: {msg}");
+                assert!(msg.contains("boom"), "deveria incluir o corpo: {msg}");
+            }
+            other => panic!("esperava InferenceFailed por HTTP 500, veio {other:?}"),
+        }
+        handle.await.unwrap();
     }
 }

@@ -81,17 +81,36 @@ impl TraceCollector {
         self.total_count.load(Ordering::Relaxed)
     }
 
-    /// Flush eventos para arquivo JSONL.
+    /// Flush eventos para arquivo JSONL (drain-and-write).
+    ///
+    /// Cada evento é gravado **exatamente uma vez**: os eventos são retirados
+    /// do mapa (drain) antes da escrita, e o append seguinte só contém o delta
+    /// — sem isso, o flush periódico duplicava todo o histórico a cada 30 s
+    /// (REQ/T-820-04). Em erro de escrita, os eventos drenados são reinseridos
+    /// (best-effort) para não serem perdidos — o pior caso é duplicação de uma
+    /// escrita parcial, nunca perda.
     pub fn flush(&self) -> anyhow::Result<()> {
-        let file_path = self.output_dir.join("traces.jsonl");
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&file_path)?;
+        // Drain: retira os eventos de cada entrada e remove as entradas
+        // vazias (memória liberada; `get_trace` pós-flush devolve vazio).
+        let mut drained: Vec<TraceEvent> = Vec::new();
+        for mut entry in self.events.iter_mut() {
+            drained.extend(std::mem::take(entry.value_mut()));
+        }
+        self.events.retain(|_, events| !events.is_empty());
 
-        use std::io::Write;
-        for entry in self.events.iter() {
-            for event in entry.value() {
+        if drained.is_empty() {
+            return Ok(());
+        }
+
+        let write_result = (|| -> anyhow::Result<()> {
+            let file_path = self.output_dir.join("traces.jsonl");
+            let mut file = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&file_path)?;
+
+            use std::io::Write;
+            for event in &drained {
                 let json = serde_json::json!({
                     "trace_id": event.trace_id,
                     "seq_num": event.seq_num,
@@ -103,11 +122,27 @@ impl TraceCollector {
                 });
                 writeln!(file, "{}", json)?;
             }
+            Ok(())
+        })();
+
+        if let Err(e) = write_result {
+            tracing::warn!(
+                error = %e,
+                count = drained.len(),
+                "flush de traces falhou; eventos reinseridos (best-effort)"
+            );
+            for event in drained {
+                self.events
+                    .entry(event.trace_id.clone())
+                    .or_default()
+                    .push(event);
+            }
+            return Err(e);
         }
         Ok(())
     }
 
-    /// Limpa eventos antigos.
+    /// Limpa eventos antigos (uso em testes; o serviço usa `flush`, que drena).
     pub fn clear(&self) {
         self.events.clear();
         self.total_count.store(0, Ordering::Relaxed);
@@ -171,5 +206,70 @@ mod tests {
         let first: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
         assert_eq!(first["trace_id"], "t1");
         assert_eq!(first["seq_num"], 0);
+    }
+
+    /// REQ/T-820-04: dois flushes não duplicam linhas — o arquivo contém
+    /// exatamente o total de eventos ingeridos (flush drena o mapa).
+    #[test]
+    fn two_flushes_do_not_duplicate_lines_and_file_matches_total() {
+        let dir = tempfile::tempdir().unwrap();
+        let tc = TraceCollector::new(dir.path().to_str().unwrap()).unwrap();
+
+        tc.ingest(&make_event("a", 0));
+        tc.ingest(&make_event("a", 1));
+        tc.flush().unwrap();
+
+        // Eventos chegando entre flushes vão para o delta do próximo flush.
+        tc.ingest(&make_event("b", 0));
+        tc.flush().unwrap();
+
+        let file_path = dir.path().join("traces.jsonl");
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        let lines: Vec<&str> = content.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(lines.len(), 3, "sem duplicação entre flushes");
+
+        // Cada (trace_id, seq_num) aparece exatamente uma vez.
+        let mut keys: Vec<(String, u32)> = lines
+            .iter()
+            .map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).unwrap();
+                (
+                    v["trace_id"].as_str().unwrap().into(),
+                    v["seq_num"].as_u64().unwrap() as u32,
+                )
+            })
+            .collect();
+        keys.sort();
+        keys.dedup();
+        assert_eq!(keys.len(), 3);
+
+        // O mapa foi drenado: pós-flush não há eventos pendentes, mas o
+        // contador de vida (ingestões) permanece com o total.
+        assert_eq!(tc.trace_count(), 0);
+        assert_eq!(tc.event_count(), 3);
+
+        // Terceiro flush sem eventos novos não acrescenta linhas.
+        tc.flush().unwrap();
+        let content = std::fs::read_to_string(&file_path).unwrap();
+        assert_eq!(content.lines().filter(|l| !l.trim().is_empty()).count(), 3);
+    }
+
+    /// REQ/T-820-04: em erro de escrita os eventos drenados são reinseridos
+    /// (best-effort) — nada é perdido.
+    #[test]
+    fn flush_error_reinserts_drained_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let tc = TraceCollector::new(dir.path().to_str().unwrap()).unwrap();
+        tc.ingest(&make_event("t1", 0));
+        tc.ingest(&make_event("t1", 1));
+
+        // Remove o diretório de saída: a abertura do arquivo falha.
+        std::fs::remove_dir_all(dir.path()).unwrap();
+        assert!(tc.flush().is_err());
+
+        // Eventos de volta no mapa (nada perdido).
+        assert_eq!(tc.trace_count(), 1);
+        assert_eq!(tc.get_trace("t1").len(), 2);
+        assert_eq!(tc.event_count(), 2);
     }
 }

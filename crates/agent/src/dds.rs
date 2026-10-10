@@ -95,13 +95,31 @@ impl AgentDds {
 
     /// T-206: heartbeat dedicado — publica `AgentState` a cada 5 s.
     /// Não congela durante inferência longa (task tokio própria).
+    ///
+    /// T-820-09: `detect_vram`/`update_vram_usage` não tinham NENHUM chamador
+    /// — VRAM publicada sempre 0. Detecção uma vez no boot e atualização de
+    /// uso a cada ciclo, ambos via `spawn_blocking` (`Command::output` é
+    /// bloqueante e não pode rodar direto no runtime async). Falha → log e
+    /// mantém zeros/valor anterior (nunca derruba o heartbeat).
     pub fn spawn_heartbeat(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let ds = Arc::clone(&self.dataspace);
         let status = self.agent.status();
         tokio::spawn(async move {
+            let boot = Arc::clone(&status);
+            if let Err(e) = tokio::task::spawn_blocking(move || boot.detect_vram()).await {
+                tracing::warn!(error = %e, "heartbeat: detecção de VRAM falhou (mantendo zeros)");
+            }
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             loop {
                 interval.tick().await;
+                let cycle = Arc::clone(&status);
+                if let Err(e) = tokio::task::spawn_blocking(move || cycle.update_vram_usage()).await
+                {
+                    tracing::debug!(
+                        error = %e,
+                        "heartbeat: atualização de VRAM falhou (mantendo valor anterior)"
+                    );
+                }
                 if let Err(e) = ds.write_agent_state(status.to_dds()).await {
                     tracing::warn!(error = %e, "heartbeat: falha ao publicar AgentState");
                 }
@@ -153,7 +171,10 @@ impl AgentDds {
             tokio::spawn(async move {
                 let mut stream = Box::pin(this.dataspace.stream_tasks());
                 while let Some(task) = stream.next().await {
-                    if !claim::is_eligible(&task, &cfg, &this.agent.claimed_set().await) {
+                    // T-820-09: point-check de claimed (sem clonar o HashSet
+                    // por amostra DDS — era `claimed_set().await` aqui, uma
+                    // cópia O(n) no hot loop).
+                    if !claim::is_eligible_with(&task, &cfg, |id| this.agent.is_claimed(id)) {
                         continue;
                     }
                     let queued = QueuedClaim {
@@ -189,7 +210,7 @@ impl AgentDds {
                     continue;
                 }
             };
-            if !claim::is_eligible(&fresh, &claim_cfg, &self.agent.claimed_set().await) {
+            if !claim::is_eligible_with(&fresh, &claim_cfg, |id| self.agent.is_claimed(id)) {
                 continue;
             }
             if fresh.deadline_ns > 0 && fresh.deadline_ns <= now_ns() {
@@ -211,7 +232,7 @@ impl AgentDds {
             // task (ainda PENDING na visão local antes do nosso write
             // propagar de volta) dispare uma segunda tentativa concorrente
             // enquanto a primeira está na janela de confirmação.
-            self.agent.mark_claimed(task_id).await;
+            self.agent.mark_claimed(task_id);
 
             let this = Arc::clone(&self);
             let engine = Arc::clone(&engine);
@@ -244,7 +265,7 @@ impl AgentDds {
         let claimed_task = claim::claim_task(&task, &claim_cfg.agent_id);
         if let Err(e) = self.dataspace.write_task(claimed_task.clone()).await {
             tracing::warn!(task_id, error = %e, "claim: falha ao escrever ASSIGNED");
-            self.agent.unmark_claimed(&task_id).await;
+            self.agent.unmark_claimed(&task_id);
             return;
         }
 
@@ -271,7 +292,7 @@ impl AgentDds {
         };
         if !mine {
             tracing::info!(task_id, "claim perdido na arbitragem (outro agente venceu)");
-            self.agent.unmark_claimed(&task_id).await;
+            self.agent.unmark_claimed(&task_id);
             return;
         }
 
@@ -290,7 +311,16 @@ impl AgentDds {
                     error = %e,
                     "capacidade divergente; task abortada sem panic"
                 );
-                self.agent.unmark_claimed(&task_id).await;
+                // T-820-09: pós-claim confirmado o agente É o dono da
+                // instância — sem o FAILED best-effort a task ficava presa em
+                // ASSIGNED sem terminalidade (cliente pendurado até o reaper
+                // de progresso do orchestrator, T-820-03).
+                self.publish_failed_best_effort(
+                    &claimed_task,
+                    format!("capacidade divergente no agente: {e}"),
+                )
+                .await;
+                self.agent.unmark_claimed(&task_id);
                 return;
             }
         };
@@ -298,7 +328,7 @@ impl AgentDds {
         if let Err(e) = self.process_and_publish(&claimed_task, engine).await {
             tracing::error!(task_id, error = %e, "processamento falhou");
         }
-        self.agent.unmark_claimed(&task_id).await;
+        self.agent.unmark_claimed(&task_id);
     }
 
     /// Processa uma task claimed: RUNNING → inferência (chunks via pool) → DONE/FAILED.
@@ -330,7 +360,14 @@ impl AgentDds {
         // medição) calculando-os por diferença a partir do T_total
         // observado no cliente, não por timestamp direto aqui.
         let t_agent_queue_ns = running.started_at_ns.saturating_sub(task.assigned_at_ns);
-        self.dataspace.write_task(running).await?;
+        if let Err(e) = self.dataspace.write_task(running).await {
+            // T-820-09: o `?` original deixava a task em ASSIGNED (confirmada,
+            // dona: este agente) sem terminalidade quando o write de RUNNING
+            // falhava. Publica FAILED best-effort antes de retornar.
+            let cause = format!("falha ao publicar RUNNING: {e}");
+            self.publish_failed_best_effort(task, cause).await;
+            anyhow::bail!(e);
+        }
 
         let timeout_ms = task
             .deadline_ns
@@ -338,8 +375,14 @@ impl AgentDds {
             .saturating_div(1_000_000)
             .max(1_000);
 
+        // T-820-09: request_id ÚNICO por tentativa (`{task_id}#{retry_count}`)
+        // — o histórico TransientLocal(256) dos tópicos `LLM.*` é keyless
+        // (correlação por request_id): com request_id repetido entre
+        // tentativas, o retry re-playa os chunks da tentativa anterior antes
+        // dos novos (conteúdo duplicado/fora de ordem no consumidor).
+        let request_id = format!("{}#{}", task.task_id, task.retry_count);
         let req = InferRequest {
-            request_id: task_id.clone(),
+            request_id,
             messages_json: task.messages_json.clone(),
             model_name: task.model_name.clone(),
             temperature: task.temperature,
@@ -361,7 +404,14 @@ impl AgentDds {
                         seq_num: chunk.seq_num,
                         content: chunk.content,
                         is_final: chunk.is_final,
-                        finish_reason: if chunk.is_final { 1 } else { 0 },
+                        // T-820-09: campo i32 unificado do IDL — valores do
+                        // enum canônico `orch_common::FinishReason`
+                        // (FR_COMPLETION=1), não literais soltos.
+                        finish_reason: if chunk.is_final {
+                            i32::from(orch_common::FinishReason::Completion)
+                        } else {
+                            i32::from(orch_common::FinishReason::None)
+                        },
                         agent_id: self.agent.config.agent_id.clone(),
                         token_count: chunk.tokens_completion,
                         emitted_at_ns: now_ns(),
@@ -421,21 +471,62 @@ impl AgentDds {
         match failed {
             None => {
                 final_task.status = 3; // DONE
-                final_task.finish_reason = "completion".into();
-                self.dataspace.write_task(final_task).await?;
+                                       // T-820-09: vocabulário canônico de `FinishReason` — o literal
+                                       // "completion" (lowercase) violava o contrato e o `/sync` do
+                                       // orchestrator recebia `FinishReason::parse → None`.
+                final_task.finish_reason = orch_common::FinishReason::Completion.as_str().into();
+                if let Err(e) = self.dataspace.write_task(final_task).await {
+                    // T-820-09: DONE perdido deixaria a task em RUNNING sem
+                    // terminalidade; não há segundo write seguro (o DONE já
+                    // falhou) — registra e deixa o reaper de progresso do
+                    // orchestrator (T-820-03) reciclar a task.
+                    self.agent.status().record_failure();
+                    anyhow::bail!("falha ao publicar DONE: {e}");
+                }
                 self.agent.status().record_completion(latency_ms);
                 tracing::info!(task_id, latency_ms, "task concluída");
             }
             Some(err_msg) => {
                 final_task.status = 4; // FAILED
                 final_task.finish_reason = err_msg.clone();
-                self.dataspace.write_task(final_task).await?;
+                if let Err(e) = self.dataspace.write_task(final_task).await {
+                    // T-820-09: se até o FAILED falhar, só resta o log — o
+                    // reaper de progresso (T-820-03) é a rede de segurança.
+                    tracing::error!(
+                        task_id,
+                        error = %e,
+                        "falha ao publicar FAILED — task pode ficar sem terminalidade"
+                    );
+                }
                 self.agent.status().record_failure();
                 anyhow::bail!(err_msg);
             }
         }
 
         Ok(())
+    }
+
+    /// T-820-09: publica FAILED best-effort em caminhos de erro pós-claim.
+    /// Pré-condição: o claim foi CONFIRMADO — o agente é o dono da instância,
+    /// então o write normal (`write_task`, strength de agente) é o correto e
+    /// preserva o ownership (o `write_task_without_ownership` é papel do
+    /// reaper do orchestrator, que não é dono). Nunca propaga erro: se o
+    /// write terminal também falhar, registra no log (não há mais o que
+    /// fazer aqui — o reaper de progresso do orchestrator é a rede de
+    /// segurança).
+    async fn publish_failed_best_effort(&self, task: &Task, cause: String) {
+        let mut failed = task.clone();
+        failed.status = 4; // FAILED
+        failed.completed_at_ns = now_ns();
+        failed.finish_reason = cause.clone();
+        if let Err(e) = self.dataspace.write_task(failed).await {
+            tracing::warn!(
+                task_id = %task.task_id,
+                error = %e,
+                cause = %cause,
+                "falha ao publicar FAILED best-effort — task pode ficar sem terminalidade"
+            );
+        }
     }
 }
 
@@ -453,6 +544,7 @@ mod tests {
             specialization: Specialization::Text,
             slots: 0,
             dds_domain: 0,
+            target_agent_prefix: String::new(),
         });
 
         assert!(result.is_err());

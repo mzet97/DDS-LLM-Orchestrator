@@ -1,0 +1,18 @@
+//! Painéis do binário `studio`, um módulo por responsabilidade.
+
+pub mod agents;
+pub mod dispatch;
+pub mod inference;
+pub mod launch;
+pub mod logs;
+pub mod machines;
+pub mod models;
+pub mod node;
+pub mod overview;
+pub mod services;
+pub mod shared_catalog;
+#[cfg(feature = "dds")]
+pub mod tools;
+#[cfg(feature = "dds")]
+pub mod topology;
+pub mod workflow;

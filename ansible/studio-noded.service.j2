@@ -1,0 +1,26 @@
+[Unit]
+Description=DDS Orchestrator Studio node — unidade {{ service_name }} ({{ 'ensaio F3 isolado' if service_name is search('f3-test') else 'fase 800, via Ansible F3' }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User={{ service_user }}
+WorkingDirectory={{ deploy_dir }}
+# Bibliotecas do PRÓPRIO pacote (lib/libddsc.so*) — localização exclusiva
+# deste serviço, sem instalação global no host.
+Environment=LD_LIBRARY_PATH={{ deploy_dir }}/lib
+Environment=STUDIO_NODE_BIND={{ node_bind }}
+Environment=STUDIO_NODE_PORT={{ node_port }}
+Environment=STUDIO_NODE_DB={{ db_file }}
+Environment=XDG_RUNTIME_DIR=/run/user/{{ 1000 if service_user == 'agent' else 1001 }}
+{% if owned_service is defined %}
+Environment=STUDIO_NODE_SERVICES={{ owned_service }}
+{% endif %}
+ExecStart={{ deploy_dir }}/studio-noded
+Restart={{ 'no' if service_name is search('f3-test') else 'always' }}
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,195 @@
+# CI da tese no Gitea Actions (F1 — workflow_dispatch, sem gatilho automático).
+#
+# Repositório espelhado: mzet97/DDS-LLM-Orchestrator (este repo; raiz do
+# workspace, SEM prefixo src/rust). CycloneDDS vem do REGISTRO
+# (=3.0.1/=1.2.1, fixos no Cargo.toml + lockfile) — sem receita por caminho.
+# Toolchain homologado: Rust 1.95 + rustfmt + clippy + make/g++ JÁ NA IMAGEM
+# do runner (tese-runner, referência por digest no manifesto) — o job NÃO
+# instala dependências (sem dtolnay/rust-toolchain, sem apt-get).
+#
+# Comandos ALINHADOS ao aceite homologado (ci/tese-runner/aceite.sh):
+#   fmt    : cargo fmt --all -- --check
+#   clippy : cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+#   test   : cargo test --workspace --all-features --locked --no-fail-fast -- --test-threads=1
+# Diferenças INTENCIONAIS em relação ao aceite, registradas:
+#   - paralelismo: --test-threads=1 em ambos (homologado; evita corrida
+#     entre suítes DDS no mesmo namespace);
+#   - CYCLONEDDS_URI: NÃO sobrescrito aqui — usa o ENV da imagem
+#     (file:///etc/cyclonedds.xml, interface autodetermine + multicast
+#     default). A sobreescrita anterior por config vazia foi removida;
+#   - build do job `build`: pacotes específicos de implantação/validação
+#     (-p studio-node -p agent -p orchestrator / -p client -p det-responder)
+#     em vez do --workspace completo do aceite — o pacote do artefato
+#     lista binários obrigatórios e falha se algum faltar.
+#
+# Actions de transferência de artefatos: as OFICIAIS upload/download
+# -artifact@v4 abortam em não-GitHub (GHESNotSupportedError — tentativa 2
+# do piloto, job build do run nº2). Usados os forks compatíveis com o
+# backend v4 do Gitea (≥1.22; instância 1.26.1): ChristopherHX/gitea-
+# {upload,download}-artifact, fixados por SHA de commit (imutável).
+# v6/v7 não são suportadas pelo Gitea; checkout também fixado por SHA.
+#
+# Sem `on: push`: só `workflow_dispatch` com `ref` opcional (SHA imutável
+# no input). Todos os jobs usam a MESMA revisão resolvida no job `pin`.
+# Prompts canônicos (PROMPT_VERSION:) vivem FORA deste repo (monorepo da
+# dissertação): dependência VERIFICÁVEL via `ansible/prompts.sha256`.
+# Versionar os prompts neste repo é pendência F1.
+
+name: tese-rust-ci
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'commit a compilar (vazio = HEAD do espelho)'
+        required: false
+        default: ''
+
+env:
+  CARGO_TERM_COLOR: never
+
+jobs:
+  pin:
+    runs-on: tese-rust
+    outputs:
+      sha: "${{ steps.resolve.outputs.sha }}"
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ inputs.ref || github.sha }}"
+          persist-credentials: false
+      - id: resolve
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          test -n "$sha"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "$sha" > RESOLVED_SHA
+
+  check:
+    needs: pin
+    runs-on: tese-rust
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ needs.pin.outputs.sha }}"
+          persist-credentials: false
+      - run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ needs.pin.outputs.sha }}"
+          id -u | grep -qx 1001 || { echo "UID inesperado: $(id)"; exit 1; }
+          rustc --version | grep -q 1.95.0 || { echo "toolchain inesperada"; exit 1; }
+      # Comandos homologados no aceite (ver cabeçalho). Sem rust-toolchain:
+      # a imagem do runner já contém a toolchain 1.95 + componentes.
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+      - run: cargo test --workspace --all-features --locked --no-fail-fast -- --test-threads=1
+
+  build:
+    needs: [pin, check]
+    runs-on: tese-rust
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: "${{ needs.pin.outputs.sha }}"
+          persist-credentials: false
+      - name: Build release (implantação)
+        run: cargo build --locked --release -p studio-node -p agent -p orchestrator --features dds
+      - name: Build release (validação)
+        run: cargo build --locked --release -p client -p det-responder --features dds
+      - name: "Empacotar com manifesto (estrito: ausente = falha)"
+        run: |
+          set -euo pipefail
+          sha="${{ needs.pin.outputs.sha }}"
+          arch="$(uname -m)"
+          out="dist/$arch"
+          mkdir -p "$out"
+          for bin in studio-noded agent orchestrator submit-one wf-run det-responder; do
+            src="target/release/$bin"
+            test -x "$src" || { echo "BINARIO OBRIGATORIO AUSENTE: $bin"; exit 1; }
+            cp "$src" "$out/"
+          done
+          # Binários do client (submit-one/wf-run/det-responder) linkam
+          # dinamicamente a libddsc do CycloneDDS bundled da build (fica em
+          # target/release/build/.../out/lib) — sem ela no PATH do loader, o
+          # aceite functional falha com rc=127 (tentativa 6). Empacotada em
+          # lib/ junto dos binários; o aceite aponta LD_LIBRARY_PATH para lá.
+          # Copiar TODOS os nomes da família (real + symlinks .so/.so.N):
+          # cp -L do arquivo real deixa só libddsc.so.X.Y.Z — o loader
+          # procura libddsc.so.N e não acha (tentativa 7).
+          mkdir -p "$out/lib"
+          find target/release/build \( -type f -o -type l \) -name 'libddsc.so*' -exec cp -L {} "$out/lib/" \;
+          ls "$out/lib"/libddsc.so* >/dev/null || { echo "libddsc ausente da build"; exit 1; }
+          ( cd "$out" && sha256sum studio-noded agent orchestrator submit-one wf-run det-responder lib/* > SHA256SUMS )
+          toolchain="$(rustc --version)"
+          deps="$(cargo tree -p studio-node --prefix none 2>/dev/null | grep -E '^(cyclonedds|russh|tokio|axum|serde) ' | sort -u | tr '\n' ';')"
+          printf '{"commit":"%s","arch":"%s","toolchain":"%s","deps":"%s"}\n' "$sha" "$arch" "$toolchain" "$deps" > "$out/manifest.json"
+          ( cd "$out" && sha256sum -c SHA256SUMS )
+          tar -czf "tese-rust-$arch-$sha.tar.gz" -C dist "$arch"
+      - uses: ChristopherHX/gitea-upload-artifact@81f940d004763f986ba3582c007fd842dd5cb0d7 # v4 sem check GHES (fork oficial p/ Gitea)
+        with:
+          name: "tese-rust-${{ needs.pin.outputs.sha }}"
+          path: tese-rust-*.tar.gz
+          if-no-files-found: error
+
+  accept:
+    needs: [pin, build]
+    runs-on: tese-rust
+    steps:
+      # Transferência REAL pelo serviço de artefatos do Gitea (backend v4):
+      # o que chega em pkg/ veio do serviço, não de resíduo do workspace.
+      - uses: ChristopherHX/gitea-download-artifact@75635f32b4c1c41c4b3d64e8f85210112ed4c9c7 # v4 sem check GHES
+        with:
+          name: "tese-rust-${{ needs.pin.outputs.sha }}"
+          path: pkg
+      - name: Aceite em diretório independente (integridade + funcional)
+        run: |
+          set -euo pipefail
+          rm -rf accept && mkdir accept && cd accept
+          tar -xzf ../pkg/tese-rust-*.tar.gz
+          dir="$(ls -d */)"
+          export LD_LIBRARY_PATH="$PWD/$dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          ( cd "$dir" && sha256sum -c SHA256SUMS )
+          # Negativo 1: binário obrigatório removido deve falhar.
+          mkdir neg1 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg1
+          sub="$(ls -d neg1/*/)"
+          rm "$sub/submit-one"
+          set +e; ( cd "$sub" && sha256sum -c SHA256SUMS ) >/dev/null 2>&1; rc_neg=$?; set -e
+          [ "$rc_neg" -ne 0 ] || { echo "NEGATIVO FALHOU: remocao passou"; exit 1; }
+          # Negativo 2: checksum adulterado deve falhar.
+          mkdir neg2 && tar -xzf ../pkg/tese-rust-*.tar.gz -C neg2
+          sub="$(ls -d neg2/*/)"
+          echo adulterado >> "$sub/agent"
+          set +e; ( cd "$sub" && sha256sum -c SHA256SUMS ) >/dev/null 2>&1; rc_neg=$?; set -e
+          [ "$rc_neg" -ne 0 ] || { echo "NEGATIVO FALHOU: adulteracao passou"; exit 1; }
+          # Funcional: studio-noded extraído sobe de verdade em porta de
+          # teste (DB temporário) e responde protocolo + serviços.
+          export STUDIO_NODE_PORT=14317 STUDIO_NODE_DB="$PWD/accept-db.json"
+          "$PWD/$dir/studio-noded" & NODE_PID=$!
+          trap 'kill $NODE_PID 2>/dev/null || true' EXIT
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:14317/version && break
+            sleep 1
+          done
+          test "$(curl -s http://127.0.0.1:14317/version)" = '{"major":1,"minor":0}'
+          curl -sf http://127.0.0.1:14317/services | grep -q dds-agent
+          kill $NODE_PID
+          wait $NODE_PID 2>/dev/null || true
+          trap - EXIT
+          # Funcional: submit-one sem argumentos deve RECUSAR com exit 2
+          # e mensagem de uso (contrato do executável, sem máscara de pipe).
+          set +e
+          out="$("$PWD/$dir/submit-one" 2>&1)"
+          rc=$?
+          set -e
+          echo "$out" | grep -q "uso: submit-one"
+          test "$rc" -eq 2 || { echo "submit-one sem args: rc=$rc (esperado 2)"; exit 1; }
+          echo "ACEITE OK"
+
+# Publicação SEPARADA e explícita (não parte deste workflow):
+#   oras push --ca-file /etc/dds-orchestrator/pki/local-root-ca.crt \
+#     harbor.home.arpa/library/tese-rust:<sha>-<arch> \
+#     --artifact-type application/vnd.tese.bundle \
+#     tese-rust-<arch>-<sha>.tar.gz
+# Requer: robot account do Harbor (env do executor manual, nunca em claro)
+# + CA pública. Publicar NÃO promove nem implanta (F2/F3 separados).

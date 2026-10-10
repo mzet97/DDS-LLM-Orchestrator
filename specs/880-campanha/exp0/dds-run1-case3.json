@@ -1,0 +1,41 @@
+{
+  "entry": "O retry exponencial para após 5 tentativas e registra a causa.",
+  "model": "qwen3.5-0.8b",
+  "stages": [
+    {
+      "content": "[fixture stage=A h=8031edb4d6702df4 n=2]",
+      "expects": [],
+      "finished_ms": 1791216092531,
+      "latency_ms": 304,
+      "stage": "A",
+      "started_ms": 1791216092227,
+      "task_id": "54d68583-0a1e-40f1-8325-d2258cf90206"
+    },
+    {
+      "content": "[fixture stage=B h=1894287056828890 n=3]",
+      "expects": [
+        "[fixture stage=A h=8031edb4d6702df4 n=2]"
+      ],
+      "finished_ms": 1791216092835,
+      "latency_ms": 304,
+      "stage": "B",
+      "started_ms": 1791216092531,
+      "task_id": "6aa00930-9c66-4039-9c23-02c3a8ade002"
+    },
+    {
+      "content": "[fixture stage=C h=02e385ecd934d017 n=4]",
+      "expects": [
+        "[fixture stage=A h=8031edb4d6702df4 n=2]",
+        "[fixture stage=B h=1894287056828890 n=3]"
+      ],
+      "finished_ms": 1791216093141,
+      "latency_ms": 305,
+      "stage": "C",
+      "started_ms": 1791216092835,
+      "task_id": "d7ef72f3-6971-412e-a3f9-f51389b51b2b"
+    }
+  ],
+  "status": "completed",
+  "workflow_id": "dds-w1",
+  "workload_id": "seq_chain_v1"
+}

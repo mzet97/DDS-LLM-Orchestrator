@@ -8,6 +8,7 @@ description = "Domínio administrativo do DDS Orchestrator Studio: revisões, ge
 
 [dependencies]
 thiserror = { workspace = true }
+serde = { workspace = true }
 
 [lints]
 workspace = true

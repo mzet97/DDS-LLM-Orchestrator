@@ -49,6 +49,10 @@ pub struct RequestRecord {
     pub target_rps: f64,
     pub replication_idx: u32,
     pub warmup: bool,
+    /// Nível de concorrência da fase (padrão Closed com grade — REQ/T-820-13);
+    /// ausente nos demais padrões. Campo aditivo: JSON antigo continua válido.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concurrency: Option<u32>,
     /// Latência E2E medida no cliente (ms).
     pub latency_ms: f64,
     // ── Componentes de latência (E1) — dos campos t_*_ns do Task (IDL) ──
@@ -121,7 +125,11 @@ impl JsonlWriter {
 
 impl Drop for JsonlWriter {
     fn drop(&mut self) {
-        let _ = self.buf.flush();
+        // REQ/T-820-13: o resultado do flush no drop é logado (stderr) —
+        // registros em buffer jamais são perdidos em silêncio. Nunca panica.
+        if let Err(e) = self.buf.flush() {
+            eprintln!("jsonl: flush no drop falhou ({}): {e}", self.path.display());
+        }
     }
 }
 
@@ -149,6 +157,7 @@ mod tests {
             target_rps: 5.0,
             replication_idx: 0,
             warmup: false,
+            concurrency: None,
             latency_ms: 12.5,
             t_serialization_ns: Some(10),
             t_transport_send_ns: Some(20),
@@ -184,6 +193,24 @@ mod tests {
         // Campos None são omitidos (não fabricados).
         assert!(v.get("ttfc_ms").is_none());
         assert!(v.get("error_message").is_none());
+    }
+
+    /// REQ/T-820-13: campo aditivo `concurrency` — presente quando Some,
+    /// omitido quando None; raw antigo (sem a chave) continua desserializando.
+    #[test]
+    fn concurrency_field_e_aditivo() {
+        let mut rec = sample();
+        rec.concurrency = Some(50);
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("\"concurrency\":50"));
+        let back: RequestRecord = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.concurrency, Some(50));
+
+        // Raw antigo sem a chave: None, sem quebrar.
+        let old_json = serde_json::to_string(&sample()).unwrap();
+        assert!(!old_json.contains("concurrency"));
+        let back_old: RequestRecord = serde_json::from_str(&old_json).unwrap();
+        assert_eq!(back_old.concurrency, None);
     }
 
     #[test]

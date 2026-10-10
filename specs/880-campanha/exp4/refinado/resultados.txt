@@ -1,0 +1,30 @@
+rep 1: status=completed (falha não injetada ou kill sem timestamp)
+rep 2: status=completed (falha não injetada ou kill sem timestamp)
+rep 3: status=completed t_kill_ate_fim=19ms t_total=1566ms
+rep 4: status=completed t_kill_ate_fim=15027ms t_total=16067ms
+rep 5: status=completed t_kill_ate_fim=1038ms t_total=1569ms
+rep 6: status=completed t_kill_ate_fim=13436ms t_total=14479ms
+rep 7: status=completed (falha não injetada ou kill sem timestamp)
+rep 8: status=completed (falha não injetada ou kill sem timestamp)
+rep 9: status=completed (falha não injetada ou kill sem timestamp)
+rep 10: status=completed t_kill_ate_fim=23ms t_total=1570ms
+rep 11: status=completed t_kill_ate_fim=17ms t_total=1569ms
+rep 12: status=completed t_kill_ate_fim=24ms t_total=1565ms
+rep 13: status=completed (falha não injetada ou kill sem timestamp)
+rep 14: status=completed (falha não injetada ou kill sem timestamp)
+rep 15: status=completed t_kill_ate_fim=28ms t_total=1569ms
+rep 16: status=completed t_kill_ate_fim=13681ms t_total=14728ms
+rep 17: status=completed (falha não injetada ou kill sem timestamp)
+rep 18: status=completed t_kill_ate_fim=24ms t_total=1568ms
+rep 19: status=completed t_kill_ate_fim=16ms t_total=1570ms
+rep 20: status=completed t_kill_ate_fim=531ms t_total=1569ms
+rep 21: status=completed (falha não injetada ou kill sem timestamp)
+rep 22: status=completed t_kill_ate_fim=30ms t_total=1574ms
+rep 23: status=completed t_kill_ate_fim=15ms t_total=1564ms
+rep 24: status=completed (falha não injetada ou kill sem timestamp)
+rep 25: status=completed (falha não injetada ou kill sem timestamp)
+rep 26: status=completed (falha não injetada ou kill sem timestamp)
+rep 27: status=completed t_kill_ate_fim=14389ms t_total=15432ms
+rep 28: status=completed (falha não injetada ou kill sem timestamp)
+rep 29: status=completed (falha não injetada ou kill sem timestamp)
+rep 30: status=completed (falha não injetada ou kill sem timestamp)

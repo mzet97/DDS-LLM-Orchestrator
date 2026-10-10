@@ -25,6 +25,9 @@ tracing = { workspace = true }
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
 cyclonedds-rust-sys = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = []
@@ -35,6 +38,26 @@ security = ["dds", "cyclonedds/security", "dds-contract/security"]
 name = "security_echo"
 path = "src/bin/security_echo.rs"
 required-features = ["security"]
+
+# Sondas DDS-real (fase 880, T-890/T-890-06): só compilam com a feature
+# `dds` — sem o gate o `cargo test -p dds-dataspace` (sem feature) tentava
+# compilar `DataSpace::new(..)?` contra o mock (que não devolve Result) e
+# quebrava o gate padrão do workspace.
+[[example]]
+name = "stream_probe"
+required-features = ["dds"]
+
+[[example]]
+name = "domain_probe"
+required-features = ["dds"]
+
+[[example]]
+name = "list_node_presence"
+required-features = ["dds"]
+
+[[example]]
+name = "tool_call_probe"
+required-features = ["dds"]
 
 [[bench]]
 name = "write_loan"
