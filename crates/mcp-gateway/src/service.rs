@@ -47,6 +47,22 @@ pub const OVERLOAD_MESSAGE: &str = "gateway sobrecarregado";
 /// Limite de jobs concorrentes no loop do serviço (fila do `JoinSet`).
 pub const MAX_INFLIGHT_JOBS: usize = 64;
 
+/// Espera por vaga antes de recusar (PR #9): rajadas (200 PENDINGs de uma
+/// vez) esgotam as 64 vagas por milissegundos — recusar na hora marcava
+/// FAILED calls que seriam processadas logo depois, e dois gateways cheios
+/// ao mesmo tempo deixavam calls sem dono para sempre (FAILED fraco dos
+/// dois lados, ninguém claima). Timeout estourado = sobrecarga real.
+const OVERLOAD_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Registra o desfecho de um job colhido do `JoinSet` (3 usos no `run`).
+fn note_joined(joined: Result<Result<ToolCallRequest, ServiceError>, tokio::task::JoinError>) {
+    match joined {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::error!(error = %error, "ToolCall processing failed"),
+        Err(error) => tracing::error!(error = %error, "ToolCall task failed"),
+    }
+}
+
 /// Erro do serviço de tool calls.
 #[derive(Debug, thiserror::Error)]
 pub enum ServiceError {
@@ -250,6 +266,21 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
                 maybe_request = next_tool_call(&mut tool_calls) => {
                     let Some(request) = maybe_request else { break };
                     if request.status == status::PENDING {
+                        if jobs.len() >= MAX_INFLIGHT_JOBS {
+                            // Fila cheia: espera UMA vaga (rajada passa em
+                            // ms) em vez de recusar na hora; só vira FAILED
+                            // se nenhuma vaga abrir em OVERLOAD_WAIT.
+                            if let Some(joined) = tokio::time::timeout(
+                                OVERLOAD_WAIT,
+                                jobs.join_next(),
+                            )
+                            .await
+                            .ok()
+                            .flatten()
+                            {
+                                note_joined(joined);
+                            }
+                        }
                         if jobs.len() < MAX_INFLIGHT_JOBS {
                             let svc = Arc::clone(&self);
                             jobs.spawn(async move { svc.process_one(&request).await });
@@ -267,28 +298,24 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
                     self.accept_update(&update);
                 }
                 Some(joined) = jobs.join_next(), if !jobs.is_empty() => {
-                    match joined {
-                        Ok(Ok(_)) => {}
-                        Ok(Err(error)) => tracing::error!(error = %error, "ToolCall processing failed"),
-                        Err(error) => tracing::error!(error = %error, "ToolCall task failed"),
-                    }
+                    note_joined(joined);
                 }
             }
         }
         while let Some(joined) = jobs.join_next().await {
-            match joined {
-                Ok(Ok(_)) => {}
-                Ok(Err(error)) => tracing::error!(error = %error, "ToolCall processing failed"),
-                Err(error) => tracing::error!(error = %error, "ToolCall task failed"),
-            }
+            note_joined(joined);
         }
         Ok(())
     }
 
     /// Sobrecarga (REQ/T-820-17): publica FAILED na MESMA instância
-    /// (`call_id`) com [`OVERLOAD_MESSAGE`], SEM claimar — a recusa nunca
-    /// cria ownership (o contrato exactly-once fica intacto: outra gateway
-    /// que já claimou continua o ciclo dela e o terminal dela vence).
+    /// (`call_id`) com [`OVERLOAD_MESSAGE`], SEM claimar e SEM ownership
+    /// (writer CLIENT): se outra gateway já claimou e concluir depois, o
+    /// terminal dela (strength 100/200) vence o FAILED fraco (10) — com
+    /// `write_tool_call` do papel, o FAILED forte (200) da gw-1 suprimia
+    /// as conclusões da gw-2 (100) pelo `Ownership::Exclusive` e o
+    /// observador nunca via o terminal (PR #9: 43/83 suprimidos, timeout
+    /// 30.8 s em `claim_*`/`exactly_once_dds`).
     ///
     /// Best-effort com guarda: só escreve FAILED se a instância ainda está
     /// PENDING na mesh — se outro gateway já avançou o ciclo (EXECUTING/
@@ -317,7 +344,11 @@ impl<D: DataSpaceApi + 'static> ToolCallService<D> {
         call.status = status::FAILED;
         call.error_message = OVERLOAD_MESSAGE.to_string();
         call.completed_at_ns = now_ns();
-        match self.data_space.write_tool_call(call).await {
+        match self
+            .data_space
+            .write_tool_call_without_ownership(call)
+            .await
+        {
             Ok(()) => {
                 tracing::warn!(
                     call_id = %request.call_id,

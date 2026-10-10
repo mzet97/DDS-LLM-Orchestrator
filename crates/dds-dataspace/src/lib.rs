@@ -364,8 +364,15 @@ impl DataSpace {
         let q_llm_result = qos::profiles::llm_result().map_err(err)?;
         let q_ctx_snap = qos::profiles::context_snapshot().map_err(err)?;
         let q_ctx_upd = qos::profiles::context_update().map_err(err)?;
+        // PR #9 (quality gate): o writer de conclusões USA A STRENGTH DO
+        // PAPEL (`ownership_strength`), como `tasks` e como o fix 9321e31.
+        // Strength fixa AGENT aqui punha requester (CLIENT), gw-A e gw-B
+        // todos em 100 — todo desempate de instância caía na loteria por
+        // GUID e os testes de dois gateways estouravam 30.8 s no CI
+        // (`claim_*`, `exactly_once_dds`). Ordem determinística: CLIENT
+        // 10 < AGENT 100 < ORCHESTRATOR 200.
         let q_tool =
-            qos::profiles::tool_call_with_strength(Some(DataSpace::STRENGTH_AGENT)).map_err(err)?;
+            qos::profiles::tool_call_with_strength(Some(ownership_strength)).map_err(err)?;
         let q_tool_client =
             qos::profiles::tool_call_with_strength(Some(DataSpace::STRENGTH_CLIENT))
                 .map_err(err)?;

@@ -500,6 +500,15 @@ impl DataSpaceApi for InMemoryDataSpace {
         Ok(())
     }
 
+    /// Sem ownership no backend em memória: equivale ao `write_tool_call`
+    /// (a distinção CLIENT/conclusão só existe no DDS real).
+    async fn write_tool_call_without_ownership(
+        &self,
+        call: ToolCallRequest,
+    ) -> Result<(), DataSpaceError> {
+        self.write_tool_call(call).await
+    }
+
     async fn read_tool_call(
         &self,
         call_id: &str,

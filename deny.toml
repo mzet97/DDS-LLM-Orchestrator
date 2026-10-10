@@ -1,5 +1,13 @@
 [advisories]
 unmaintained = "workspace"
+# RUSTSEC-2023-0071 (rsa 0.10.0-rc.18 via russh): sem fix upstream.
+# RUSTSEC-2026-0192 (ttf-parser unmaintained via egui): parsing local de
+# fontes. Justificativas completas em .cargo/audit.toml; reavaliar nos
+# upgrades de russh/egui.
+ignore = [
+    { id = "RUSTSEC-2023-0071", reason = "sem fix upstream (pre-release via russh); handshake SSH admin" },
+    { id = "RUSTSEC-2026-0192", reason = "unmaintained; parsing local de fontes da GUI (egui)" },
+]
 
 [bans]
 multiple-versions = "warn"
