@@ -1,0 +1,18 @@
+[
+ {
+  "t": 1792294715.7,
+  "event": "wf-run exit=0"
+ },
+ {
+  "t": 1792294715.7,
+  "event": "attempt states",
+  "states": {
+   "done": 2
+  }
+ },
+ {
+  "t": 1792294715.7,
+  "event": "CENÁRIO k2",
+  "RESULT": "PASS"
+ }
+]

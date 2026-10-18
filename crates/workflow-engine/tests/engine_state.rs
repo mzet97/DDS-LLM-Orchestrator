@@ -52,8 +52,10 @@ fn fork_join() -> PlanGraph {
 fn join_waits_for_all_deps_regardless_of_arrival_order() {
     let dir = tmp("join");
     let j = Journal::open(&dir).unwrap();
-    j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-        .unwrap();
+    j.admit_workflow(
+        "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+    )
+    .unwrap();
     let mut st = EngineState::default();
     let g = fork_join();
     st.materialize(&j, &g, "a", 0).unwrap();
@@ -85,8 +87,10 @@ fn join_waits_for_all_deps_regardless_of_arrival_order() {
 fn duplicate_done_is_ignored_typed() {
     let dir = tmp("dup");
     let j = Journal::open(&dir).unwrap();
-    j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-        .unwrap();
+    j.admit_workflow(
+        "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+    )
+    .unwrap();
     let mut st = EngineState::default();
     let g = fork_join();
     st.materialize(&j, &g, "a", 0).unwrap();
@@ -105,8 +109,10 @@ fn duplicate_done_is_ignored_typed() {
 fn invalid_output_rejects_done() {
     let dir = tmp("badout");
     let j = Journal::open(&dir).unwrap();
-    j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-        .unwrap();
+    j.admit_workflow(
+        "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+    )
+    .unwrap();
     let mut st = EngineState::default();
     let g = fork_join();
     st.materialize(&j, &g, "a", 0).unwrap();
@@ -127,8 +133,10 @@ fn invalid_output_rejects_done() {
 fn stale_attempt_output_does_not_conclude_new_attempt() {
     let dir = tmp("stale");
     let j = Journal::open(&dir).unwrap();
-    j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-        .unwrap();
+    j.admit_workflow(
+        "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+    )
+    .unwrap();
     let mut st = EngineState::default();
     let g = fork_join();
     st.materialize(&j, &g, "a", 0).unwrap();
@@ -158,8 +166,10 @@ fn stale_attempt_output_does_not_conclude_new_attempt() {
 fn retry_creates_new_task_id_and_reservation_is_not_renewed() {
     let dir = tmp("retry");
     let j = Journal::open(&dir).unwrap();
-    j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-        .unwrap();
+    j.admit_workflow(
+        "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+    )
+    .unwrap();
     let mut st = EngineState::default();
     let g = fork_join();
     let t1 = st.materialize(&j, &g, "a", 5).unwrap();
@@ -181,8 +191,10 @@ fn retry_creates_new_task_id_and_reservation_is_not_renewed() {
 fn without_failover_first_failure_fails_node() {
     let dir = tmp("nofailover");
     let j = Journal::open(&dir).unwrap();
-    j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-        .unwrap();
+    j.admit_workflow(
+        "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+    )
+    .unwrap();
     let mut st = EngineState::default();
     let g = fork_join();
     st.materialize(&j, &g, "a", 5).unwrap();
@@ -199,8 +211,10 @@ fn recovery_after_restart_resumes_same_active_attempt() {
     let t_attempt1;
     {
         let j = Journal::open(&dir).unwrap();
-        j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-            .unwrap();
+        j.admit_workflow(
+            "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+        )
+        .unwrap();
         let mut st = EngineState::default();
         t_attempt1 = st.materialize(&j, &g, "a", 0).unwrap();
         // crash ANTES do done: tentativa 1 publicada, não concluída
@@ -222,8 +236,10 @@ fn recovery_keeps_done_set_and_unlocks_dependents() {
     let g = fork_join();
     {
         let j = Journal::open(&dir).unwrap();
-        j.admit_workflow("wf-x", "req", "dec", "h", "accept", 1_000, 1_000)
-            .unwrap();
+        j.admit_workflow(
+            "wf-x", "req", "dec", "h", "accept", 1_000, 1_000, "prompt", 1, 9, 1, 1, 1, 1, "",
+        )
+        .unwrap();
         let mut st = EngineState::default();
         st.materialize(&j, &g, "a", 0).unwrap();
         st.on_done(&j, &g, "a", 1, &[("out".into(), "h".into())])

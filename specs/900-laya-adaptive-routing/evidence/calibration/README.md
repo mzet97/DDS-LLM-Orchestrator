@@ -1,49 +1,51 @@
-# Calibração do checkpoint Laya (T-900-A) — 2026-10-17
+# Calibração do checkpoint Laya — v2 (2026-10-17/18)
 
-## O que foi feito
+## Estado: wiring COMPLETO, números MELHORANDO mas AINDA INDICATIVOS
 
-1. **Dataset sintético por construção** (`gen_dataset.py`): spec amostrado
-   (idioma/qos/planning/caps/urgência/complexidade) → gemma-4-12b ESCREVE o
-   pedido que exige o spec → rótulo é verdade por construção (ruído do
-   gerador documentado; filtros de idioma/dedup/tamanho). Formato JSONL
-   NATIVO do SDK (`evals.Dataset.from_jsonl`), tags como lista, alvo
-   numérico (`targets.py`: one-hot por critério/[não,sim]/níveis — a ordem
-   dos marcadores é a ordem declarada da pergunta).
-   - Snapshot congelado p/ calibração: `dataset_snapshot400.jsonl` (400).
-   - Geração COMPLETA (2000) segue em fundo no `dataset_calib_v1.jsonl`
-     (resumível; ~5 ex/min → ~5,5 h; recalcibrar ao completar).
-2. **Calibração** (`calibrate_laya.py`, SDK nativo): split 80/20 seed 900 →
-   `records_from_labeled` (logits CPU) → `fit_temperature_map` (T por tipo)
-   → `fit_abstention_thresholds` + `fit_binning_map` → `save_calibration`.
-   - `calibration_v1.json` pin sha256 **a235c9b90a2624ba…** (`gates_v1.json`).
-3. **Wiring**: `RealLayaAdapter(calibration_path=…)` carrega a calibração e
-   publica o pin em `calibration_revision`; `DecisionPolicy.calibration_pin`
-   no validator Rust — `shadow_only=false` SOMENTE quando a revisão casa com
-   o pin (teste `calibration_pin_governs_shadow_mode`).
-
-## Resultados no holdout (80) — HONESTOS
+### v2 (train 840 = snapshot1050 × 80%; pin `f7451ac7…`)
 
 | métrica | ANTES | DEPOIS |
 |---|---|---|
-| choice_accuracy | 0.525 | 0.525 |
-| noul_accuracy | 0.806 | 0.806 |
-| score_mae | 0.763 | **0.635** (−17%) |
-| ece | 0.068 | 0.073 |
-| brier | 0.164 | 0.164 |
+| choice_accuracy | 0.583 | 0.583 |
+| noul_accuracy | 0.799 | 0.799 |
+| score_mae | 0.822 | **0.679** (−17%) |
+| ece | 0.075 | 0.083 |
+| brier | 0.159 | **0.158** |
 
-Leitura sem viés: a calibração MELHOROU o MAE de score, manteve acurácias e
-**piorou levemente o ECE** — com 400 exemplos os floors do SDK
-(MIN_BUCKET_N=2000/bucket) não são atingidos: o mapa de temperaturas fica
-nos defaults para quase todos os buckets. **Conclusão honesta: esta
-calibração é INDICATIVA, não estatisticamente defensável; o gate de
-confiança NÃO deve ser congelado com estes números.** O wiring
-(checkpoint→pin→validator) está pronto e é o deliverável; números
-defensáveis exigem o dataset completo (rodando) ou maior.
+8 064 records; temperature map agora CALIBRA (T₁=1,11 T₂=5,0 T₃=3,80 —
+não defaults). **Noul bucket tem 672×9 = 6 048 records (>floor 2 000) —
+calibrado com força estatística. Choice/score (672/1 344) ainda abaixo do
+floor.**
 
-## Ameaças à validade
+### v1 (snapshot400; pin `a235c9b9…`) — preservada em `calib_v2/` antiga
 
-- Dataset sintético gerado pelo MESMO gemma que o planner (viés de
-  distribuição); rótulo por construção mitiga mas não elimina ruído.
-- choice_accuracy 0.525 no holdout reflete o desbalanceamento do argmax
-  QoS (o laya tende ao BALANCED; o spec sorteia perfis uniformemente).
-- Holdout pequeno (80): intervalos largos.
+Score_mae 0.763→0.635 (−17%). Ver `calibration_report.json` anterior.
+
+## Dataset (ainda crescendo)
+
+- `dataset_calib_v1.jsonl`: geração LOCAL com --resume (791→1 650+→2 000;
+  ~5 ex/min na RX 7900 XTX). Rótulo por construção.
+- `dataset_snapshot400.jsonl` / `dataset_snapshot1050.jsonl`: snapshots.
+- Colab: **não viável por CLI > 1h** (GPU é liberada sem browser; ver
+  `colab-limitacoes.md`); notebook interativo pronto em
+  `tools/colab_gen/COLAB_NOTEBOOK.md` como complemento.
+
+## Arquivos
+
+| Arquivo | Conteúdo |
+|---|---|
+| `calib_v2/calibration_v1.json` | Payload de calibração (pin f7451ac7…) |
+| `calib_v2/gates_v1.json` | Thresholds de abstenção + pin + counts |
+| `calib_v2/train.jsonl` / `holdout.jsonl` | Split 80/20 seed 900 |
+| `calib_v2/calibration_report.json` | Métricas antes/depois |
+| `dataset_calib_v1.jsonl` | Dataset em crescimento (--resume) |
+| `colab-limitacoes.md` | O que tentamos e por que CLI não basta |
+| `tools/colab_gen/COLAB_NOTEBOOK.md` | Célula interativa p/ complementar |
+
+## Próximos passos
+
+1. Dataset chegando a 2 000 → recalibrar v3 (choice/score floor ~1 600/3 200 —
+   ainda parcial; completo exigiria ~2 500 no train)
+2. A5: se noul-bucket (o mais robusto) justificar → `--calibration-pin` no
+   wf-run com pin v2 (decisões noul saem de shadow)
+3. A6: sessão shadow calibrada real

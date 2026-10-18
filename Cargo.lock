@@ -1183,6 +1183,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "control-panel"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "axum",
+ "client",
+ "futures",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tower",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3983,12 +3998,15 @@ dependencies = [
  "egui_kittest",
  "futures",
  "libc",
+ "rand",
  "reqwest",
+ "russh",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "studio-core",
  "studio-node",
+ "studio-ssh",
  "thiserror 1.0.69",
  "tokio",
 ]

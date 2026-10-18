@@ -1,0 +1,51 @@
+{
+ "dataset": "/var/mnt/HD1TB/tese/src/rust/specs/900-laya-adaptive-routing/evidence/calibration/calib_v2/train.jsonl",
+ "n": {
+  "total": 840,
+  "train": 672,
+  "holdout": 168
+ },
+ "before": {
+  "choice_accuracy": 0.5833333333333334,
+  "noul_accuracy": 0.7982804232804233,
+  "score_mae": 0.8224714285714285,
+  "mean_confidence": 0.7815700892857143,
+  "ece": 0.0747810119047619,
+  "brier": 0.15864074388690474,
+  "aurc": 0.13107902331972573,
+  "selective_accuracy@50": 0.8940476190476191,
+  "selective_accuracy@80": 0.8377976190476191,
+  "latency_p50_ms": 6641.888391488465,
+  "latency_p95_ms": 8356.809333956335,
+  "cost_per_decision_p50_ms": 6641.888391488465,
+  "cost_per_decision_p95_ms": 8356.809333956335
+ },
+ "after": {
+  "choice_accuracy": 0.5833333333333334,
+  "noul_accuracy": 0.7982804232804233,
+  "score_mae": 0.6787202380952382,
+  "mean_confidence": 0.6707552083333334,
+  "ece": 0.08319845238095236,
+  "brier": 0.15822607183333331,
+  "aurc": 0.12948003974376107,
+  "selective_accuracy@50": 0.8940476190476191,
+  "selective_accuracy@80": 0.8430059523809523,
+  "latency_p50_ms": 3381.845517491456,
+  "latency_p95_ms": 4515.434848028235,
+  "cost_per_decision_p50_ms": 3381.845517491456,
+  "cost_per_decision_p95_ms": 4515.434848028235
+ },
+ "calibration": {
+  "path": "/var/mnt/HD1TB/tese/src/rust/specs/900-laya-adaptive-routing/evidence/calibration/calib_v2/calibration_v1.json",
+  "sha256": "f7451ac7b78091560bd2839f2fc8b446e3fe3f9fc856a9694e688622b584c66d"
+ },
+ "gates_path": "/var/mnt/HD1TB/tese/src/rust/specs/900-laya-adaptive-routing/evidence/calibration/calib_v2/gates_v1.json",
+ "temperature_map_keys": [
+  "n_by_bucket",
+  "report",
+  "temperature",
+  "temperature_by_options",
+  "temperature_clamped"
+ ],
+ "note": "dataset sintético por construção (gemma4); ruído do gerador documentado"
+}

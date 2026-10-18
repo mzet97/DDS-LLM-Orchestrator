@@ -46,6 +46,8 @@ class LayaAnswer:
     answer_confidence: float = 0.5
     model_id: str = "rules-baseline-v1"
     checkpoint_revision: str = ""
+    # A3: pin da calibração carregada (vazio = sem calibração; shadow)
+    calibration_revision: str = ""
 
 
 class LayaAdapter(Protocol):

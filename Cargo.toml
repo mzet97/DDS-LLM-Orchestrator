@@ -26,6 +26,7 @@ members = [
     "crates/studio-node",
     "crates/studio-ssh",
     "crates/workflow-engine",
+    "crates/control-panel",
 ]
 
 [workspace.package]

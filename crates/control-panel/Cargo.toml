@@ -1,0 +1,36 @@
+[package]
+name = "control-panel"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Painel de controle Rust (fase 910): supervisor local de processos, catalogo/presets dos binarios Rust, API HTTP, hardware, inventario Ansible e chat."
+
+[dependencies]
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+axum = { workspace = true }
+tokio = { workspace = true }
+futures = { workspace = true }
+client = { path = "../client", version = "0.1", optional = true }
+
+[features]
+default = []
+dds = ["dep:client", "client/dds"]
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
+
+[[bin]]
+name = "control-panel"
+path = "src/main.rs"
+
+[lib]
+name = "control_panel"
+path = "src/lib.rs"
+
+[lints]
+workspace = true

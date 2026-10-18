@@ -32,12 +32,26 @@ pub enum JournalError {
 
 pub type Result<T> = std::result::Result<T, JournalError>;
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
 
 const MIGRATION_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS intents (
+    workflow_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    created_at_ns INTEGER NOT NULL,
+    deadline_ns INTEGER NOT NULL,
+    max_tokens INTEGER NOT NULL,
+    max_cost_microunits INTEGER NOT NULL,
+    intent_revision INTEGER NOT NULL,
+    questions_revision INTEGER NOT NULL,
+    policy_revision INTEGER NOT NULL,
+    capability_catalog_revision INTEGER NOT NULL,
+    checkpoint_revision TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS decisions (
     workflow_id TEXT PRIMARY KEY,
@@ -83,6 +97,23 @@ CREATE TABLE IF NOT EXISTS outbox (
 );
 CREATE INDEX IF NOT EXISTS idx_outbox_pending ON outbox(published_ns) WHERE published_ns IS NULL;
 "#;
+
+/// Intent persistida (restart recovery do runtime).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredIntent {
+    pub workflow_id: String,
+    pub request_id: String,
+    pub prompt: String,
+    pub created_at_ns: u64,
+    pub deadline_ns: u64,
+    pub max_tokens: u64,
+    pub max_cost_microunits: u64,
+    pub intent_revision: u32,
+    pub questions_revision: u32,
+    pub policy_revision: u32,
+    pub capability_catalog_revision: u32,
+    pub checkpoint_revision: String,
+}
 
 /// Handle do journal com lock de instância (arquivo exclusivo; drop libera).
 pub struct Journal {
@@ -153,6 +184,15 @@ impl Journal {
                 Ok(())
             }
             v if v == SCHEMA_VERSION => Ok(()),
+            1 => {
+                // v1 -> v2: intents é criada pelo CREATE IF NOT EXISTS acima
+                conn.execute(
+                    "INSERT INTO meta(key, value) VALUES ('schema_version', ?1)
+                     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    [SCHEMA_VERSION.to_string()],
+                )?;
+                Ok(())
+            }
             v => Err(JournalError::Corrupted(format!(
                 "schema_version {v} != suportada {SCHEMA_VERSION}"
             ))),
@@ -171,6 +211,14 @@ impl Journal {
         verdict: &str,
         budget_microunits: u64,
         max_tokens: u64,
+        prompt: &str,
+        created_at_ns: u64,
+        deadline_ns: u64,
+        intent_revision: u32,
+        questions_revision: u32,
+        policy_revision: u32,
+        capability_catalog_revision: u32,
+        checkpoint_revision: &str,
     ) -> Result<AdmitOutcome> {
         let exists: Option<(String, i64)> = self
             .conn
@@ -205,6 +253,26 @@ impl Journal {
                 request_id,
                 budget_microunits as i64,
                 max_tokens as i64
+            ],
+        )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO intents(workflow_id, request_id, prompt, created_at_ns, deadline_ns,
+                 max_tokens, max_cost_microunits, intent_revision, questions_revision,
+                 policy_revision, capability_catalog_revision, checkpoint_revision)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            rusqlite::params![
+                workflow_id,
+                request_id,
+                prompt,
+                created_at_ns as i64,
+                deadline_ns as i64,
+                max_tokens as i64,
+                budget_microunits as i64,
+                intent_revision,
+                questions_revision,
+                policy_revision,
+                capability_catalog_revision,
+                checkpoint_revision
             ],
         )?;
         tx.commit()?;
@@ -327,6 +395,36 @@ impl Journal {
             rusqlite::params![workflow_id, node_id, attempt, task_id, state],
         )?;
         Ok(())
+    }
+
+    /// Intents admitidas (rehidratação pós-restart).
+    pub fn stored_intents(&self) -> Result<Vec<StoredIntent>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT workflow_id, request_id, prompt, created_at_ns, deadline_ns, max_tokens,
+                    max_cost_microunits, intent_revision, questions_revision, policy_revision,
+                    capability_catalog_revision, checkpoint_revision FROM intents",
+        )?;
+        let rows = stmt.query_map([], |r| {
+            Ok(StoredIntent {
+                workflow_id: r.get(0)?,
+                request_id: r.get(1)?,
+                prompt: r.get(2)?,
+                created_at_ns: r.get::<_, i64>(3)? as u64,
+                deadline_ns: r.get::<_, i64>(4)? as u64,
+                max_tokens: r.get::<_, i64>(5)? as u64,
+                max_cost_microunits: r.get::<_, i64>(6)? as u64,
+                intent_revision: r.get::<_, i64>(7)? as u32,
+                questions_revision: r.get::<_, i64>(8)? as u32,
+                policy_revision: r.get::<_, i64>(9)? as u32,
+                capability_catalog_revision: r.get::<_, i64>(10)? as u32,
+                checkpoint_revision: r.get(11)?,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
     }
 
     /// Estado da tentativa (recovery).
@@ -461,19 +559,25 @@ mod tests {
         let dir = tmp("admit");
         let j = Journal::open(&dir).unwrap();
         let out = j
-            .admit_workflow("wf", "req", "dec", "hash-a", "accept", 1000, 100)
+            .admit_workflow(
+                "wf", "req", "dec", "hash-a", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, "",
+            )
             .unwrap();
         assert_eq!(out, AdmitOutcome::Admitted);
         // replay igual
         assert_eq!(
-            j.admit_workflow("wf", "req", "dec", "hash-a", "accept", 1000, 100)
-                .unwrap(),
+            j.admit_workflow(
+                "wf", "req", "dec", "hash-a", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, ""
+            )
+            .unwrap(),
             AdmitOutcome::Replay
         );
         // payload diferente = conflito
         assert_eq!(
-            j.admit_workflow("wf", "req", "dec2", "hash-b", "accept", 1000, 100)
-                .unwrap(),
+            j.admit_workflow(
+                "wf", "req", "dec2", "hash-b", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, ""
+            )
+            .unwrap(),
             AdmitOutcome::Conflict
         );
         drop(j);
@@ -485,8 +589,10 @@ mod tests {
         let dir = tmp("reopen");
         {
             let j = Journal::open(&dir).unwrap();
-            j.admit_workflow("wf", "r", "d", "h", "accept", 500, 50)
-                .unwrap();
+            j.admit_workflow(
+                "wf", "r", "d", "h", "accept", 500, 50, "prompt", 1, 9, 1, 1, 1, 1, "",
+            )
+            .unwrap();
             // segunda instância WHILE lock ativo → AlreadyLocked
             assert!(matches!(
                 Journal::open(&dir),
@@ -495,8 +601,10 @@ mod tests {
         } // drop libera o lock
         let j2 = Journal::open(&dir).unwrap();
         assert_eq!(
-            j2.admit_workflow("wf", "r", "d", "h", "accept", 500, 50)
-                .unwrap(),
+            j2.admit_workflow(
+                "wf", "r", "d", "h", "accept", 500, 50, "prompt", 1, 9, 1, 1, 1, 1, ""
+            )
+            .unwrap(),
             AdmitOutcome::Replay,
             "crash/restart conserva a decisão aceita"
         );
@@ -520,8 +628,10 @@ mod tests {
     fn reserve_is_transactional_and_replay_safe() {
         let dir = tmp("reserve");
         let j = Journal::open(&dir).unwrap();
-        j.admit_workflow("wf", "r", "d", "h", "accept", 1000, 100)
-            .unwrap();
+        j.admit_workflow(
+            "wf", "r", "d", "h", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, "",
+        )
+        .unwrap();
 
         let r1 = j.reserve("wf", "call-1", "planner", 50, 400).unwrap();
         assert!(matches!(
@@ -553,8 +663,10 @@ mod tests {
     fn uncertain_consumption_charges_full_reservation() {
         let dir = tmp("uncertain");
         let j = Journal::open(&dir).unwrap();
-        j.admit_workflow("wf", "r", "d", "h", "accept", 1000, 100)
-            .unwrap();
+        j.admit_workflow(
+            "wf", "r", "d", "h", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, "",
+        )
+        .unwrap();
         j.reserve("wf", "call-9", "attempt:x:1", 80, 300).unwrap();
         // timeout/crash: consumo incerto → reserva INTEGRAL cobrada
         j.release_reservation("call-9", None).unwrap();
@@ -572,8 +684,10 @@ mod tests {
     fn outbox_is_atomic_with_state_and_replay_publishes_pending_only() {
         let dir = tmp("outbox");
         let j = Journal::open(&dir).unwrap();
-        j.admit_workflow("wf", "r", "d", "h", "accept", 1000, 100)
-            .unwrap();
+        j.admit_workflow(
+            "wf", "r", "d", "h", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, "",
+        )
+        .unwrap();
         j.outbox_append(
             &|tx| {
                 tx.execute(
@@ -619,8 +733,10 @@ mod tests {
         let dir = tmp("indoubt");
         {
             let j = Journal::open(&dir).unwrap();
-            j.admit_workflow("wf", "r", "d", "h", "accept", 1000, 100)
-                .unwrap();
+            j.admit_workflow(
+                "wf", "r", "d", "h", "accept", 1000, 100, "prompt", 1, 9, 1, 1, 1, 1, "",
+            )
+            .unwrap();
             j.record_attempt("wf", "n1", 1, "laya1-abc", "in_flight")
                 .unwrap();
             j.mark_in_doubt("laya1-abc").unwrap();

@@ -341,7 +341,7 @@ impl Planner for DirectTemplatePlanner {
                 dependencies: vec![],
                 output_names: vec!["out".into()],
                 inputs: vec![],
-                max_attempts: 1,
+                max_attempts: 2,
                 max_tokens: 512,
                 max_output_bytes: 65536,
                 deadline_ns: 0,

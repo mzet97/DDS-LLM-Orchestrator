@@ -125,6 +125,21 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
     /// Registra UMA intenção (stream): cria o registro aguardando decisão.
     pub async fn on_intent(&mut self, intent: &w::WorkflowIntent) -> Result<(), RuntimeError> {
         let wf = intent.workflow_id.to_string();
+        // B5 (cancelamento): CANCEL encerra o workflow como terminal — nada
+        // novo é materializado; revisão esperada deve casar (IC_CANCEL=1).
+        if intent.command == 1 {
+            if let Some(wfr) = self.workflows.get_mut(&wf) {
+                if wfr.intent.intent_revision == intent.expected_plan_revision
+                    || intent.expected_plan_revision == 0
+                {
+                    wfr.terminal = true;
+                    wfr.failed_reason = None; // CANCELLED não é falha
+                    self.publish_state(&wf, 7).await?; // WS_CANCELLED
+                    return Ok(());
+                }
+            }
+            return Ok(());
+        }
         if self.workflows.contains_key(&wf) {
             return Ok(());
         }
@@ -191,6 +206,14 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
             &verdict_name(&verdict),
             intent.max_cost_microunits,
             u64::from(intent.max_tokens),
+            &intent.prompt.to_string(),
+            intent.created_at_ns,
+            intent.deadline_ns,
+            intent.intent_revision,
+            intent.questions_revision,
+            intent.policy_revision,
+            intent.capability_catalog_revision,
+            &intent.checkpoint_revision.to_string(),
         )? {
             AdmitOutcome::Conflict => {
                 tracing::warn!(wf = %intent.workflow_id.to_string(), "decisão conflitante ignorada");
@@ -224,6 +247,56 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
         self.publish_plan(&wf, &candidate).await?;
         self.publish_state(&wf, 3).await?;
         Ok(true)
+    }
+
+    /// B2 (restart recovery): rehidrata workflows admitidos do JOURNAL —
+    /// re-planeja (direct é determinístico) e reconstrói o EngineState;
+    /// a MESMA tentativa ativa continua (mesmo task_id).
+    pub async fn recover_from_journal(&mut self) -> Result<usize, RuntimeError> {
+        let stored = self.journal.stored_intents()?;
+        let mut recovered = 0;
+        for si in stored {
+            if self.workflows.contains_key(&si.workflow_id) {
+                continue;
+            }
+            let request = crate::engine::PlanRequest {
+                workflow_id: si.workflow_id.clone(),
+                prompt: si.prompt.clone(),
+            };
+            let candidate = match self.planner.plan(&request) {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::warn!(wf = %si.workflow_id, error = %e, "re-plan falhou no recovery");
+                    continue;
+                }
+            };
+            let graph = PlanGraph::from_candidate(&si.workflow_id, 1, &candidate);
+            let prompts: HashMap<String, String> = candidate
+                .nodes
+                .iter()
+                .map(|n| (n.node_id.clone(), n.prompt_template.clone()))
+                .collect();
+            let state = EngineState::recover(&self.journal, &graph)?;
+            self.workflows.insert(
+                si.workflow_id.clone(),
+                WfRuntime {
+                    intent: stored_intent_to_wire(&si),
+                    graph,
+                    state,
+                    prompts,
+                    failover: self.cfg.failover_enabled,
+                    terminal: false,
+                    failed_reason: None,
+                    qos: None,
+                    state_rev: 0,
+                },
+            );
+            // publica Plan (a barreira dos agentes exige Plan+State na malha;
+            // o crash do wf-run anterior derrubou o TransientLocal)
+            self.publish_plan(&si.workflow_id, &candidate).await?;
+            recovered += 1;
+        }
+        Ok(recovered)
     }
 
     /// Tick do scheduler: materializa nós prontos (journal+outbox → Task).
@@ -567,6 +640,32 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
         };
         self.wspace.write_state(state).await?;
         Ok(())
+    }
+}
+
+#[cfg(feature = "dds")]
+fn stored_intent_to_wire(si: &crate::journal::StoredIntent) -> w::WorkflowIntent {
+    w::WorkflowIntent {
+        request_id: to_s(si.request_id.clone()),
+        workflow_id: to_s(si.workflow_id.clone()),
+        client_id: to_s("recovered".to_string()),
+        schema_version: 1,
+        intent_revision: si.intent_revision,
+        command: 0,
+        expected_plan_revision: 0,
+        prompt: to_s(si.prompt.clone()),
+        created_at_ns: si.created_at_ns,
+        deadline_ns: si.deadline_ns,
+        security_context_ref: to_s(String::new()),
+        policy_revision: si.policy_revision,
+        questions_revision: si.questions_revision,
+        capability_catalog_revision: si.capability_catalog_revision,
+        checkpoint_revision: to_s(si.checkpoint_revision.clone()),
+        max_tokens: si.max_tokens as u32,
+        max_cost_microunits: si.max_cost_microunits,
+        budget_unit: to_s("MICRO_USD".to_string()),
+        fallback_template_id: to_s(String::new()),
+        payload_hash: to_s(String::new()),
     }
 }
 

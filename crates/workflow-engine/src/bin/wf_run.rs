@@ -72,6 +72,11 @@ async fn main() -> Result<()> {
         RuntimeConfig::default(),
     );
 
+    let recovered = rt.recover_from_journal().await?;
+    if recovered > 0 {
+        tracing::info!(recovered, "workflows rehidratados do journal (restart)");
+    }
+
     let mut intents = wspace.subscribe_intents();
     let mut decisions = wspace.subscribe_decisions();
     let mut tasks = dataspace.subscribe_tasks();
