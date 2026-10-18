@@ -421,9 +421,28 @@ Bugs encontrados no fechamento: decide.py hardcodava
 checava substring literal `shadow_only.*false` em vez de
 `shadow_only=false`; pin truncado a 16 chars não casava (precisa 64).
 
-## A4 — recalibração v3 (em fundo, ~2h)
+## A4 — recalibração v3: CONCLUÍDA (CPU ~1h50; 2026-10-18)
 
-1 600 train / 19 200 records; resultados pendentes. Choice bucket (1 600)
-ainda abaixo do floor — se mantiver, a escolha QoS permanece com T default
-(calibração parcial documentada); noul (o mais robusto) calibrado com
-folga.
+Entrada `calib_v3/train.jsonl` (1 600 = merge dedup 2 000 × 80%); a
+ferramenta re-divide internamente → **train 1 280 / holdout 320 / 15 360
+records**. Pin **`a1ff7ddd2f980d84…`**; temperature map
+**[1.088, 5.0, 3.963]** (T₂ satura no teto 5.0 do SDK).
+
+Holdout 320 — ANTES → DEPOIS: score_mae **0.797 → 0.679 (−15%)**;
+choice/noul accuracy idênticas (T>0 não muda argmax); mean_confidence
+0.781→0.664; ECE 0.066→0.077, Brier 0.159→0.161, AURC flat (piora leve
+em ranking de confiança). Abstention gates todos 1.0 (nunca dispara).
+
+**Veredicto:** o score head calibra de forma replicável (v1/v2/v3:
+−17/−17/−15% em splits distintos) e o wiring de ativação é completo
+(pin → `--calibration-pin` → `shadow_only=false`, A6 PASS). Dobrar os
+records (8 064→15 360) sem mudar o padrão indica que o teto é do
+checkpoint/dataset sintético, não de amostragem — números seguem
+INDICATIVOS para claims de confiança (R-CALIBRATION). Detalhes em
+`evidence/calibration/README.md` + `calib_v3/calibration_report.json`.
+
+# ETAPA A+B ENCERRADA (2026-10-18)
+
+A1(limitações Colab) A2(dataset 2 000) A3(merge/split) A4(v3) A5(pin)
+A6(shadow calibrada) ✓ · B1–B5 cenários E2E ✓ · Campanha 4 braços N=30 ✓ ·
+E2E com inferência real 2/2 ✓. Sem push (local).
