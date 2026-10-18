@@ -146,7 +146,7 @@ impl AgentDds {
     /// uso a cada ciclo, ambos via `spawn_blocking` (`Command::output` é
     /// bloqueante e não pode rodar direto no runtime async). Falha → log e
     /// mantém zeros/valor anterior (nunca derruba o heartbeat).
-    pub fn spawn_heartbeat(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn spawn_heartbeat(self: &Arc<Self>, period: Duration) -> tokio::task::JoinHandle<()> {
         let ds = Arc::clone(&self.dataspace);
         let status = self.agent.status();
         tokio::spawn(async move {
@@ -154,7 +154,7 @@ impl AgentDds {
             if let Err(e) = tokio::task::spawn_blocking(move || boot.detect_vram()).await {
                 tracing::warn!(error = %e, "heartbeat: detecção de VRAM falhou (mantendo zeros)");
             }
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(period);
             loop {
                 interval.tick().await;
                 let cycle = Arc::clone(&status);

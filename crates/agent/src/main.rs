@@ -83,6 +83,12 @@ struct Args {
     /// Domínio DDS dedicado do plano adaptativo (isolamento D-ISOLATION).
     #[arg(long, default_value_t = 0)]
     adaptive_domain: u32,
+
+    /// O-4: período de publicação do heartbeat (AgentState em AgentRegistry).
+    /// Default 5 s (comportamento histórico). O reaper do orchestrator usa
+    /// --agents-stale-after-ms; piso prático = lease DDSI de ownership.
+    #[arg(long, default_value_t = 5_000)]
+    heartbeat_ms: u64,
 }
 
 fn parse_specialization(s: &str) -> Specialization {
@@ -187,7 +193,7 @@ async fn main() -> Result<()> {
     };
     #[cfg(not(feature = "security"))]
     let runtime = Arc::new(AgentDds::new(config)?);
-    let _heartbeat = runtime.spawn_heartbeat();
+    let _heartbeat = runtime.spawn_heartbeat(std::time::Duration::from_millis(args.heartbeat_ms));
 
     // T-900-M3-02: modo adaptativo OPT-IN — barreira + feeders + auto-anúncio.
     #[cfg(feature = "dds")]
