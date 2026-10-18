@@ -81,6 +81,24 @@ pub mod profiles {
 pub mod qos;
 pub mod roles;
 
+/// Tópicos da fase 900 (T-900-M1-02) — roteamento adaptativo Laya/DDS.
+/// Opt-in; NÃO integram o catálogo canônico de 19 (`topics::ALL`), que segue
+/// congelado (REQ-900-003/012: os 19 tópicos existentes continuam compatíveis).
+pub mod workflow_topics {
+    pub const ALL: [&str; 5] = [
+        WORKFLOW_INTENT,
+        ROUTING_DECISION,
+        AGENT_CAPABILITIES,
+        WORKFLOW_PLAN,
+        WORKFLOW_STATE,
+    ];
+    pub const WORKFLOW_INTENT: &str = "Workflow.Intent";
+    pub const ROUTING_DECISION: &str = "Routing.Decision";
+    pub const AGENT_CAPABILITIES: &str = "Agent.Capabilities";
+    pub const WORKFLOW_PLAN: &str = "Workflow.Plan";
+    pub const WORKFLOW_STATE: &str = "Workflow.State";
+}
+
 pub use qos::{
     all_profiles, qos_profile, DurabilityKind, HistoryKind, LivelinessKind, OnlineKnobs,
     OwnershipKind, ReliabilityKind, StructuralQos, UnknownProfile,
@@ -114,6 +132,31 @@ pub mod generated {
     // Reexports convenientes (paths estáveis para o resto da migração).
     pub use llm::orchestrator;
     pub use v4::dds_llm_orchestrator;
+}
+
+/// Tipos do `WorkflowPlanning.idl` (fase 900). Com `dds`: gerados do IDL pelo
+/// `cyclonedds-build` (mesmo pipeline dos 19 canônicos, incluindo metadados
+/// XTypes do idlc C). Sem `dds`: mocks campo-a-campo (gate de paridade em
+/// `tests/workflow_planning_fixture.rs`). Ver nota sobre código gerado no
+/// módulo `generated::llm`.
+#[cfg(feature = "dds")]
+pub mod workflow {
+    #![allow(unused_imports, dead_code, non_camel_case_types, non_snake_case)]
+    #![allow(clippy::empty_line_after_outer_attr)]
+
+    include!(concat!(env!("OUT_DIR"), "/WorkflowPlanning.rs"));
+}
+
+/// Mock do `WorkflowPlanning.idl` para build sem `dds` (fase 900). Campos
+/// idênticos ao gerado real (enums como `i32` — emenda 3 do IDL).
+#[cfg(not(feature = "dds"))]
+pub mod workflow {
+    // Literais de enum seguem o IDL (SCREAMING_SNAKE) — allow espelhando o
+    // cabeçalho do código gerado pela feature `dds`.
+    #[allow(non_camel_case_types, non_snake_case, dead_code)]
+    pub mod dds_llm_workflow_v1 {
+        include!("workflow_mock.rs");
+    }
 }
 
 /// Mock types for compilation without DDS feature (for testing/development).
@@ -424,6 +467,12 @@ pub mod typenames {
     pub const QOS_VIOLATION: &str = "dds_llm_orchestrator::QoSViolation";
     pub const STUDIO_NODE_PRESENCE: &str = "dds_llm_orchestrator::StudioNodePresence";
     pub const DISCOVERY_EVENT: &str = "dds_llm_orchestrator::DiscoveryEvent";
+    // Fase 900 (T-900-M1-02): typenames do WorkflowPlanning.idl.
+    pub const WORKFLOW_INTENT: &str = "dds_llm_workflow_v1::WorkflowIntent";
+    pub const ROUTING_DECISION: &str = "dds_llm_workflow_v1::RoutingDecision";
+    pub const AGENT_CAPABILITIES: &str = "dds_llm_workflow_v1::AgentCapabilities";
+    pub const WORKFLOW_PLAN: &str = "dds_llm_workflow_v1::WorkflowPlan";
+    pub const WORKFLOW_STATE: &str = "dds_llm_workflow_v1::WorkflowState";
 }
 
 #[cfg(test)]

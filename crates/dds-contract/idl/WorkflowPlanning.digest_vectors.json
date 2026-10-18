@@ -1,0 +1,885 @@
+{
+ "fixture_version": 1,
+ "task": "T-900-M1-01",
+ "encoding": "contracts.md M0-1 \u00a7Compatibilidade: campos na ordem declarada excluindo o pr\u00f3prio campo hash; string=u32 BE len + UTF-8; inteiros na largura IDL BE; enum=ordinal u32; bool=u8; double=IEEE-754 BE com -0 normalizado e NaN/inf rejeitados; seq=u32 count + elementos; struct=campos recursivos. Preimage documental, N\u00c3O \u00e9 CDR do wire.",
+ "vectors": [
+  {
+   "id": "string-basic",
+   "desc": "string UTF-8 com comprimento u32 BE",
+   "value": {
+    "t": "string",
+    "v": "laya"
+   },
+   "skip_field": null,
+   "preimage_hex": "000000046c617961",
+   "sha256": "6a03c606cc9407363ccc00c7c57c25a3587cfcf22f5f414232cbf7e4638adc6f"
+  },
+  {
+   "id": "string-empty",
+   "desc": "string vazia -> apenas comprimento 0",
+   "value": {
+    "t": "string",
+    "v": ""
+   },
+   "skip_field": null,
+   "preimage_hex": "00000000",
+   "sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+  },
+  {
+   "id": "u16",
+   "desc": "unsigned short (2 bytes BE)",
+   "value": {
+    "t": "u16",
+    "v": 1
+   },
+   "skip_field": null,
+   "preimage_hex": "0001",
+   "sha256": "b413f47d13ee2fe6c845b2ee141af81de858df4ec549a58b7970bb96645bc8d2"
+  },
+  {
+   "id": "u32",
+   "desc": "unsigned long (4 bytes BE)",
+   "value": {
+    "t": "u32",
+    "v": 8192
+   },
+   "skip_field": null,
+   "preimage_hex": "00002000",
+   "sha256": "4383af4fd372332676db3e050000c22438deb3f8352a00aa8c8d652b7298d96f"
+  },
+  {
+   "id": "u64",
+   "desc": "unsigned long long (8 bytes BE)",
+   "value": {
+    "t": "u64",
+    "v": 1760000000000000001
+   },
+   "skip_field": null,
+   "preimage_hex": "186cc6acd4b00001",
+   "sha256": "3d682d00beb4d11a2a21354873871523ad3e2cb7a109745b3f735f9cdf3b3352"
+  },
+  {
+   "id": "i32",
+   "desc": "long signed (4 bytes BE, complemento-2)",
+   "value": {
+    "t": "i32",
+    "v": -10
+   },
+   "skip_field": null,
+   "preimage_hex": "fffffff6",
+   "sha256": "77899c2dafb21e05afbca6add33a590ac3469d26c65662e997c927616d17f593"
+  },
+  {
+   "id": "bool",
+   "desc": "boolean u8 0/1",
+   "value": {
+    "t": "bool",
+    "v": true
+   },
+   "skip_field": null,
+   "preimage_hex": "01",
+   "sha256": "4bf5122f344554c53bde2ebb8cd2b7e3d1600ad631c385a5d7cce23c7785459a"
+  },
+  {
+   "id": "f64",
+   "desc": "double IEEE-754 BE",
+   "value": {
+    "t": "f64",
+    "v": 0.25
+   },
+   "skip_field": null,
+   "preimage_hex": "3fd0000000000000",
+   "sha256": "90dc6b31c4a13d0f2fd03aa88ca9d5a1a7f3ddf2591dc235c4f8ba8849575706"
+  },
+  {
+   "id": "f64-negzero",
+   "desc": "-0.0 normalizado para +0.0",
+   "value": {
+    "t": "f64",
+    "v": -0.0
+   },
+   "skip_field": null,
+   "preimage_hex": "0000000000000000",
+   "sha256": "af5570f5a1810b7af78caf4bc70a660f0df51e42baf91d4de5b2328de0e83dfc"
+  },
+  {
+   "id": "enum-ordinal",
+   "desc": "enum -> ordinal u32 BE na ordem declarada",
+   "value": {
+    "t": "enum",
+    "v": "QI_STREAM_LIKE",
+    "enum": "QosIntent"
+   },
+   "skip_field": null,
+   "preimage_hex": "00000002",
+   "sha256": "433ebf5bc03dffa38536673207a21281612cef5faa9bc7a4d5b9be2fdb12cf1a"
+  },
+  {
+   "id": "seq-empty",
+   "desc": "sequ\u00eancia vazia -> comprimento 0",
+   "value": {
+    "t": "seq",
+    "v": [],
+    "elem": {
+     "t": "string",
+     "v": "x"
+    }
+   },
+   "skip_field": null,
+   "preimage_hex": "00000000",
+   "sha256": "df3f619804a92fdb4057192dc43dd748ea778adc52bc498ce80524c014b81119"
+  },
+  {
+   "id": "seq-doubles",
+   "desc": "sequence<double,3> -> u32 count + doubles BE",
+   "value": {
+    "t": "seq",
+    "v": [
+     {
+      "t": "f64",
+      "v": 1.5
+     },
+     {
+      "t": "f64",
+      "v": 2.5
+     }
+    ],
+    "elem": {
+     "t": "f64",
+     "v": 0.0
+    }
+   },
+   "skip_field": null,
+   "preimage_hex": "000000023ff80000000000004004000000000000",
+   "sha256": "a01af2d4e8c51122835b4b1ce7a8405e5c51b6d011d211ab5032b26793e6eccf"
+  },
+  {
+   "id": "struct-nested",
+   "desc": "struct composta recursiva (ProfileProbability)",
+   "value": {
+    "t": "struct",
+    "v": {
+     "profile": {
+      "t": "enum",
+      "v": "QI_CRITICAL",
+      "enum": "QosIntent"
+     },
+     "probability": {
+      "t": "f64",
+      "v": 0.42
+     }
+    },
+    "struct": "ProfileProbability"
+   },
+   "skip_field": null,
+   "preimage_hex": "000000013fdae147ae147ae1",
+   "sha256": "b409f8f59b1f2d9689ade4f8a05d8176912ba866a2fe525c8af673a08bcf09eb"
+  },
+  {
+   "id": "intent-full",
+   "desc": "WorkflowIntent completa (payload_hash EXCLU\u00cdDO da preimage)",
+   "value": {
+    "t": "struct",
+    "v": {
+     "request_id": {
+      "t": "string",
+      "v": "req-0001"
+     },
+     "workflow_id": {
+      "t": "string",
+      "v": "wf-0001"
+     },
+     "client_id": {
+      "t": "string",
+      "v": "cli-01"
+     },
+     "schema_version": {
+      "t": "u16",
+      "v": 1
+     },
+     "intent_revision": {
+      "t": "u32",
+      "v": 1
+     },
+     "command": {
+      "t": "enum",
+      "v": "IC_SUBMIT",
+      "enum": "IntentCommand"
+     },
+     "expected_plan_revision": {
+      "t": "u32",
+      "v": 0
+     },
+     "prompt": {
+      "t": "string",
+      "v": "Audit this Rust service and create tests"
+     },
+     "created_at_ns": {
+      "t": "u64",
+      "v": 1760000000000000001
+     },
+     "deadline_ns": {
+      "t": "u64",
+      "v": 1760000600000000001
+     },
+     "security_context_ref": {
+      "t": "string",
+      "v": "ctx://tenant-a/policy-3"
+     },
+     "policy_revision": {
+      "t": "u32",
+      "v": 7
+     },
+     "questions_revision": {
+      "t": "u32",
+      "v": 2
+     },
+     "capability_catalog_revision": {
+      "t": "u32",
+      "v": 3
+     },
+     "checkpoint_revision": {
+      "t": "string",
+      "v": "abababababababababababababababababababababababababababababababab"
+     },
+     "max_tokens": {
+      "t": "u32",
+      "v": 8192
+     },
+     "max_cost_microunits": {
+      "t": "u64",
+      "v": 1500000
+     },
+     "budget_unit": {
+      "t": "string",
+      "v": "MICRO_USD"
+     },
+     "fallback_template_id": {
+      "t": "string",
+      "v": ""
+     },
+     "payload_hash": {
+      "t": "string",
+      "v": "abababababababababababababababababababababababababababababababab"
+     }
+    },
+    "struct": "WorkflowIntent"
+   },
+   "skip_field": "payload_hash",
+   "preimage_hex": "000000087265712d303030310000000777662d3030303100000006636c692d3031000100000001000000000000000000000028417564697420746869732052757374207365727669636520616e6420637265617465207465737473186cc6acd4b00001186cc73887797001000000176374783a2f2f74656e616e742d612f706f6c6963792d33000000070000000200000003000000406162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616200002000000000000016e360000000094d4943524f5f55534400000000",
+   "sha256": "2ed485f276d22107dc50a23f3e4ad3f9143618d2b97cba6920050a6002426ec6"
+  },
+  {
+   "id": "plan-full",
+   "desc": "WorkflowPlan completa (plan_hash EXCLU\u00cdDO da preimage)",
+   "value": {
+    "t": "struct",
+    "v": {
+     "workflow_id": {
+      "t": "string",
+      "v": "wf-0001"
+     },
+     "plan_revision": {
+      "t": "u32",
+      "v": 1
+     },
+     "schema_version": {
+      "t": "u16",
+      "v": 1
+     },
+     "request_id": {
+      "t": "string",
+      "v": "req-0001"
+     },
+     "intent_revision": {
+      "t": "u32",
+      "v": 1
+     },
+     "effective_decision_id": {
+      "t": "string",
+      "v": "dec-0001"
+     },
+     "policy_revision": {
+      "t": "u32",
+      "v": 7
+     },
+     "capability_catalog_revision": {
+      "t": "u32",
+      "v": 3
+     },
+     "planner_id": {
+      "t": "string",
+      "v": "static-template"
+     },
+     "planner_revision": {
+      "t": "string",
+      "v": "abababababababababababababababababababababababababababababababab"
+     },
+     "created_at_ns": {
+      "t": "u64",
+      "v": 1760000010000000001
+     },
+     "deadline_ns": {
+      "t": "u64",
+      "v": 1760000600000000001
+     },
+     "qos_profile": {
+      "t": "enum",
+      "v": "QI_CRITICAL",
+      "enum": "QosIntent"
+     },
+     "nodes": {
+      "t": "seq",
+      "v": [
+       {
+        "t": "struct",
+        "v": {
+         "node_id": {
+          "t": "string",
+          "v": "node-b"
+         },
+         "kind": {
+          "t": "enum",
+          "v": "NK_INFERENCE",
+          "enum": "NodeKind"
+         },
+         "required_capabilities": {
+          "t": "seq",
+          "v": [
+           {
+            "t": "string",
+            "v": "rust_refactor"
+           }
+          ],
+          "elem": {
+           "t": "string",
+           "v": "rust_refactor"
+          }
+         },
+         "model_id": {
+          "t": "string",
+          "v": "gemma-4-12b-it"
+         },
+         "target_agent_id": {
+          "t": "string",
+          "v": ""
+         },
+         "prompt_template": {
+          "t": "string",
+          "v": "Summarize the audit report"
+         },
+         "dependencies": {
+          "t": "seq",
+          "v": [
+           {
+            "t": "string",
+            "v": "node-a"
+           }
+          ],
+          "elem": {
+           "t": "string",
+           "v": "node-a"
+          }
+         },
+         "inputs": {
+          "t": "seq",
+          "v": [
+           {
+            "t": "struct",
+            "v": {
+             "producer_node_id": {
+              "t": "string",
+              "v": "node-a"
+             },
+             "output_name": {
+              "t": "string",
+              "v": "report"
+             }
+            },
+            "struct": "InputRef"
+           }
+          ],
+          "elem": {
+           "t": "struct",
+           "v": {
+            "producer_node_id": {
+             "t": "string",
+             "v": "node-a"
+            },
+            "output_name": {
+             "t": "string",
+             "v": "report"
+            }
+           },
+           "struct": "InputRef"
+          }
+         },
+         "output_names": {
+          "t": "seq",
+          "v": [
+           {
+            "t": "string",
+            "v": "summary"
+           }
+          ],
+          "elem": {
+           "t": "string",
+           "v": "summary"
+          }
+         },
+         "max_attempts": {
+          "t": "u16",
+          "v": 2
+         },
+         "deadline_ns": {
+          "t": "u64",
+          "v": 1760000500000000001
+         },
+         "max_tokens": {
+          "t": "u32",
+          "v": 1024
+         },
+         "max_output_bytes": {
+          "t": "u32",
+          "v": 65536
+         },
+         "security_context_ref": {
+          "t": "string",
+          "v": "ctx://tenant-a/policy-3"
+         },
+         "priority": {
+          "t": "i32",
+          "v": 5
+         },
+         "side_effect_key": {
+          "t": "string",
+          "v": ""
+         }
+        },
+        "struct": "PlanNode"
+       }
+      ],
+      "elem": {
+       "t": "struct",
+       "v": {
+        "node_id": {
+         "t": "string",
+         "v": "node-b"
+        },
+        "kind": {
+         "t": "enum",
+         "v": "NK_INFERENCE",
+         "enum": "NodeKind"
+        },
+        "required_capabilities": {
+         "t": "seq",
+         "v": [
+          {
+           "t": "string",
+           "v": "rust_refactor"
+          }
+         ],
+         "elem": {
+          "t": "string",
+          "v": "rust_refactor"
+         }
+        },
+        "model_id": {
+         "t": "string",
+         "v": "gemma-4-12b-it"
+        },
+        "target_agent_id": {
+         "t": "string",
+         "v": ""
+        },
+        "prompt_template": {
+         "t": "string",
+         "v": "Summarize the audit report"
+        },
+        "dependencies": {
+         "t": "seq",
+         "v": [
+          {
+           "t": "string",
+           "v": "node-a"
+          }
+         ],
+         "elem": {
+          "t": "string",
+          "v": "node-a"
+         }
+        },
+        "inputs": {
+         "t": "seq",
+         "v": [
+          {
+           "t": "struct",
+           "v": {
+            "producer_node_id": {
+             "t": "string",
+             "v": "node-a"
+            },
+            "output_name": {
+             "t": "string",
+             "v": "report"
+            }
+           },
+           "struct": "InputRef"
+          }
+         ],
+         "elem": {
+          "t": "struct",
+          "v": {
+           "producer_node_id": {
+            "t": "string",
+            "v": "node-a"
+           },
+           "output_name": {
+            "t": "string",
+            "v": "report"
+           }
+          },
+          "struct": "InputRef"
+         }
+        },
+        "output_names": {
+         "t": "seq",
+         "v": [
+          {
+           "t": "string",
+           "v": "summary"
+          }
+         ],
+         "elem": {
+          "t": "string",
+          "v": "summary"
+         }
+        },
+        "max_attempts": {
+         "t": "u16",
+         "v": 2
+        },
+        "deadline_ns": {
+         "t": "u64",
+         "v": 1760000500000000001
+        },
+        "max_tokens": {
+         "t": "u32",
+         "v": 1024
+        },
+        "max_output_bytes": {
+         "t": "u32",
+         "v": 65536
+        },
+        "security_context_ref": {
+         "t": "string",
+         "v": "ctx://tenant-a/policy-3"
+        },
+        "priority": {
+         "t": "i32",
+         "v": 5
+        },
+        "side_effect_key": {
+         "t": "string",
+         "v": ""
+        }
+       },
+       "struct": "PlanNode"
+      }
+     },
+     "plan_hash": {
+      "t": "string",
+      "v": "abababababababababababababababababababababababababababababababab"
+     }
+    },
+    "struct": "WorkflowPlan"
+   },
+   "skip_field": "plan_hash",
+   "preimage_hex": "0000000777662d30303031000000010001000000087265712d3030303100000001000000086465632d3030303100000007000000030000000f7374617469632d74656d706c6174650000004061626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162186cc6af28bbe401186cc738877970010000000100000001000000066e6f64652d6200000000000000010000000d727573745f7265666163746f720000000e67656d6d612d342d3132622d6974000000000000001a53756d6d6172697a6520746865206175646974207265706f727400000001000000066e6f64652d6100000001000000066e6f64652d61000000067265706f7274000000010000000773756d6d6172790002186cc7213f0288010000040000010000000000176374783a2f2f74656e616e742d612f706f6c6963792d330000000500000000",
+   "sha256": "dff146f652e49b79c08cfcd48148c14dc8600c6c348e9936099b148a6aab72dd"
+  },
+  {
+   "id": "decision-full",
+   "desc": "RoutingDecision completa (payload_hash EXCLU\u00cdDO da preimage)",
+   "value": {
+    "t": "struct",
+    "v": {
+     "request_id": {
+      "t": "string",
+      "v": "req-0001"
+     },
+     "decision_id": {
+      "t": "string",
+      "v": "dec-0001"
+     },
+     "workflow_id": {
+      "t": "string",
+      "v": "wf-0001"
+     },
+     "schema_version": {
+      "t": "u16",
+      "v": 1
+     },
+     "intent_revision": {
+      "t": "u32",
+      "v": 1
+     },
+     "producer_id": {
+      "t": "string",
+      "v": "laya-worker-1"
+     },
+     "model_id": {
+      "t": "string",
+      "v": "convaiinnovations/laya"
+     },
+     "checkpoint_revision": {
+      "t": "string",
+      "v": "abababababababababababababababababababababababababababababababab"
+     },
+     "questions_revision": {
+      "t": "u32",
+      "v": 2
+     },
+     "policy_revision": {
+      "t": "u32",
+      "v": 7
+     },
+     "capability_catalog_revision": {
+      "t": "u32",
+      "v": 3
+     },
+     "qos_profile": {
+      "t": "enum",
+      "v": "QI_CRITICAL",
+      "enum": "QosIntent"
+     },
+     "qos_probabilities": {
+      "t": "seq",
+      "v": [
+       {
+        "t": "struct",
+        "v": {
+         "profile": {
+          "t": "enum",
+          "v": "QI_BALANCED",
+          "enum": "QosIntent"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.12
+         }
+        },
+        "struct": "ProfileProbability"
+       },
+       {
+        "t": "struct",
+        "v": {
+         "profile": {
+          "t": "enum",
+          "v": "QI_CRITICAL",
+          "enum": "QosIntent"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.73
+         }
+        },
+        "struct": "ProfileProbability"
+       },
+       {
+        "t": "struct",
+        "v": {
+         "profile": {
+          "t": "enum",
+          "v": "QI_STREAM_LIKE",
+          "enum": "QosIntent"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.05
+         }
+        },
+        "struct": "ProfileProbability"
+       },
+       {
+        "t": "struct",
+        "v": {
+         "profile": {
+          "t": "enum",
+          "v": "QI_LOW_COST",
+          "enum": "QosIntent"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.04
+         }
+        },
+        "struct": "ProfileProbability"
+       },
+       {
+        "t": "struct",
+        "v": {
+         "profile": {
+          "t": "enum",
+          "v": "QI_FAILOVER",
+          "enum": "QosIntent"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.06
+         }
+        },
+        "struct": "ProfileProbability"
+       }
+      ],
+      "elem": {
+       "t": "struct",
+       "v": {
+        "profile": {
+         "t": "enum",
+         "v": "QI_BALANCED",
+         "enum": "QosIntent"
+        },
+        "probability": {
+         "t": "f64",
+         "v": 0.12
+        }
+       },
+       "struct": "ProfileProbability"
+      }
+     },
+     "capability_probabilities": {
+      "t": "seq",
+      "v": [
+       {
+        "t": "struct",
+        "v": {
+         "capability_id": {
+          "t": "string",
+          "v": "rust_refactor"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.91
+         },
+         "answer_confidence": {
+          "t": "f64",
+          "v": 0.77
+         }
+        },
+        "struct": "CapabilityProbability"
+       },
+       {
+        "t": "struct",
+        "v": {
+         "capability_id": {
+          "t": "string",
+          "v": "unit_testing"
+         },
+         "probability": {
+          "t": "f64",
+          "v": 0.64
+         },
+         "answer_confidence": {
+          "t": "f64",
+          "v": 0.58
+         }
+        },
+        "struct": "CapabilityProbability"
+       }
+      ],
+      "elem": {
+       "t": "struct",
+       "v": {
+        "capability_id": {
+         "t": "string",
+         "v": "rust_refactor"
+        },
+        "probability": {
+         "t": "f64",
+         "v": 0.91
+        },
+        "answer_confidence": {
+         "t": "f64",
+         "v": 0.77
+        }
+       },
+       "struct": "CapabilityProbability"
+      }
+     },
+     "requires_planning_probability": {
+      "t": "f64",
+      "v": 0.31
+     },
+     "priority_score": {
+      "t": "f64",
+      "v": 1.28
+     },
+     "priority_probabilities": {
+      "t": "seq",
+      "v": [
+       {
+        "t": "f64",
+        "v": 0.18
+       },
+       {
+        "t": "f64",
+        "v": 0.7
+       },
+       {
+        "t": "f64",
+        "v": 0.12
+       }
+      ],
+      "elem": {
+       "t": "f64",
+       "v": 0.0
+      }
+     },
+     "confidence": {
+      "t": "f64",
+      "v": 0.71
+     },
+     "answer_confidence": {
+      "t": "f64",
+      "v": 0.66
+     },
+     "calibration_revision": {
+      "t": "string",
+      "v": ""
+     },
+     "created_at_ns": {
+      "t": "u64",
+      "v": 1760000005000000001
+     },
+     "valid_until_ns": {
+      "t": "u64",
+      "v": 1760000300000000001
+     },
+     "decision_status": {
+      "t": "enum",
+      "v": "DS_OK",
+      "enum": "DecisionStatus"
+     },
+     "reason_code": {
+      "t": "enum",
+      "v": "RC_NONE",
+      "enum": "ReasonCode"
+     },
+     "evidence_digest": {
+      "t": "string",
+      "v": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+     },
+     "payload_hash": {
+      "t": "string",
+      "v": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+     }
+    },
+    "struct": "RoutingDecision"
+   },
+   "skip_field": "payload_hash",
+   "preimage_hex": "000000087265712d30303031000000086465632d303030310000000777662d303030310001000000010000000d6c6179612d776f726b65722d3100000016636f6e766169696e6e6f766174696f6e732f6c61796100000040616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261620000000200000007000000030000000100000005000000003fbeb851eb851eb8000000013fe75c28f5c28f5c000000023fa999999999999a000000033fa47ae147ae147b000000043faeb851eb851eb8000000020000000d727573745f7265666163746f723fed1eb851eb851f3fe8a3d70a3d70a40000000c756e69745f74657374696e673fe47ae147ae147b3fe28f5c28f5c28f3fd3d70a3d70a3d73ff47ae147ae147b000000033fc70a3d70a3d70a3fe66666666666663fbeb851eb851eb83fe6b851eb851eb83fe51eb851eb851f00000000186cc6adfeb5f201186cc6f2ae14b80100000000000000000000004063646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364636463646364",
+   "sha256": "2841a96f2c79cd39e643502c268b8afe98f2c702acc28ad4a854bd2720047a06"
+  }
+ ]
+}

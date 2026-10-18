@@ -9,6 +9,8 @@
 //!
 //! - `OrchestratorDDS.idl` — tipos LLM + ServerStatus (interop C++/Python)
 //! - `OrchestratorV4.idl` — Task/AgentState/TaskOutput/SystemMetric
+//! - `WorkflowPlanning.idl` — fase 900 (T-900-M1-02): 5 tópicos de roteamento
+//!   adaptativo Laya/DDS, módulo `dds_llm_workflow_v1`, sem tocar os 19 canônicos
 //!
 //! O V4 usa `#pragma keylist`, que o parser built-in do cyclonedds-build não
 //! aceita; sanitizamos para anotações `@key` antes de compilar.
@@ -31,9 +33,11 @@ fn main() {
     // isolado do runtime não dependa do monorepo pai nem de um checkout C++ irmão.
     let idl_dds = resolve(&manifest_dir, "idl/OrchestratorDDS.idl");
     let idl_v4 = resolve(&manifest_dir, "idl/OrchestratorV4.idl");
+    let idl_wp = resolve(&manifest_dir, "idl/WorkflowPlanning.idl");
 
     println!("cargo:rerun-if-changed={}", idl_dds.display());
     println!("cargo:rerun-if-changed={}", idl_v4.display());
+    println!("cargo:rerun-if-changed={}", idl_wp.display());
     println!(
         "cargo:rustc-env=DDS_CONTRACT_ORCHESTRATOR_IDL={}",
         idl_dds.display()
@@ -46,6 +50,10 @@ fn main() {
         "cargo:rerun-if-changed={}",
         idl_v4.with_extension("c").display()
     );
+    println!(
+        "cargo:rerun-if-changed={}",
+        idl_wp.with_extension("c").display()
+    );
 
     if !dds_enabled {
         return;
@@ -55,6 +63,8 @@ fn main() {
 
     compile_idl(&idl_dds, &out_dir, "OrchestratorDDS", false);
     compile_idl(&idl_v4, &out_dir, "OrchestratorV4", true);
+    // Sem sanitização: o WorkflowPlanning usa anotações @key nativas.
+    compile_idl(&idl_wp, &out_dir, "WorkflowPlanning", false);
 
     for (file, module, types, c_file) in [
         (
@@ -89,6 +99,18 @@ fn main() {
                 "DiscoveryEvent",
             ][..],
             idl_v4.with_extension("c"),
+        ),
+        (
+            "WorkflowPlanning.rs",
+            "dds_llm_workflow_v1",
+            &[
+                "WorkflowIntent",
+                "RoutingDecision",
+                "AgentCapabilities",
+                "WorkflowPlan",
+                "WorkflowState",
+            ][..],
+            idl_wp.with_extension("c"),
         ),
     ] {
         let path = out_dir.join(file);
