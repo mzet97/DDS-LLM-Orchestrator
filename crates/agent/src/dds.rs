@@ -599,7 +599,7 @@ impl AgentDds {
                                        // "completion" (lowercase) violava o contrato e o `/sync` do
                                        // orchestrator recebia `FinishReason::parse → None`.
                 final_task.finish_reason = orch_common::FinishReason::Completion.as_str().into();
-                if let Err(e) = self.dataspace.write_task(final_task).await {
+                if let Err(e) = self.dataspace.write_task(final_task.clone()).await {
                     // T-820-09: DONE perdido deixaria a task em RUNNING sem
                     // terminalidade; não há segundo write seguro (o DONE já
                     // falhou) — registra e deixa o reaper de progresso do
@@ -607,13 +607,21 @@ impl AgentDds {
                     self.agent.status().record_failure();
                     anyhow::bail!("falha ao publicar DONE: {e}");
                 }
+                // O-4b: verificação de chegada + republish idempotente. Se
+                // esta task foi HERDADA de um agente morto cujo writer tinha
+                // força maior, o RHC de TODOS os readers (inclusive o nosso)
+                // rejeita o nosso DONE enquanto o lease do writer morto não
+                // expira (~10 s) — o ack do dds_write só cobre transporte,
+                // não arbitragem de ownership. Republicamos até o readback
+                // do MESH mostrar o nosso DONE (bounded ~lease+margem).
+                self.ensure_terminal_visible(&final_task, 3).await;
                 self.agent.status().record_completion(latency_ms);
                 tracing::info!(task_id, latency_ms, "task concluída");
             }
             Some(err_msg) => {
                 final_task.status = 4; // FAILED
                 final_task.finish_reason = err_msg.clone();
-                if let Err(e) = self.dataspace.write_task(final_task).await {
+                if let Err(e) = self.dataspace.write_task(final_task.clone()).await {
                     // T-820-09: se até o FAILED falhar, só resta o log — o
                     // reaper de progresso (T-820-03) é a rede de segurança.
                     tracing::error!(
@@ -622,12 +630,58 @@ impl AgentDds {
                         "falha ao publicar FAILED — task pode ficar sem terminalidade"
                     );
                 }
+                // O-4b: mesma garantia para o FAILED (herança de writer morto).
+                self.ensure_terminal_visible(&final_task, 4).await;
                 self.agent.status().record_failure();
                 anyhow::bail!(err_msg);
             }
         }
 
         Ok(())
+    }
+
+    /// O-4b (PARCIAL, default OFF — ver specs/905-otimizacao/o4b/README.md):
+    /// republish idempotente do terminal até o readback do mesh confirmar.
+    /// No cenário real medido (kill -9 + herança pós-lease), o readback do
+    /// PRÓPRIO sobrevivente já aceita o seu DONE (o republisher nunca dispara)
+    /// e o CLIENTE continua sem receber — a perda está adiante (cliente
+    /// condição dupla DONE+chunk, ou interferência do requeue strength-200
+    /// do orchestrator). Ativar experimentalmente com AGENT_ENSURE_TERMINAL=1.
+    async fn ensure_terminal_visible(&self, task: &Task, want_status: i32) {
+        if std::env::var("AGENT_ENSURE_TERMINAL").is_err() {
+            return;
+        }
+        let task_id = task.task_id.clone();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let mut attempts = 0u32;
+        loop {
+            match self.dataspace.read_task_mesh(&task_id) {
+                Ok(Some(current))
+                    if current.status == want_status
+                        && current.assigned_agent == task.assigned_agent =>
+                {
+                    if attempts > 0 {
+                        tracing::info!(task_id, attempts, "terminal confirmado no mesh pós-republish");
+                    }
+                    return;
+                }
+                Ok(Some(current)) if current.status == 3 || current.status == 4 => {
+                    // terminal por outro dono: recuperação paralela venceu
+                    tracing::info!(task_id, status = current.status, "terminal publicado por outro dono");
+                    return;
+                }
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(task_id, attempts, "terminal não visível no mesh pós prazo (republisher exausto)");
+                return;
+            }
+            attempts += 1;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if let Err(e) = self.dataspace.write_task(task.clone()).await {
+                tracing::warn!(task_id, error = %e, "republish do terminal falhou");
+            }
+        }
     }
 
     /// T-820-09: publica FAILED best-effort em caminhos de erro pós-claim.
