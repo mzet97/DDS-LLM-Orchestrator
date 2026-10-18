@@ -50,6 +50,12 @@ pub struct AgentDds {
     dataspace: Arc<DataSpace>,
     writer_pool: Arc<WriterPool>,
     claim_permits: Arc<Semaphore>,
+    /// T-900-M3-02: barreira adaptativa OPT-IN (`--adaptive`); `None` = o
+    /// caminho legado roda intocado (REQ-900-012: EXP1b/EXP4 preservados).
+    adaptive: Option<Arc<crate::adaptive::AdaptiveBarrier>>,
+    /// T-900 (V06): tasks laya1- que chegaram ANTES de Plan/State (barreira
+    /// incompleta) — re-checadas pelo sweeper até completar ou vencer.
+    deferred: std::sync::Mutex<Vec<dds_contract::generated::dds_llm_orchestrator::Task>>,
 }
 
 impl AgentDds {
@@ -82,7 +88,46 @@ impl AgentDds {
             agent: Agent::new(config),
             dataspace: Arc::new(dataspace),
             writer_pool: Arc::new(writer_pool),
+            adaptive: None,
+            deferred: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    /// T-900-M3-02: liga a barreira adaptativa (builder; sem isso o
+    /// comportamento é 100% legado).
+    pub fn with_adaptive(mut self, barrier: Arc<crate::adaptive::AdaptiveBarrier>) -> Self {
+        self.adaptive = Some(barrier);
+        self
+    }
+
+    pub fn adaptive(&self) -> Option<&Arc<crate::adaptive::AdaptiveBarrier>> {
+        self.adaptive.as_ref()
+    }
+
+    /// Filtro combinado: legado + barreira (se ativa). Usado ANTES do
+    /// enfileiramento e REVALIDADO antes do write de ASSIGNED (RUST-CLAIM-012
+    /// + janela de revogação M3-01).
+    fn claim_eligible(
+        this: &Self,
+        task: &dds_contract::generated::dds_llm_orchestrator::Task,
+        cfg: &ClaimConfig,
+    ) -> bool {
+        if !claim::is_eligible_with(task, cfg, |id| this.agent.is_claimed(id)) {
+            return false;
+        }
+        match &this.adaptive {
+            None => true,
+            Some(barrier) => matches!(
+                barrier.check(
+                    task,
+                    None, // registry do self: o loop injeta via update abaixo
+                    &cfg.target_agent_prefix,
+                    now_ns(),
+                ),
+                crate::adaptive::AdaptiveDecision::Proceed
+                    | crate::adaptive::AdaptiveDecision::Legacy
+            ),
+        }
     }
 
     pub fn agent(&self) -> &Agent {
@@ -164,6 +209,9 @@ impl AgentDds {
             })
         };
 
+        // T-900 (V06): tx do sweeper ANTES da ingestão (que move o original).
+        let sweeper_tx = tx.clone();
+
         // Ingestão: drena o stream DDS para a fila bounded.
         let ingestion = {
             let this = Arc::clone(&self);
@@ -174,7 +222,24 @@ impl AgentDds {
                     // T-820-09: point-check de claimed (sem clonar o HashSet
                     // por amostra DDS — era `claimed_set().await` aqui, uma
                     // cópia O(n) no hot loop).
-                    if !claim::is_eligible_with(&task, &cfg, |id| this.agent.is_claimed(id)) {
+                    if !Self::claim_eligible(&this, &task, &cfg) {
+                        // T-900 (V06): barreira INCOMPLETA (task antes de
+                        // Plan/State no snapshot) NÃO descarta — o take()
+                        // consumiu a amostra do RHC; diferir para re-checar
+                        // quando a barreira completar.
+                        if let Some(barrier) = this.adaptive.as_ref() {
+                            if matches!(
+                                barrier.check(&task, None, &cfg.target_agent_prefix, now_ns(),),
+                                crate::adaptive::AdaptiveDecision::Block(
+                                    crate::adaptive::Blocked::UnresolvedNode
+                                )
+                            ) {
+                                let mut d = this.deferred.lock().expect("deferred");
+                                if d.len() < 64 {
+                                    d.push((*task).clone());
+                                }
+                            }
+                        }
                         continue;
                     }
                     let queued = QueuedClaim {
@@ -189,6 +254,37 @@ impl AgentDds {
                 }
             })
         };
+
+        {
+            let this = Arc::clone(&self);
+            let cfg = claim_cfg.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    let retry: Vec<_> = {
+                        let mut d = this.deferred.lock().expect("deferred");
+                        std::mem::take(&mut *d)
+                    };
+                    for task in retry {
+                        let arc = std::sync::Arc::new(task);
+                        if Self::claim_eligible(&this, &arc, &cfg) {
+                            let _ = sweeper_tx
+                                .send(QueuedClaim {
+                                    task: arc,
+                                    enqueued_at: Instant::now(),
+                                })
+                                .await;
+                        } else {
+                            let mut d = this.deferred.lock().expect("deferred");
+                            if d.len() < 64 {
+                                d.push((*arc).clone());
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         // Dispatcher: 1 permit por tentativa de claim, com revalidação
         // imediatamente antes do write de ASSIGNED.
@@ -210,7 +306,7 @@ impl AgentDds {
                     continue;
                 }
             };
-            if !claim::is_eligible_with(&fresh, &claim_cfg, |id| self.agent.is_claimed(id)) {
+            if !Self::claim_eligible(&self, &fresh, &claim_cfg) {
                 continue;
             }
             if fresh.deadline_ns > 0 && fresh.deadline_ns <= now_ns() {

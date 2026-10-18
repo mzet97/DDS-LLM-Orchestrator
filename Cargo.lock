@@ -191,10 +191,12 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "workflow-engine",
 ]
 
 [[package]]
@@ -1522,6 +1524,7 @@ dependencies = [
  "regex",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "thiserror 1.0.69",
  "tokio",
 ]
@@ -5412,6 +5415,8 @@ dependencies = [
  "criterion",
  "cyclonedds",
  "dds-contract",
+ "dds-dataspace",
+ "futures",
  "serde",
  "serde_json",
  "tokio",
@@ -6909,6 +6914,26 @@ dependencies = [
  "group",
  "hybrid-array",
  "primefield",
+]
+
+[[package]]
+name = "workflow-engine"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "cyclonedds",
+ "dds-contract",
+ "dds-dataspace",
+ "futures",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

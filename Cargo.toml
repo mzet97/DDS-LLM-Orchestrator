@@ -25,6 +25,7 @@ members = [
     "crates/orchestrator-studio",
     "crates/studio-node",
     "crates/studio-ssh",
+    "crates/workflow-engine",
 ]
 
 [workspace.package]

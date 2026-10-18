@@ -23,6 +23,7 @@ pub mod dispatch;
 pub mod in_memory;
 pub mod qos;
 pub mod shutdown;
+pub mod workflow_space;
 
 use dashmap::DashMap;
 use std::sync::Arc;

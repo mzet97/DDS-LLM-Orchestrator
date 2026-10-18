@@ -325,6 +325,63 @@ pub mod profiles {
             .build()
     }
 
+    /// Perfis da fase 900 (T-900-M1-03) — WorkflowPlanning.idl, contracts.md
+    /// §"QoS por entidade": TODOS Reliable(1s), TransientLocal, KeepLast(1),
+    /// Shared, ResourceLimits(N, N, 1). `Agent.Capabilities` acrescenta
+    /// Deadline 10s + Liveliness ManualByTopic lease 10s (heartbeat 5s,
+    /// expires <= 10s). Limites são proposta de engenharia (R-BOUNDS),
+    /// não medição.
+    pub mod workflow {
+        use cyclonedds::{
+            DdsResult, Durability, History, Liveliness, Qos, QosBuilder, Reliability,
+        };
+
+        const ONE_S: i64 = 1_000_000_000;
+        const TEN_S: i64 = 10_000_000_000;
+
+        fn base(max_instances: i32) -> DdsResult<Qos> {
+            QosBuilder::new()
+                .reliability(Reliability::Reliable, ONE_S)
+                .durability(Durability::TransientLocal)
+                .history(History::KeepLast(1))
+                .resource_limits(max_instances, max_instances, 1)
+                .build()
+        }
+
+        /// `Workflow.Intent` — 64 instâncias pendentes.
+        pub fn intent() -> DdsResult<Qos> {
+            base(64)
+        }
+
+        /// `Routing.Decision` — 256 instâncias.
+        pub fn decision() -> DdsResult<Qos> {
+            base(256)
+        }
+
+        /// `Agent.Capabilities` — 256 instâncias + Deadline 10s +
+        /// Liveliness ManualByTopic lease 10s.
+        pub fn capabilities() -> DdsResult<Qos> {
+            QosBuilder::new()
+                .reliability(Reliability::Reliable, ONE_S)
+                .durability(Durability::TransientLocal)
+                .history(History::KeepLast(1))
+                .resource_limits(256, 256, 1)
+                .deadline(TEN_S)
+                .liveliness(Liveliness::ManualByTopic, TEN_S)
+                .build()
+        }
+
+        /// `Workflow.Plan` — 32 workflows ativos.
+        pub fn plan() -> DdsResult<Qos> {
+            base(32)
+        }
+
+        /// `Workflow.State` — 32 workflows ativos.
+        pub fn state() -> DdsResult<Qos> {
+            base(32)
+        }
+    }
+
     /// `Studio.NodePresence` (T-890, 19º tópico): perfil aprovado igual ao de
     /// `AgentRegistry` — Reliable(10s), TransientLocal, KeepLast(1), Shared,
     /// deadline 30 s, Liveliness **ManualByTopic** lease 10 s, latency 50 ms,

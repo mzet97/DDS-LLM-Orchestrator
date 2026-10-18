@@ -10,6 +10,8 @@ description = "Agente/proxy: assume tasks via DDS e faz ponte com o llama-server
 dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
 dds-contract = { version = "=0.1.0", path = "../dds-contract" }
 orch-common = { version = "=0.1.0", path = "../orch-common" }
+workflow-engine = { version = "=0.1.0", path = "../workflow-engine" }
+sha2 = "0.10"
 cyclonedds = { workspace = true, optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
