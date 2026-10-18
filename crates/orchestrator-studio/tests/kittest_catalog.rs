@@ -21,23 +21,6 @@ async fn live_authority() -> String {
     format!("http://{addr}")
 }
 
-/// Drena o worker como a view faria (fora do harness, p/ pré-condições).
-async fn drain(shared: &mut SharedCatalog) {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    while shared.busy {
-        assert!(
-            tokio::time::Instant::now() < deadline,
-            "worker não respondeu a tempo"
-        );
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        shared.poll();
-    }
-}
-
-/// Espera o worker do catálogo ficar ocioso (`busy == false`) dirigindo
-/// frames com pausa real. Contagem fixa de frames (`run_steps(N)`) avança
-/// mais rápido que o worker HTTP sob carga — e rótulos como "0 itens" já
-/// existem antes da operação terminar, então o sinal correto é o `busy`.
 fn wait_idle(harness: &mut egui_kittest::Harness<'_, &mut SharedCatalog>) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
     // Um frame primeiro: o clique só vira `busy` quando a view o processa.
@@ -214,4 +197,3 @@ fn catalog_search_filters_export_and_clear() {
     harness.run_steps(3);
     harness.get_by_label_contains("nenhum evento acompanhado nesta sessão.");
 }
-

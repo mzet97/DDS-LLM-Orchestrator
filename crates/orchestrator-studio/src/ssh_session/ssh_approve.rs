@@ -75,7 +75,6 @@ impl SshSession {
             }
         }
     }
-
 }
 
 impl SshSession {
@@ -116,10 +115,7 @@ impl SshSession {
     /// Aprovações persistidas no cofre (leitura; vazio se ilegível).
     #[must_use]
     pub fn approvals(&self) -> Vec<Approval> {
-        TrustFile::open(&self.trust_path).map_or_else(
-            |_| Vec::new(),
-            |file| file.store().approvals().to_vec(),
-        )
+        TrustFile::open(&self.trust_path)
+            .map_or_else(|_| Vec::new(), |file| file.store().approvals().to_vec())
     }
-
 }

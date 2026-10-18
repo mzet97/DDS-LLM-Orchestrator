@@ -54,8 +54,8 @@ fn unknown_host_blocks_then_approve_persists_and_reconnects() {
             fingerprint: String::from("SHA256:impressao-real"),
         }
     );
-    let approved = session
-        .approve_displayed_with(|_t, _p, _s, _c, _cmd| Ok(String::from("PROVA_OK")));
+    let approved =
+        session.approve_displayed_with(|_t, _p, _s, _c, _cmd| Ok(String::from("PROVA_OK")));
     assert!(approved);
     drain(&mut session);
     assert_eq!(session.phase, SshPhase::Done);
@@ -82,7 +82,11 @@ fn changed_key_blocks_without_approval() {
     });
     drain(&mut session);
     assert_eq!(session.phase, SshPhase::Failed);
-    assert!(session.notice.contains("mudou a chave"), "{}", session.notice);
+    assert!(
+        session.notice.contains("mudou a chave"),
+        "{}",
+        session.notice
+    );
     // Sem aprovação inline para chave alterada.
     assert!(!session.approve_displayed_with(|_t, _p, _s, _c, _cmd| Ok(String::new())));
 }

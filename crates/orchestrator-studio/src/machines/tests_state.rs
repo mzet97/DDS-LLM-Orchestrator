@@ -8,7 +8,11 @@ fn remove_machine_without_snapshot_is_honest_noop() {
     let mut state = MachinesState::with_url("http://127.0.0.1:4317");
     state.remove_machine("lab-1");
     assert!(!state.busy);
-    assert!(state.notice.contains("fora do snapshot"), "{}", state.notice);
+    assert!(
+        state.notice.contains("fora do snapshot"),
+        "{}",
+        state.notice
+    );
 }
 
 #[test]

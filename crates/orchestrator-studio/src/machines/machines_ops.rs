@@ -197,9 +197,8 @@ impl MachinesState {
                 .map(|item| item.revision.0)
         });
         let Some(base) = base else {
-            self.notice = format!(
-                "máquina {machine_id} fora do snapshot atual — atualize antes de remover"
-            );
+            self.notice =
+                format!("máquina {machine_id} fora do snapshot atual — atualize antes de remover");
             return;
         };
         if let Some(machine) = self
@@ -213,19 +212,18 @@ impl MachinesState {
         let auth = self.auth();
         let (tx, rx) = mpsc::channel();
         std::thread::spawn(move || {
-            let (notice, fill_base) =
-                match delete_with_token(&url, &id, base, auth.as_deref()) {
-                    Ok(revision) => (format!("máquina removida em r{revision}"), None),
-                    Err(err) => (
-                        err.to_string(),
-                        match &err {
-                            SharedCatalogError::Conflict {
-                                current: Some(current),
-                            } => Some(*current),
-                            _ => None,
-                        },
-                    ),
-                };
+            let (notice, fill_base) = match delete_with_token(&url, &id, base, auth.as_deref()) {
+                Ok(revision) => (format!("máquina removida em r{revision}"), None),
+                Err(err) => (
+                    err.to_string(),
+                    match &err {
+                        SharedCatalogError::Conflict {
+                            current: Some(current),
+                        } => Some(*current),
+                        _ => None,
+                    },
+                ),
+            };
             let then_snapshot = Some(
                 fetch_snapshot_with_token(&url, auth.as_deref()).map_err(|err| err.to_string()),
             );

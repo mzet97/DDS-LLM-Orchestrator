@@ -16,8 +16,8 @@ use std::sync::mpsc;
 use studio_ssh::{Approval, BridgeError, KeyIdentity, SshTarget, TrustFile};
 
 /// Executor de um comando via bridge (injetável nos testes).
-pub type SshRunner = dyn FnOnce(SshTarget, PathBuf, String, PathBuf, String) -> Result<String, BridgeError>
-    + Send;
+pub type SshRunner =
+    dyn FnOnce(SshTarget, PathBuf, String, PathBuf, String) -> Result<String, BridgeError> + Send;
 
 /// Fase visível da sessão (o painel renderiza a partir daqui).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,7 +27,10 @@ pub enum SshPhase {
     /// Worker em voo (`poll` drena).
     Connecting,
     /// Host desconhecido: impressão real aguardando aprovação.
-    AwaitingApproval { key_type: String, fingerprint: String },
+    AwaitingApproval {
+        key_type: String,
+        fingerprint: String,
+    },
     /// Último comando concluiu; saída em `output`.
     Done,
     /// Falha tipada em `notice` (transporte, auth, chave alterada…).

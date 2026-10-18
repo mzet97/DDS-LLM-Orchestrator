@@ -198,4 +198,3 @@ async fn services_armed_actuation_end_to_end() {
     harness.get_by_label_contains("POST /services/worker/start");
     harness.get_by_label_contains("aplicada · acted=true active=true");
 }
-

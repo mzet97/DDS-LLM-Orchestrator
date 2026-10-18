@@ -84,7 +84,10 @@ fn wait_phase(session: &mut SshSession, wanted: &str) {
         }
         std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    panic!("timeout esperando fase {wanted}; notice: {}", session.notice);
+    panic!(
+        "timeout esperando fase {wanted}; notice: {}",
+        session.notice
+    );
 }
 
 #[test]
@@ -99,8 +102,7 @@ fn gui_session_against_disposable_ssh_server() {
     session.passphrase = String::from("senha-do-teste");
     session.generate_identity();
     assert!(session.identity_exists(), "{}", session.notice);
-    let pub_line = std::fs::read_to_string(identity_dir.join("studio_ed25519.pub"))
-        .expect("pub");
+    let pub_line = std::fs::read_to_string(identity_dir.join("studio_ed25519.pub")).expect("pub");
     let allowed_openssh = pub_line
         .split_whitespace()
         .take(2)
@@ -127,7 +129,9 @@ fn gui_session_against_disposable_ssh_server() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind");
-        addr_tx.send(listener.local_addr().expect("addr")).expect("tx");
+        addr_tx
+            .send(listener.local_addr().expect("addr"))
+            .expect("tx");
         loop {
             let Ok((stream, _)) = listener.accept().await else {
                 break;

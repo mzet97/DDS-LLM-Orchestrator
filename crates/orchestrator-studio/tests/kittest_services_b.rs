@@ -1,3 +1,4 @@
+#![allow(dead_code)] // helpers compartilhados com a parte A (rede)
 //! 3.8 Serviços: leitura do plano, atuação armada ponta a ponta, recusa
 //! desarmada pelo clique e auditoria com relógio — contra stub axum real do
 //! nó (`GET /services`, `POST /services/<u>/<start|stop>`).
