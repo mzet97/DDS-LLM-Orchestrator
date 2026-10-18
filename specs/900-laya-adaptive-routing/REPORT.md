@@ -391,3 +391,39 @@ com writers retidos).
 
 workflow-engine mock **61/0** + dds **33/0**; agent **28/0**; worker 24 OK;
 clippy -D warnings (mock+dds) OK; fmt OK.
+
+---
+
+# FECHAMENTO — A2/A5/A6 CONCLUÍDOS + v3 em andamento (2026-10-18)
+
+## A2 — dataset completo: 2 000/2 000 (geração local)
+
+Cada exemplo → 12 records (1 choice + 2 scores + 9 noul). Train 1 600:
+noul 14 400 (floor 2 000 ✓✓), score 3 200 (✓), choice 1 600 (abaixo do
+floor 2 000 — indicativo).
+
+## A5 — `--calibration-pin` em wf-run E wf-observe (COMPLETO)
+
+Flag implementada em ambos os bins; o validator aplica
+`DecisionPolicy.calibration_pin` → `shadow_only=false` SOMENTE quando a
+decisão carrega pin casando. Worker CLI ganhou `--calibration-path`.
+
+## A6 — sessão shadow calibrada real: **PASS**
+
+`harness/run_calibrated_shadow.py` provou em DDS real (domínio 89):
+intenção → decisão Laya REAL com pin `f7451ac7…` carregado →
+wf-observe `--calibration-pin <pin-completo>` → **`shadow_only=false`**
+observado no output + `tasks_seen: 0` (fronteira mantida). Timeline em
+`evidence/calibration/calibrated-shadow.timeline.json`.
+
+Bugs encontrados no fechamento: decide.py hardcodava
+`calibration_revision=""` (agora propaga o pin do adapter); harness
+checava substring literal `shadow_only.*false` em vez de
+`shadow_only=false`; pin truncado a 16 chars não casava (precisa 64).
+
+## A4 — recalibração v3 (em fundo, ~2h)
+
+1 600 train / 19 200 records; resultados pendentes. Choice bucket (1 600)
+ainda abaixo do floor — se mantiver, a escolha QoS permanece com T default
+(calibração parcial documentada); noul (o mais robusto) calibrado com
+folga.

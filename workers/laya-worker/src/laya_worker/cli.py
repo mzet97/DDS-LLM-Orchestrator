@@ -25,6 +25,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--max-intents", type=int, default=None)
     ap.add_argument("--idle-timeout", type=float, default=30.0)
     ap.add_argument("--ttl-s", type=float, default=120.0)
+    ap.add_argument("--calibration-path", default=None,
+                    help="caminho do calibration_v1.json (pin vira calibration_revision)")
     args = ap.parse_args(argv)
 
     from .adapter import FakeLayaAdapter, RealLayaAdapter
@@ -32,7 +34,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.mock:
         laya = FakeLayaAdapter()
     else:
-        laya = RealLayaAdapter(checkpoint_sha256=args.checkpoint_sha256)
+        laya = RealLayaAdapter(checkpoint_sha256=args.checkpoint_sha256,
+                                calibration_path=args.calibration_path)
 
     from .space import WorkerSpace, serve
 

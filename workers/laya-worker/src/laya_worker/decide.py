@@ -205,7 +205,7 @@ def decide(intent: Any, laya: adapter_mod.LayaAdapter, *,
         "priority_probabilities": list(answer.priority_probabilities),
         "confidence": answer.confidence,
         "answer_confidence": answer.answer_confidence,
-        "calibration_revision": "",  # shadow: sem calibração válida (contracts)
+        "calibration_revision": answer.calibration_revision,  # pin da calibração carregada (vazio = shadow)
         "created_at_ns": created,
         "valid_until_ns": min(created + int(ttl_s * 1e9), intent.deadline_ns),
         "decision_status": 0,  # DS_OK

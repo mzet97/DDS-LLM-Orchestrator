@@ -1,0 +1,42 @@
+[
+ {
+  "t": 0.0,
+  "event": "wf-observe started (conta Tasks — deve ver ZERO)"
+ },
+ {
+  "t": 0.0,
+  "event": "laya-worker started (real + calibration)"
+ },
+ {
+  "t": 8.2,
+  "event": "intent publicada"
+ },
+ {
+  "t": 16.1,
+  "event": "wf-observe exited"
+ },
+ {
+  "t": 16.1,
+  "event": "wf-observe output",
+  "shadow_mentions": 2,
+  "shadow_false": true,
+  "tasks_seen": 0
+ },
+ {
+  "t": 16.1,
+  "event": "worker stats",
+  "shadow": {
+   "intents_seen": 1,
+   "decisions_ok": 1,
+   "decisions_error": 0,
+   "tasks_written": 0
+  },
+  "tasks_written": 0
+ },
+ {
+  "t": 16.1,
+  "event": "A6 RESULTADO",
+  "PASS": true,
+  "note": "shadow_only=false exige pin casando + tasks=0 (fronteira)"
+ }
+]

@@ -27,11 +27,13 @@ fn main() -> anyhow::Result<()> {
     let mut domain = 211u32;
     let mut timeout_s = 30u64;
     let mut expect = 1usize;
+    let mut calibration_pin = String::new();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--domain" => domain = args.next().unwrap().parse()?,
             "--timeout-s" => timeout_s = args.next().unwrap().parse()?,
             "--expect" => expect = args.next().unwrap().parse()?,
+            "--calibration-pin" => calibration_pin = args.next().unwrap(),
             other => anyhow::bail!("argumento desconhecido: {other}"),
         }
     }
@@ -40,10 +42,15 @@ fn main() -> anyhow::Result<()> {
         .worker_threads(4)
         .enable_all()
         .build()?;
-    rt.block_on(run(domain, timeout_s, expect))
+    rt.block_on(run(domain, timeout_s, expect, calibration_pin))
 }
 
-async fn run(domain: u32, timeout_s: u64, expect: usize) -> anyhow::Result<()> {
+async fn run(
+    domain: u32,
+    timeout_s: u64,
+    expect: usize,
+    calibration_pin: String,
+) -> anyhow::Result<()> {
     let space = DdsWorkflowSpace::new(domain, WorkflowSpaceLimits::default())?;
     // Tasks: leitura num domínio de teste isolado — conta o que CIRCULA
     // (worker não publica; se algo publicar, o gate V04 falha).
@@ -66,7 +73,10 @@ async fn run(domain: u32, timeout_s: u64, expect: usize) -> anyhow::Result<()> {
     let mut intent_by_request: HashMap<String, Arc<WorkflowIntent>> = HashMap::new();
     let mut c = Counters::default();
 
-    let policy = DecisionPolicy::default();
+    let mut policy = DecisionPolicy::default();
+    if !calibration_pin.is_empty() {
+        policy.calibration_pin = Some(calibration_pin);
+    }
     let deadline = tokio::time::Instant::now() + Duration::from_secs(timeout_s);
     loop {
         let mut progress = false;

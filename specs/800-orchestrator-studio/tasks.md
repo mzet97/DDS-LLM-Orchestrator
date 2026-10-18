@@ -186,12 +186,16 @@
   Mesmo binário/unidade do T-800-24 com bind na LAN da .61 (RTX 3080).
   Ao vivo: /version 1.0 nas duas (.61 e .62), dds-agent parado sem
   pretendido em ambas. Dois nós administráveis + local = 3 origens.
-- [ ] **T-800-26 · Registro de nós conhecidos na GUI** (P3-admin parcial)
-  ⚠️ IMPLEMENTAÇÃO REMOVIDA no merge `5004a05` (era `nodes.rs`: adicionar/
-  selecionar/remover `(apelido, URL)` digitados + 4 testes). O comportamento
-  precisa ser re-verificado contra o painel Nós atual (UX4) antes de
-  remarcar como concluída.
-  G-02/G-04 seguem bloqueados (cadastro SSH com host key fora do escopo).
+- [x] **T-800-26 · Registro de nós conhecidos na GUI** (P3-admin parcial)
+  Re-verificado contra o painel Máquinas atual (UX4, 2026-10-18): adicionar
+  = "Registro Manual no Catálogo" (apelido/URL digitados → publish no
+  catálogo compartilhado), selecionar = descoberta + modal "Definir como
+  Alvo", remover = NOVO botão "Remover" por linha (`MachinesState::
+  remove_machine`, delete condicional pela revisão + releitura). Provas:
+  testes unitários de remoção (sem snapshot = no-op honesto; worker drena
+  pelo poll) + wire `panel_remove_machine_deletes_from_shared_catalog`.
+  G-02/G-04 (cadastro SSH com host key) seguem fora do escopo aqui — ver
+  T-800-29/32.
 - [x] **T-800-28 · Bridge SSH com chave dedicada (G-04, isolado)** (§34)
   Novo crate `studio-ssh` (russh puro, sem shell): identidade Ed25519 por
   instalação (PEM cifrada 0600, senha nunca gravada), confiança no handshake
@@ -203,13 +207,15 @@
   rotação bloqueada, auth errada sem tentativa de senha. Sem tocar nas VMs.
   (O reexport `ssh_trust` no Studio foi removido no merge `5004a05`; o
   crate segue standalone, sem consumidor na GUI — ver T-800-29.)
-- [ ] **T-800-29 · GUI usa a bridge SSH (G-04, isolado + GUI)** (§34)
-  ⚠️ REVERTIDA no merge `5004a05`: `ssh_session.rs`, `ssh_trust.rs`,
-  `views/ssh.rs` e o painel "SSH dedicado" foram removidos (protótipo de
-  setembro superado pelo UX4; vivo no histórico). Para reconcluir:
-  religar `studio-ssh` na GUI (dependência + sessão + painel) e
-  re-verificar os 4 testes de fases. Prova contra host real segue para
-  o canário (exige cadastrar a `.pub` — a apresentar).
+- [x] **T-800-29 · GUI usa a bridge SSH (G-04, isolado + GUI)** (§34)
+  Religado em 2026-10-18: dependência `studio-ssh` no `orchestrator-studio`,
+  estado `ssh_session.rs` (fases Idle/Connecting/AwaitingApproval/Done/
+  Failed; senha só em memória; `approve_displayed` persiste no cofre e
+  reconecta) e painel "SSH Dedicado" (`views/ssh.rs`, seção 3.15 na
+  navegação). 4 testes de fases com executor injetável (done com saída;
+  desconhecido bloqueia → aprovar persiste → reconecta; chave alterada
+  bloqueia sem aprovação; sem identidade falha antes do worker). Prova
+  contra host real segue para o canário (exige cadastrar a `.pub`).
 - [x] **T-800-30 · Executor validado isolado (G-18+ parcial)**
   `mcp-gateway/tests/executor_isolated.rs`: PENDING→COMPLETED real com
   resultado na mesma instância, negação com mensagem, fuga de sandbox
@@ -234,10 +240,10 @@
   próprios (Ansible/OCI/systemd NÃO exercitados); SSH, GUI e DDS fora do
   teste. Bloqueios externos: SSH `k8s1@.51` negado com as chaves locais
   (build 0.2.0 no .51 pendente); Harbor sem credencial robot; 401 com desafio de autenticação é o fluxo normal; token não testado).
-- [ ] **T-800-32 · Sessão da GUI contra SSH descartável real (G-04, GUI)**
-  ⚠️ REVERTIDA no merge `5004a05` (teste `ssh_session_live.rs` removido
-  junto com a integração GUI; bloqueada pela T-800-29). Registro original:
-  caminho REAL
+- [x] **T-800-32 · Sessão da GUI contra SSH descartável real (G-04, GUI)**
+  Reconcluída em 2026-10-18: `orchestrator-studio/tests/ssh_session_live.rs`
+  sobe servidor russh descartável em processo (loopback, host key por
+  teste) e roda o caminho REAL da GUI
   (`SshSession::start` + `poll` + `approve_displayed`) contra servidor
   russh em processo — desconhecido bloqueia com a impressão real,
   aprovação persiste no cofre, reconexão entrega `PROVA_OK`. Prova com

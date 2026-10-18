@@ -29,6 +29,7 @@ async fn main() -> Result<()> {
     let mut journal_dir = String::from("/tmp/wf-run-journal");
     let mut timeout_s = 300u64;
     let mut expect = 1usize;
+    let mut calibration_pin = String::new();
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -38,6 +39,7 @@ async fn main() -> Result<()> {
             "--journal-dir" => journal_dir = args.next().unwrap(),
             "--timeout-s" => timeout_s = args.next().unwrap().parse()?,
             "--expect" => expect = args.next().unwrap().parse()?,
+            "--calibration-pin" => calibration_pin = args.next().unwrap(),
             other => anyhow::bail!("argumento desconhecido: {other}"),
         }
     }
@@ -64,12 +66,17 @@ async fn main() -> Result<()> {
         )),
         other => anyhow::bail!("--planner {other} inválido (direct|llm)"),
     };
+    let mut cfg = RuntimeConfig::default();
+    if !calibration_pin.is_empty() {
+        cfg.decision_policy.calibration_pin = Some(calibration_pin.clone());
+        tracing::info!(pin = %calibration_pin, "gate de calibracao ATIVO (shadow_off com pin casando)");
+    }
     let mut rt = EngineRuntime::new(
         Arc::clone(&dataspace),
         Arc::clone(&wspace),
         journal,
         planner,
-        RuntimeConfig::default(),
+        cfg,
     );
 
     let recovered = rt.recover_from_journal().await?;
