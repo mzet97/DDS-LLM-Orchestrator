@@ -45,7 +45,10 @@ mod app {
         dds_secure: bool,
         #[arg(long)]
         dds_security_dir: Option<PathBuf>,
-        #[arg(long, default_value = "nfcm")]
+        /// Gestor de QoS do control loop. DEFAULT "static" desde T-900-M7-02
+        /// (fuzzy/NFCM é LEGADO restrito a reprodução: use nfcm|zadeh|fcm|
+        /// fcm-dhl explicitamente para reexecutar experimentos históricos).
+        #[arg(long, default_value = "static")]
         qos_manager: String,
         #[arg(long)]
         qos_profile: Option<String>,
@@ -148,12 +151,19 @@ mod app {
                 .with_fuzzy_routing(args.fuzzy_routing)
                 .with_dispatch_mode(args.dispatch_mode),
         );
-        let background = vec![
+        // T-900-M7-02: o control loop NFCM só sobe para gestores FUZZY
+        // legados (reprodução explícita). Com "static" (novo default) não há
+        // mutação de knobs em runtime — QoS estrutural fixa (ADR-002) e o
+        // monitoramento segue em spawn_qos_monitor/registry_monitor.
+        let static_manager = args.qos_manager == "static";
+        let mut background = vec![
             orchestrator.spawn_cache_feeders(),
             orchestrator.spawn_registry_monitor(Duration::from_secs(15), Duration::from_secs(2)),
-            orchestrator.spawn_control_loop(Duration::from_secs(2)),
-            orchestrator.spawn_qos_monitor(Duration::from_secs(5)),
         ];
+        if !static_manager {
+            background.push(orchestrator.spawn_control_loop(Duration::from_secs(2)));
+        }
+        background.push(orchestrator.spawn_qos_monitor(Duration::from_secs(5)));
         let backend: Arc<dyn HttpBackend> = orchestrator;
         let app = http::router(http_config.clone(), backend);
         let address = http_config.socket_addr();
