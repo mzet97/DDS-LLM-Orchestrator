@@ -1,0 +1,69 @@
+{
+  "dataset": "dataset_v1_seed (32 exemplos PT/EN, rótulo de engenharia — NÃO calibration-grade)",
+  "model": "rules-baseline-v1",
+  "splits": {
+    "train": 18,
+    "test": 14
+  },
+  "qos_accuracy": 0.8571,
+  "needs_planning_accuracy": 1.0,
+  "capability_macro_f1_at_0.5": 0.5521,
+  "capability_per_class": {
+    "rust_refactor": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 2
+    },
+    "python_refactor": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 2
+    },
+    "unit_testing": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 2
+    },
+    "security_audit": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "support": 2
+    },
+    "code_review": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    },
+    "research": {
+      "precision": 1.0,
+      "recall": 0.5,
+      "f1": 0.6667,
+      "support": 4
+    },
+    "summarization": {
+      "precision": 0.75,
+      "recall": 0.75,
+      "f1": 0.75,
+      "support": 8
+    },
+    "translation": {
+      "precision": 0.0,
+      "recall": 0.0,
+      "f1": 0.0,
+      "support": 0
+    }
+  },
+  "coverage": 1.0,
+  "coverage_note": "regras não rejeitam; cobertura 1.0 por construção",
+  "thresholds_frozen": false,
+  "ece_brier": "PENDENTE: exigem modelo real calibrado (R-LAYA BLOCKED)",
+  "langs": [
+    "en",
+    "pt"
+  ]
+}

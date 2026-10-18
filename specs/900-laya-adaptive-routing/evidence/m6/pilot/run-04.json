@@ -1,0 +1,43 @@
+{
+  "manifest": {
+    "run": 4,
+    "utc": "2026-10-17T15:33:07Z",
+    "git_head": "5a7c15b0be3ad0638d8a041338eda41c9587ae03",
+    "cargo_lock_sha256": "cf0a3af515104e2e",
+    "idl_sha256": "19b0604f82b76787",
+    "sdk": "laya==0.4.10 (Apache-2.0)",
+    "checkpoint": "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c",
+    "torch": "2.14.1+cpu",
+    "hardware": "AMD Ryzen 9 5900X; decisão em CPU",
+    "dataset": "dataset_v1_seed.jsonl (32 PT/EN)",
+    "warmup_discarded": 5,
+    "arms_pendentes": [
+      "planner-only",
+      "laya+planner (integração E2E do engine)"
+    ]
+  },
+  "arms": [
+    {
+      "arm": "static/rules",
+      "n": 32,
+      "qos_accuracy": 0.9062,
+      "latency_ms": {
+        "p50": 0,
+        "p95": 0,
+        "mean": 0.0
+      },
+      "outliers_mad_gt_3_5": []
+    },
+    {
+      "arm": "laya",
+      "n": 32,
+      "qos_accuracy": 0.75,
+      "latency_ms": {
+        "p50": 1356,
+        "p95": 1519,
+        "mean": 1346.7
+      },
+      "outliers_mad_gt_3_5": []
+    }
+  ]
+}

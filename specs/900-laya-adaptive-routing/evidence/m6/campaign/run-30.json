@@ -1,0 +1,84 @@
+{
+ "manifest": {
+  "run": 30,
+  "utc": "2026-10-17T18:56:53Z",
+  "git_head": "5a7c15b0be3ad0638d8a041338eda41c9587ae03",
+  "arms": [
+   "rules",
+   "laya",
+   "planner_only",
+   "laya_planner"
+  ],
+  "subset": [
+   "pt-002",
+   "en-014",
+   "pt-009",
+   "en-009"
+  ],
+  "decision_model": "laya==0.4.10 ckpt 891102d3\u2026 (cpu)",
+  "planner_model": "gemma-4-12b-it-UD-Q4_K_XL sha256 90fd944d\u2026 b11671 ROCm -np1",
+  "threat": "planner via HTTP direto (hop DDS do gateway fora da lat\u00eancia)"
+ },
+ "arms": {
+  "rules": {
+   "latency_ms": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "tokens": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "mean_ms": 0
+  },
+  "laya": {
+   "latency_ms": [
+    1597,
+    1389,
+    1612,
+    1691
+   ],
+   "tokens": [
+    0,
+    0,
+    0,
+    0
+   ],
+   "mean_ms": 1572
+  },
+  "planner_only": {
+   "latency_ms": [
+    16145,
+    42646,
+    31085,
+    35972
+   ],
+   "tokens": [
+    365,
+    948,
+    940,
+    1175
+   ],
+   "mean_ms": 31462
+  },
+  "laya_planner": {
+   "latency_ms": [
+    1608,
+    43586,
+    17093,
+    21339
+   ],
+   "tokens": [
+    0,
+    948,
+    940,
+    1175
+   ],
+   "mean_ms": 20906
+  }
+ }
+}

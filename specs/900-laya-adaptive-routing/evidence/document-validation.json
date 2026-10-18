@@ -1,0 +1,15 @@
+{
+  "time_utc": "2026-10-17T01:23:44.325520+00:00",
+  "status": "PASS",
+  "markdown_files": 19,
+  "required_documents": 12,
+  "adrs": 5,
+  "local_links_checked": 91,
+  "source_references_checked_for_existence_and_line_bound": 22,
+  "requirements": 16,
+  "tasks": 29,
+  "protected_unchanged": true,
+  "tracked_diff": [],
+  "errors": [],
+  "limitations": "Checks existence and line bounds, not semantic truth; independent review recorded separately. No runtime implementation validation."
+}

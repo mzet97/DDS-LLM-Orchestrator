@@ -1,0 +1,38 @@
+{
+  "time_utc": "2026-10-16T22:26:03.723277+00:00",
+  "head": "5a7c15b0be3ad0638d8a041338eda41c9587ae03",
+  "branch": "studio/phase-800-node",
+  "status": "?? specs/900-laya-adaptive-routing/\n",
+  "protected": {
+    "rust-tracked": {
+      "count": 911,
+      "sha256_path_digest_pairs": "47c1ca4a8f3f5ac527a1b347da2aeb7a945d6c98afd02f5936d96b7f722ab8c0"
+    },
+    "specs/880-campanha": {
+      "count": 437,
+      "sha256_path_digest_pairs": "5da62d688e45e13878ded9a4d690a98850f474eb1d8f27f008d816461d08bef9"
+    },
+    "../../artigo_fuzzy_extension_qos": {
+      "count": 61,
+      "sha256_path_digest_pairs": "50bc538e214c1e2212d644c3834d56767cd64ee32a50c859b6bfd6bd5f9e08e3"
+    },
+    "../../experiments": {
+      "count": 26,
+      "sha256_path_digest_pairs": "f962d46da199b36aee20e85d562b9d7b31f5097527141344c25111a18630d1fa"
+    },
+    "../../campaign_data": {
+      "count": 44,
+      "sha256_path_digest_pairs": "32f77dcbe41cdc4d3abb8a0675c8d3360ed1ceadc5986bfc732e89854865ad8a"
+    },
+    "../../benchmarks/orchestration": {
+      "count": 120,
+      "sha256_path_digest_pairs": "edf2c25b537b5cf69e6937910d161c347be2dbb3f65cf8fd70c8e9d658adbae6"
+    },
+    "PROMPT_MASTER_SDD_LAYA_DDS.md": {
+      "sha256": "57203d32b1cb454f2b8a82d19970f165b8d89c17821e5234d4633476adc963c0"
+    },
+    "CONTEXTO_ARQUITETURAL_LAYA_DDS.md": {
+      "sha256": "cc1650d44f9a5000d32ad3cfbdc7dead3ffbd5f64026b6f923f26362973704eb"
+    }
+  }
+}

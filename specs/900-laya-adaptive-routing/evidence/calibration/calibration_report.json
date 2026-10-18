@@ -1,0 +1,51 @@
+{
+ "dataset": "/var/mnt/HD1TB/tese/src/rust/specs/900-laya-adaptive-routing/evidence/calibration/dataset_snapshot400.jsonl",
+ "n": {
+  "total": 400,
+  "train": 320,
+  "holdout": 80
+ },
+ "before": {
+  "choice_accuracy": 0.525,
+  "noul_accuracy": 0.8055555555555556,
+  "score_mae": 0.763326875,
+  "mean_confidence": 0.7891948958333334,
+  "ece": 0.067746625,
+  "brier": 0.1638395371375,
+  "aurc": 0.15685123666075917,
+  "selective_accuracy@50": 0.875,
+  "selective_accuracy@80": 0.83125,
+  "latency_p50_ms": 3112.3878435173538,
+  "latency_p95_ms": 3594.8867080151103,
+  "cost_per_decision_p50_ms": 3112.3878435173538,
+  "cost_per_decision_p95_ms": 3594.8867080151103
+ },
+ "after": {
+  "choice_accuracy": 0.525,
+  "noul_accuracy": 0.8055555555555556,
+  "score_mae": 0.634781875,
+  "mean_confidence": 0.6884423958333333,
+  "ece": 0.07335812499999998,
+  "brier": 0.16393104386250001,
+  "aurc": 0.16861374857627354,
+  "selective_accuracy@50": 0.875,
+  "selective_accuracy@80": 0.8359375,
+  "latency_p50_ms": 2859.4735960068647,
+  "latency_p95_ms": 3443.0177320027724,
+  "cost_per_decision_p50_ms": 2859.4735960068647,
+  "cost_per_decision_p95_ms": 3443.0177320027724
+ },
+ "calibration": {
+  "path": "/var/mnt/HD1TB/tese/src/rust/specs/900-laya-adaptive-routing/evidence/calibration/calibration_v1.json",
+  "sha256": "a235c9b90a2624ba11bb665e830556b03b1e1961d78cac5c1661895ad362e6b5"
+ },
+ "gates_path": "/var/mnt/HD1TB/tese/src/rust/specs/900-laya-adaptive-routing/evidence/calibration/gates_v1.json",
+ "temperature_map_keys": [
+  "n_by_bucket",
+  "report",
+  "temperature",
+  "temperature_by_options",
+  "temperature_clamped"
+ ],
+ "note": "dataset sintético por construção (gemma4); ruído do gerador documentado"
+}

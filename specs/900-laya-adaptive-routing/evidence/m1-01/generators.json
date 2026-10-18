@@ -1,0 +1,60 @@
+{
+  "task": "T-900-M1-01",
+  "captured_utc": "2026-10-17T02:02:23Z",
+  "repo": {
+    "head": "5a7c15b0be3ad0638d8a041338eda41c9587ae03",
+    "branch": "studio/phase-800-node",
+    "dirty_before_task": "somente specs/900-laya-adaptive-routing/ nao rastreado (dossie M0)"
+  },
+  "idl": {
+    "path": "crates/dds-contract/idl/WorkflowPlanning.idl",
+    "sha256": "b7e33b090924020dee22b639c208cd3d329250fbd3000aac73246335c8c5645e"
+  },
+  "generators": {
+    "idlc_c": {
+      "version": "idlc (Eclipse Cyclone DDS) 11.0.1",
+      "origin": "/home/mzet/.local/cyclonedds/bin/idlc (instalacao local do usuario)",
+      "command": "idlc -l c -o out_c WorkflowPlanning.idl",
+      "exit": 0,
+      "outputs_sha256": {
+        "WorkflowPlanning.c": "53c5f2bd6c88dc9294c79b665c2a71bb20aad5f9fdf68464ef207c83e1f36392",
+        "WorkflowPlanning.h": "0e4604ba492fc304bff2802e991fc63676053c8a36b7f4db0a8087881eb7658a"
+      }
+    },
+    "idlpy_python": {
+      "version": "Cyclone DDS IDL version: v11.0.1 (backend _idlpy)",
+      "origin": "wheel 11.0.1 do usuario NAO contem _idlpy (ver probe-matrix); backend compilado do sdist cyclonedds-11.0.1.tar.gz em venv scratch Python 3.13 com CYCLONEDDS_HOME sombra (lib/ unificando lib64)",
+      "command": "idlc -l py WorkflowPlanning.idl",
+      "exit": 0,
+      "outputs_sha256": {
+        "_WorkflowPlanning.py": "5053a5799c370a4fe8d1944646c6e5a9ae7fa8433553ae10d59b65742843e2ef",
+        "__init__.py": "9c6f11b973f2a669a91aa113608f019b1561f3a9235603781499ed67d9e30d60"
+      },
+      "note": "o backend py ignora -o e escreve ./<modulo>/ relativo ao CWD"
+    },
+    "rust_builtin": {
+      "version": "cyclonedds-build 3.0.1 (Cargo.lock; parser interno, try_idlc=false como no build.rs do dds-contract)",
+      "origin": "scratch crate /tmp/m1probe/rs com cyclonedds-build =3.0.1 (cache cargo offline)",
+      "command": "cyclonedds_build::compile_idl_with_options(.., try_idlc=false)",
+      "exit": 0,
+      "outputs_sha256": {
+        "dds_llm_workflow_v1.rs": "c67abba989977905c357d9625b5c4f18f1d85f8229b9da686051efc28882e619"
+      }
+    }
+  },
+  "toolchain": {
+    "python_system": "3.14.7 (GCC 16.1.1, Fedora build)",
+    "python_venv_idlpy": "3.13.x (venv scratch /tmp/m1probe/venv313)",
+    "cyclonedds_python_user_site": "11.0.1 (wheel, sem _idlpy)",
+    "cyclonedds_rust": "3.0.1 (=, workspace)",
+    "cyclonedds_rust_sys": "1.2.1 (=, workspace)",
+    "cargo_rustc": "ver logs rtk/cargo da sessao; toolchain padrao do host (1.95.0 nos lints clippy)"
+  },
+  "checks": {
+    "check_py": "PY CHECK: OK (ordem de campos, chaves, bounds de string/sequence, literais de enum)",
+    "check_rs": "RS CHECK: OK (ordem, chaves, literais, DdsBoundedSequence bounds; divergencia de bound de string registrada)",
+    "rust_fixture_test": "cargo test -p dds-contract --locked --offline --test workflow_planning_fixture: 3 passed",
+    "crate_gates": "cargo test -p dds-contract (18 passed, 8 suites); clippy -D warnings exit 0; fmt --check exit 0",
+    "digest_cross_language": "15 vetores golden: hashes gerados pela ref Python e reproduzidos 1:1 em Rust (teste digest_vectors_reproduce_in_rust)"
+  }
+}

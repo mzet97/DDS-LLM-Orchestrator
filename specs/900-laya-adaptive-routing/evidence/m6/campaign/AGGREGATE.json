@@ -1,0 +1,41 @@
+{
+  "runs": 30,
+  "arms": {
+    "rules": {
+      "samples": 120,
+      "p50_ms": 0,
+      "p95_ms": 0,
+      "mean_ms": 0,
+      "outliers_mad_gt_3_5": 0,
+      "planner_tokens_total": 0,
+      "planner_tokens_mean": 0
+    },
+    "laya": {
+      "samples": 120,
+      "p50_ms": 1560,
+      "p95_ms": 1949,
+      "mean_ms": 1592,
+      "outliers_mad_gt_3_5": 2,
+      "planner_tokens_total": 0,
+      "planner_tokens_mean": 0
+    },
+    "planner_only": {
+      "samples": 120,
+      "p50_ms": 35156,
+      "p95_ms": 42492,
+      "mean_ms": 31077,
+      "outliers_mad_gt_3_5": 0,
+      "planner_tokens_total": 102840,
+      "planner_tokens_mean": 857
+    },
+    "laya_planner": {
+      "samples": 120,
+      "p50_ms": 22441,
+      "p95_ms": 42417,
+      "mean_ms": 25148,
+      "outliers_mad_gt_3_5": 0,
+      "planner_tokens_total": 92325,
+      "planner_tokens_mean": 1025.8
+    }
+  }
+}
