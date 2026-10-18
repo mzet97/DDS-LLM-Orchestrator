@@ -28,7 +28,23 @@ fn now_ns() -> u64 {
 }
 
 /// Janela de propagação para a confirmação de ownership (readback).
-const CONFIRM_DELAY: Duration = Duration::from_millis(250);
+/// O-2: parametrizável por env (AGENT_CONFIRM_DELAY_MS). Default 50 ms desde
+/// O-2: a segurança contra dupla-execução vem da REVALIDAÇÃO pré-claim no
+/// mesh (read_task_mesh), não da janela — a janela só arbitra claims
+/// SIMULTÂNEOS (propagação ao RHC é escala de ms). Default histórico: 250 ms
+/// (medido com revalidação no mesh: 50 ms → 0 duplas/300 e p50 −51% sob
+/// rajada 100-concorrente; ver specs/905-otimizacao/o2/).
+fn confirm_delay() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        Duration::from_millis(
+            std::env::var("AGENT_CONFIRM_DELAY_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(50),
+        )
+    })
+}
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout do ack do write final de TaskOutput (RUST-PROTO-005): se o pool
@@ -297,12 +313,24 @@ impl AgentDds {
                 Err(_) => break, // semáforo fechado: encerra o dispatcher
             };
 
-            // Revalidação com estado FRESCO do cache (RUST-CLAIM-012): a
-            // amostra que entrou na fila pode estar obsoleta.
-            let fresh = match self.dataspace.caches().read_task(&task_id) {
-                Some(t) => t,
-                None => {
-                    tracing::debug!(task_id, "claim descartado: task não está no cache");
+            // Revalidação com estado FRESCO DO MESH (O-2/RUST-CLAIM-012): o
+            // CACHE da aplicação é alimentado pelo stream de ingestão, que
+            // sofre backpressure sob rajada (fila 4×slots) — um loser com
+            // backlog validava contra PENDING obsoleto, escrevia ASSIGNED
+            // com writer mais forte e SOBRESCREVIA o estado terminal do
+            // vencedor (Exclusive cuida de força, não de recência) →
+            // dupla-execução (medido 2026-10-18: 7% @250 ms e 13,5% @600 ms
+            // — janela maior = fila drena mais devagar = cache mais velho).
+            // O RHC do reader (read_task_mesh) é independente da fila: lê o
+            // estado ARBITRADO corrente da instância.
+            let fresh = match self.dataspace.read_task_mesh(&task_id) {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    tracing::debug!(task_id, "claim descartado: task ausente do mesh");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(task_id, error = %e, "claim descartado: falha ao ler mesh");
                     continue;
                 }
             };
@@ -334,7 +362,7 @@ impl AgentDds {
             let engine = Arc::clone(&engine);
             let claim_cfg = claim_cfg.clone();
             tokio::spawn(async move {
-                this.attempt_claim_and_process(fresh, &claim_cfg, &*engine, permit)
+                this.attempt_claim_and_process(Arc::new(fresh), &claim_cfg, &*engine, permit)
                     .await;
             });
         }
@@ -370,7 +398,7 @@ impl AgentDds {
         // a fila cheia, e não varre o limite global de 256 amostras.
         let confirmation_deadline = Instant::now() + CONFIRM_TIMEOUT;
         let mine = loop {
-            tokio::time::sleep(CONFIRM_DELAY).await;
+            tokio::time::sleep(confirm_delay()).await;
             match self.dataspace.read_task_mesh(&task_id) {
                 Err(e) => {
                     tracing::warn!(task_id, error = %e, "claim: falha ao confirmar ownership");
