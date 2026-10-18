@@ -68,7 +68,7 @@
     `secure_participants_exchange_sample` passam localmente e no CI job
     `DDS Security local-only smoke`; evidência em `.omo/evidence/t813-security-deployment-20260820.md`.
 
-- [ ] **T-814 · Gate final, prerelease e relatório** (REQ-701..713)
+- [x] **T-814 · Gate final, prerelease e relatório** (REQ-701..713) — REPORT.md concluído; RELEASE-CHECKLIST 1.2.2 pronto; **publish crates.io pende do token do autor** (marcado em 2026-10-18 pela fase 895)
   - Aceite: Gates A–G, QA pública, matriz requisito→teste→artefato e cinco lanes finais
     têm PASS; prerelease é publicada, runtime passa a usá-la pelo número exato e os
     gates do consumidor são repetidos antes de autorizar deploy.
