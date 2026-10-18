@@ -73,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "content": r.content,
                     "success": r.success,
                     "latency_ms": r.latency_ms,
+                    "ttfc_ms": r.ttfc_ms,
                     "tokens_prompt": r.tokens_prompt,
                     "tokens_completion": r.tokens_completion,
                 })

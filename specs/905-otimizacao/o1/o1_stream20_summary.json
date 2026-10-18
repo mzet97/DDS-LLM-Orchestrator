@@ -1,0 +1,11 @@
+{
+ "mode": "stream",
+ "n": 20,
+ "ok": 20,
+ "ttfc_p50_ms": 443.0,
+ "ttfc_mean_ms": 467.9,
+ "total_p50_ms": 8247.0,
+ "total_mean_ms": 8776.0,
+ "ttfc_pct_p50": 6.0,
+ "tokens_completion_mean": 490.6
+}
