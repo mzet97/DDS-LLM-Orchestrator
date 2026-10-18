@@ -446,3 +446,21 @@ INDICATIVOS para claims de confiança (R-CALIBRATION). Detalhes em
 A1(limitações Colab) A2(dataset 2 000) A3(merge/split) A4(v3) A5(pin)
 A6(shadow calibrada) ✓ · B1–B5 cenários E2E ✓ · Campanha 4 braços N=30 ✓ ·
 E2E com inferência real 2/2 ✓. Sem push (local).
+
+---
+
+# CALIBRAÇÃO v4 REAL — SPROUT no Colab L4 (2026-10-18, pedido do autor "procure no huggingface")
+
+Dataset real **`CARROT-LLM-Routing/SPROUT`** (44k prompts × 13 modelos com
+score de juiz + tokens): **rótulo POR MEDIÇÃO** (Pareto custo×qualidade), não
+por construção. 12 000 train / **144 000 records** (9,4× a v3) / holdout =
+**split TEST oficial** (2 000, dados reais nunca vistos no fit). Execução em
+**Colab L4 via CLI** (33 min; 8,6 ex/s; pin `10ef5945…` verificado localmente;
+wiring do adapter validado end-to-end). Resultados no teste real:
+score_mae 0.564→**0.496 (−12%)**, brier melhora, ECE flat, **abstention noul
+0.678** (primeiro gate não-trivial). **Achado central:** choice_acc real =
+**0.148** (vs 0.55–0.58 no sintético; baseline de maioria = 0.85) — o
+checkpoint não classifica QoS em texto real; temperatura não corrige argmax;
+caminhos = fine-tune (fora do contrato, checkpoint pinado) ou repensar a
+pergunta de escolha. noul/score transferem bem (0.86 / −12%). Detalhes em
+`evidence/calibration/README.md` (v4) + `calib_v4/`.

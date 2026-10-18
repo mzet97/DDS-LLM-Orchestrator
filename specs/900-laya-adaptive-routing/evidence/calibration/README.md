@@ -1,4 +1,45 @@
-# Calibração do checkpoint Laya — v3 FINAL (2026-10-18)
+# Calibração do checkpoint Laya — v4 REAL (2026-10-18)
+
+## Estado: primeira calibração com dataset REAL (SPROUT) — rótulo por MEDIÇÃO em GPU (Colab L4)
+
+### v4 (12 000 train / 144 000 records; holdout = split TEST oficial do SPROUT, 2 000; pin `10ef5945…`)
+
+Dataset: **`CARROT-LLM-Routing/SPROUT`** (44k prompts reais × 13 modelos 1B→GPT-4o
+com score de juiz + tokens). Conversão `tools/sprout_to_laya.py`/`tools/colab_calib/main.py`
+(seed 900): **rótulo de QoS POR MEDIÇÃO** — Pareto custo×qualidade (cheap≥0.95→LOW_COST;
+frontier≥0.9 com gap≥0.25→CRITICAL; mid≥0.9→BALANCED); complexidade por dificuldade
+medida; urgency=1 neutro; caps de código=False (fontes SPROUT não têm código).
+Distribuição natural: LOW_COST 85% / BALANCED 11% / CRITICAL 3,7%.
+Calibração executada no **Colab L4** (8,6 ex/s na coleta de logits; 33 min no total;
+pin verificado localmente; wiring do adapter validado — `calibration_revision` casa).
+
+| métrica (teste real 2 000) | ANTES | DEPOIS |
+|---|---|---|
+| choice_accuracy | **0.148** | 0.148 (T>0 não muda argmax) |
+| noul_accuracy | 0.864 | 0.864 |
+| score_mae | 0.564 | **0.496 (−12%)** |
+| brier | 0.1056 | **0.1050** |
+| ece | 0.050 | 0.051 (flat) |
+
+Temperature map **[2.02, 3.80, 2.40]** (nenhum satura); **abstention noul 0.678**
+(primeiro threshold não-trivial — o gate de abstenção passa a existir no bucket noul).
+
+**Achado central (honesto):** em TEXTO REAL o checkpoint erra a classe QoS quase
+sempre — choice_acc 0.148 é muito abaixo do baseline de maioria (0.85 LOW_COST).
+No sintético era 0.55–0.58: o score sintético media reconhecimento de template,
+não classificação semântica. A calibração (temperatura) NÃO corrige argmax;
+o caminho para choice real é fine-tune (fora do SDK/contrato — checkpoint é
+pinado) ou troca da pergunta/perfil de escolha. noul/score (0.86 / MAE −12%)
+transferem bem. Latência p50 84 ms (GPU) vs 3.564 ms (CPU local).
+
+Arquivos: `calib_v4/{calibration_v4.json, gates_v4.json, calibration_report_v4.json}`
+commitados; `v4_train/v4_test.jsonl` (40 MB derivados) ficam fora do git —
+regeneráveis deterministicamente (`tools/colab_calib/main.py`, seed 900).
+Caveat: SPROUT sem campo de licença explícito no card.
+
+---
+
+# Histórico — v3 FINAL sintética (2026-10-18)
 
 ## Estado: etapa A ENCERRADA — wiring completo, calibração aplicável, números replicam o padrão v1/v2
 
