@@ -9,6 +9,8 @@ description = "Spike de interoperabilidade Rust↔Python↔C++ via DDS (Fase 0b)
 [dependencies]
 cyclonedds = { workspace = true, optional = true }
 dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+futures = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -21,7 +23,7 @@ criterion = { version = "0.5", features = ["html_reports"] }
 
 [features]
 default = []
-dds = ["dep:cyclonedds", "dds-contract/dds"]
+dds = ["dep:cyclonedds", "dds-contract/dds", "dds-dataspace/dds"]
 
 [[bin]]
 name = "pub-task"
@@ -61,6 +63,11 @@ required-features = ["dds"]
 [[bin]]
 name = "rtt-bench"
 path = "src/bin/rtt_bench.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "workflow-interop"
+path = "src/bin/workflow_interop.rs"
 required-features = ["dds"]
 
 [[bench]]
