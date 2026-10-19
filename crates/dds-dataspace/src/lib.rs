@@ -53,14 +53,15 @@ use dds_contract::topics;
 ///
 /// T-302: ciclo de vida (sobe/derruba limpo). T-303..T-306 constroem a API async
 /// (`DataSpaceApi`) por cima.
-#[cfg(feature = "dds")]
 /// Janela de tolerância para snapshots de política "do futuro" (idêntica à
 /// `DEFAULT_FUTURE_SKEW` do mcp-gateway): snapshots além dela são lixo de
 /// relógio/editor e NÃO entram no cache (guard em `stream_security_snapshots`
 /// — sem isso, um snapshot futuro envenenava o dedupe por timestamp e
 /// suprimia snapshots legítimos posteriores; PR #10).
+#[cfg(feature = "dds")]
 const SECURITY_SNAPSHOT_FUTURE_SKEW_NS: u64 = 5_000_000_000;
 
+#[cfg(feature = "dds")]
 pub struct DataSpace {
     // Ordem de drop: filhos (writers/readers) antes dos pais (topics/pub/sub/participant).
 
