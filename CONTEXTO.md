@@ -18,6 +18,12 @@
   (build de benchmark: `/var/tmp/tese-target-bbench/release/submit-one`).
 - **CYCLONEDDS_URI uniforme em TODOS os processos do teste** (inclusive o
   llama-server C++): configs divergentes = participantes não se descobrem.
+- **PR #10 merged (2026-10-19, CI 8/8)**: fixes do review Codex (shadow não
+  materializa; CANCEL por plan_revision e estado 6 correto; IN_DOUBT bloqueado
+  no recovery; Task carrega model/target/max_tokens do PlanNode; barreira
+  adaptive consulta o registry; timeout 1×/tentativa) + rustls 0.23.46 +
+  fix do cache-poison de snapshot FUTURO (dds_policy_recovery estava vermelho
+  no main desde o PR #9). Docs: `docs/rust/crates/workflow-engine.md` (novo).
 
 > Verificado contra o código em 2026-09-10. Todos os caminhos abaixo são
 > **absolutos** (corte o prefixo `/home/mzet/projetos/tese/` se o checkout

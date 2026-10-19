@@ -107,11 +107,28 @@ DDS-backed tests must run with `--test-threads=1` to avoid participant
 contention.
 
 Run the orchestrator end-to-end (requires a built `llama-server` with DDS —
-see `src/llama_cpp/`):
+see `src/llama_cpp/`; the fork rebuild with gemma4+HIP lives in
+`third_party/llama.cpp_dds`, branch `sync/upstream-20261018` — always start it
+with `--alias <model_name_used_by_tasks>`; the bridge silently drops requests
+with a mismatched model):
 
 ```bash
 CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds
 ```
+
+One-shot task submission (benchmark/harness entry point; `ttfc_ms` in the
+output = time to first chunk — 100% when not streaming):
+
+```bash
+cargo run -p client --features dds --bin submit-one -- 0 "model-name" \
+  '[{"role":"user","content":"hi"}]' --timeout-ms 120000 --max-tokens 2048 --temperature 0.0 [--stream]
+```
+
+Recent optimizations (2026-10, evidence in `specs/905-otimizacao/`):
+claim revalidation reads the arbitrated mesh (duplicate execution under burst:
+0/700 measured; confirm window default 50 ms, override with
+`AGENT_CONFIRM_DELAY_MS`), and DDS streaming with gemma4 delivers parity with
+the HTTP engine byte-for-byte.
 
 ### DDS Security (local-only)
 
