@@ -191,7 +191,7 @@ impl RateLimiter {
 
 /// Cache de resultados LLM.
 ///
-/// `ahash` em vez do hasher default (Fase 2 do `OPTIMIZATION_PLAN.md`).
+/// `ahash` em vez do hasher default (Fase 2 do `docs/history/OPTIMIZATION_PLAN.md`).
 /// T-820-12: eviction FIFO REAL — cada entrada carrega um contador de
 /// inserção monotônico e o despejo remove a de MENOR contador. Antes removia
 /// "o primeiro do iterador" do DashMap (entrada arbitrária, dependente de

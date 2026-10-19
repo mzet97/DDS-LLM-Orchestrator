@@ -321,7 +321,7 @@
   procedência CI) vs candidato 9a3a1f9f (14/09, CI run nº8) — recência
   por EVIDÊNCIA de data. Compat em ambiente separado (env espelhado,
   dummy services, loopback): /version 1.0, /services, /apply applied.
-  Registro de canário: ci/PROMOCAO-tese-rust-54a7c34-canary.md
+  Registro de canário: docs/history/ci/PROMOCAO-tese-rust-54a7c34-canary.md
   (histórico de ensaio preservado).
 - EXECUÇÃO: material verificado antes da interrupção; stop → backup
   binário+unit em releases/can-<run>/ → instalação → start (janela
@@ -377,7 +377,7 @@
   54a7c34-x86_64, artifact-type application/vnd.tese.bundle). Pull por
   digest em outro diretório: SHA-256 idêntico
   (b4f892c7acbb37c4cb968d35771a65253e07d46bceee1ca66281c7a38cc4a7fa).
-  Registro de promoção: `ci/PROMOCAO-tese-rust-54a7c34.md` — aprovado
+  Registro de promoção: `docs/history/ci/PROMOCAO-tese-rust-54a7c34.md` — aprovado
   PARA ENSAIO F3 ISOLADO; NÃO aprovado para substituir serviços
   operacionais. Digest do PACOTE (ca4836d7) ≠ digest da IMAGEM do runner
   (cee13047) — nomes distintos registrados.

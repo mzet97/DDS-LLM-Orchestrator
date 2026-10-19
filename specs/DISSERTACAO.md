@@ -97,7 +97,7 @@ efêmero. Serialização CDR. **A RX 7900 XTX (o hardware alvo da migração) ro
 > confere no `src/` antes de portar (Constituição Art. III).
 
 ## 7. Ajuste ao plano de migração (crates que faltavam)
-O `MIGRATION_PLAN.md` cobria agent/dataspace/orchestrator/client/llm-gateway/qos-nfcm. Esta
+O `docs/history/MIGRATION_PLAN.md` (arquivado) cobria agent/dataspace/orchestrator/client/llm-gateway/qos-nfcm. Esta
 arquitetura acrescenta, como **fases/crates adicionais** (Fase 3+ ou paralelas):
 | Nova crate | Substitui | Prioridade |
 |---|---|---|
@@ -111,7 +111,7 @@ Todas seguem o mesmo padrão: implementam interfaces de domínio, falam DDS via 
 e são A/B testáveis contra o Python. Detalhar em specs próprias quando chegarem na fila.
 
 ## 8. Ligações
-- Catálogo visual: `FIGURES.md`. · Plano macro: `../MIGRATION_PLAN.md`. · Contexto técnico:
+- Catálogo visual: `FIGURES.md`. · Plano macro: `../docs/history/MIGRATION_PLAN.md`. · Contexto técnico:
   `CONTEXT.md`. · Dissertação: `tese/69a588a60776208777b2007b/dissertacao.tex`.
 
 ## 9. Correção de fidelidade do snapshot Rust (T-602, 2026-08-18)

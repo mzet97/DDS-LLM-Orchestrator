@@ -516,7 +516,7 @@ impl OrchestratorDds {
             // republicando QoS.Violation("liveliness_lost") e o warn acima
             // indefinidamente até o agente reconectar (achado real: rodando
             // em produção por >2h contínuas contra um agente travado, ver
-            // OPTIMIZATION_REPORT.md). Reconexão continua funcionando: a
+            // docs/history/OPTIMIZATION_REPORT.md). Reconexão continua funcionando: a
             // linha 185 (`last_seen.insert(...)`) reinsere com timestamp
             // fresco assim que um novo `AgentRegistry` chegar na stream.
             self.last_seen.remove(agent_id);

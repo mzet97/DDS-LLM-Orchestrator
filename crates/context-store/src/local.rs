@@ -113,7 +113,7 @@ impl JournalRecord {
 
 /// Store local: memória (dashmap, lock-free por shard) + journal JSONL.
 ///
-/// `ahash` em vez do hasher default (Fase 2 do `OPTIMIZATION_PLAN.md`).
+/// `ahash` em vez do hasher default (Fase 2 do `docs/history/OPTIMIZATION_PLAN.md`).
 pub struct LocalContextStore {
     entries: DashMap<String, ContextEntry, ahash::RandomState>,
     /// Serializa escritas (journal + aplicação) para manter a ordem do WAL.

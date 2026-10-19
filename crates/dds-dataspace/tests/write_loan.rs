@@ -1,5 +1,5 @@
 //! Teste de round-trip dedicado para o zero-copy loan de `TaskOutput`
-//! (Fase 4 de `OPTIMIZATION_PLAN.md`) — a mudança que exercita a correção do
+//! (Fase 4 de `docs/history/OPTIMIZATION_PLAN.md`) — a mudança que exercita a correção do
 //! `DdsType::Native` feita na crate `cyclonedds` nesta mesma sessão.
 //!
 //! Cobre exatamente o que o plano exigia antes de aceitar zero-copy no

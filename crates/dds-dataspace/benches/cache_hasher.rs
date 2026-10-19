@@ -1,4 +1,4 @@
-//! Microbenchmark (Fase R3 do `OPTIMIZATION_PLAN.md`): `ahash` vs hasher padrão
+//! Microbenchmark (Fase R3 do `docs/history/OPTIMIZATION_PLAN.md`): `ahash` vs hasher padrão
 //! (SipHash) para `DashMap<String, _>` — o padrão real dos caches de
 //! task/agent/output (`dds-dataspace::cache`), chaves `String` curtas (IDs
 //! tipo `uuid`/`agent-<n>`).

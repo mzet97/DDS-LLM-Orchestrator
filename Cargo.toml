@@ -2,7 +2,7 @@
 # Usa o candidato auditado de `cyclonedds` publicado no crates.io — mesmo
 # wire format (XTypes/XCDR) do C++
 # (llama_cpp) e do Python atual, permitindo migração incremental nos MESMOS
-# tópicos DDS. Ver MIGRATION_PLAN.md.
+# tópicos DDS. Ver docs/history/MIGRATION_PLAN.md (arquivado).
 [workspace]
 resolver = "2"
 members = [

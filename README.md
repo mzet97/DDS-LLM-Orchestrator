@@ -22,7 +22,7 @@ A fuzzy/neuro-fuzzy QoS controller (`qos-nfcm`) continuously scores system
 health and switches routing profiles (e.g. failover to a cheaper model) based
 on live metrics, rather than static thresholds.
 
-**Measured performance (see [`PLANO_EXECUCAO.md`](./PLANO_EXECUCAO.md) for full methodology):**
+**Measured performance (see [`docs/history/PLANO_EXECUCAO.md`](./docs/history/PLANO_EXECUCAO.md) for full methodology):**
 - DDS state propagation: p50 **0.052ms** / p99 **0.077ms**
 - Writer pool throughput: **88.7k tasks/s**
 - 50 concurrent clients submitting tasks: zero deadlock
@@ -52,8 +52,6 @@ Client → orchestrator (HTTP API) → DDS topics → agent → llama-server (C+
 ```
 .
 ├── Cargo.toml                 # workspace manifest (14 members)
-├── MIGRATION_PLAN.md          # design rationale and hardware target
-├── PLANO_EXECUCAO.md          # detailed build/validation log with measured numbers
 ├── AGENTS.md                  # conventions for contributors working in this crate
 ├── specs/                     # spec-driven-development docs (one folder per subsystem)
 └── crates/
@@ -188,8 +186,8 @@ O-1/O-2/O-4b do plano de otimização do orquestrador).
 
 ## Documentation
 
-- [`MIGRATION_PLAN.md`](./MIGRATION_PLAN.md) — design rationale and hardware target
-- [`PLANO_EXECUCAO.md`](./PLANO_EXECUCAO.md) — detailed build/validation log with measured numbers per subsystem
+- [`docs/history/MIGRATION_PLAN.md`](./docs/history/MIGRATION_PLAN.md) — design rationale and hardware target
+- [`docs/history/PLANO_EXECUCAO.md`](./docs/history/PLANO_EXECUCAO.md) — detailed build/validation log with measured numbers per subsystem
 - [`AGENTS.md`](./AGENTS.md) — conventions for whoever works in this crate
 - [`specs/`](./specs/) — spec-driven-development docs (spec/plan/tasks/report) per subsystem
 - [`docs/`](docs/) — official documentation (PT-BR): hub + one page per crate + Studio user manual

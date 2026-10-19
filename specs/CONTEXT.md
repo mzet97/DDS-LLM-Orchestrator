@@ -131,7 +131,7 @@ autoria do próprio autor da tese. Capacidades relevantes:
   subsistemas (inclui policy-engine/mcp-gateway/context-store/observability que faltavam aqui),
   abstração de transporte, implantação (a RX 7900 XTX roda agente+gateways), estado de implementação.
 - Catálogo de figuras: `specs/FIGURES.md` (com alerta de descasamento arquivo↔legenda).
-- Plano macro: `src/rust/MIGRATION_PLAN.md`.
+- Plano macro: `src/rust/docs/history/MIGRATION_PLAN.md`.
 - Handoff de cluster (execução remota): `opencode_deve_fazer.md`.
 - Plano de correção Python (histórico das fases 1–4): `docs/planning/PLANO_ACAO_CORRECAO_2026-07.md`.
 - Artigo NFCM: `artigo_fuzzy_extension_qos/paper/`.

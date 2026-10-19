@@ -4,7 +4,7 @@
 > Idioma desta documentação: português (PT-BR). O `README.md` do workspace (em inglês)
 > continua sendo a referência rápida de build.
 
-Esta é a documentação oficial dos 19 crates Rust do DDS-LLM-Orchestrator —
+Esta é a documentação oficial dos 20 crates Rust do DDS-LLM-Orchestrator —
 runtime DDS-first, serviços, benchmark e o desktop Studio — mais o
 **[Manual do Usuário do Studio](studio-manual.md)**.
 
@@ -31,6 +31,7 @@ runtime DDS-first, serviços, benchmark e o desktop Studio — mais o
 | `studio-core` | Domínio puro do catálogo (revisões, OCC) | [crates/studio-core.md](crates/studio-core.md) |
 | `studio-node` | Nó administrativo HTTP + presença DDS | [crates/studio-node.md](crates/studio-node.md) |
 | `studio-ssh` | Bridge SSH (russh, chave dedicada) — standalone | [crates/studio-ssh.md](crates/studio-ssh.md) |
+| `workflow-engine` | Fase 900: runtime adaptativo Laya (decisão→plano DAG→tasks físicas, journal SQLite) | [crates/workflow-engine.md](crates/workflow-engine.md) |
 
 Grafo de dependência (alto nível):
 
@@ -41,6 +42,7 @@ orch-common ───┘                    ├──▶ agent ──▶ llm-gat
                                     ├──▶ context-store / policy-engine ──▶ mcp-gateway
                                     ├──▶ observability
                                     └──▶ studio-node ──▶ orchestrator-studio (+ studio-core)
+workflow-engine ──▶ agent (modo --adaptive)   workers/laya-worker: worker Python Laya (SDK 0.4.10)
 qos-nfcm ──▶ orchestrator, benchmarks        spike-interop, det-responder: harness isolados
 ```
 

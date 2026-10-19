@@ -63,7 +63,7 @@ pub(crate) const MAX_STUDIO_PRESENCES: usize = 256;
 pub(crate) const TERMINAL_TTL_UNDER_PRESSURE: std::time::Duration =
     std::time::Duration::from_secs(30);
 
-/// `DashMap` com `ahash` (Fase 2 do `OPTIMIZATION_PLAN.md`) em vez do hasher
+/// `DashMap` com `ahash` (Fase 2 do `docs/history/OPTIMIZATION_PLAN.md`) em vez do hasher
 /// default (`RandomState`/SipHash) — os caches de tópico são lookup/insert de
 /// alta frequência no hot path (claim loop, writer pool, control loop).
 pub type FastMap<K, V> = DashMap<K, V, ahash::RandomState>;

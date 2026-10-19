@@ -31,17 +31,23 @@ Env: `RUST_LOG` (default `info`); `CYCLONEDDS_STATIC=1` no build DDS.
 1. **Ingestão**: drena `stream_tasks` + pré-filtro → canal bounded `4×slots` (mín 16).
 2. **Elegibilidade** (`is_eligible`): `status==PENDING` + idade ≤ 10 s +
    especialização (`can_serve`) + prefixo `target_agent`.
-3. **Claim**: marca local (`mark_claimed`) → write ASSIGNED (`assigned_agent` +
-   `assigned_at_ns`) → sleep `CONFIRM_DELAY` 250 ms → `read_task_mesh` até
-   `CONFIRM_TIMEOUT` 10 s (`assigned_agent==eu && status==ASSIGNED`).
-   Perdeu → `unmark_claimed`; venceu → processa.
+3. **Claim**: revalidação pré-claim lê o MESH (`read_task_mesh`, estado
+   arbitrado — desde O-2/PR#10; ler o cache do stream validava PENDING
+   obsoleto sob backpressure e causava dupla-execução) → marca local →
+   write ASSIGNED → janela `confirm_delay()` **50 ms** default
+   (`AGENT_CONFIRM_DELAY_MS`; era 250 ms — a segurança vem da revalidação,
+   a janela só arbitra claims simultâneos) → `read_task_mesh` até
+   `CONFIRM_TIMEOUT` 10 s. Perdeu → `unmark_claimed`; venceu → processa.
+   Medido pós-O-2: 0 duplas/700 tasks sob rajada 100-concorrente;
+   p50 sequencial 506→306 ms.
 4. **Execução** (`process_and_publish`): ASSIGNED→RUNNING; `request_id={task}#{retry}`
    (não replaya TransientLocal); chunks → `WriterPool`; final via `submit_with_ack`;
    DONE só após ack (RUST-PROTO-005); `t_agent_queue_ns`/`t_inference_ns` locais;
    FAILED best-effort preservando ownership pós-claim.
-5. **Heartbeat**: `AgentState` a cada 5 s (VRAM via `spawn_blocking` + `nvidia-smi`).
+5. **Heartbeat**: `AgentState` (`--heartbeat-ms`, default 5 s; com `--adaptive`
+   corre no runtime que processa — review PR#10).
 
-Dispatcher revalida no cache fresco e rejeita deadline vencido; capacidade
+Dispatcher rejeita deadline vencido; capacidade
 divergente → FAILED best-effort.
 
 ## Engines

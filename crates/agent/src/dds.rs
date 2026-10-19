@@ -211,7 +211,7 @@ impl AgentDds {
     ///    aguardava na fila) e só então dispara a tentativa de claim
     ///    (write ASSIGNED → `CONFIRM_DELAY` → readback → processa) como
     ///    task tokio independente. Várias janelas de confirmação correm em
-    ///    paralelo (ver histórico no `OPTIMIZATION_REPORT.md`).
+    ///    paralelo (ver histórico no `docs/history/OPTIMIZATION_REPORT.md`).
     pub async fn run<E: Engine + 'static>(self: Arc<Self>, engine: Arc<E>) -> Result<()> {
         let claim_cfg: ClaimConfig = self.agent.claim_config();
         let queue_cap = (self.agent.config.slots as usize * 4).max(16);
@@ -483,7 +483,7 @@ impl AgentDds {
         running.started_at_ns = now_ns();
         // T-E1: tempo de fila no agente (claim confirmado → início da
         // inferência), inteiramente local a este processo — sem risco de
-        // desvio de relógio entre máquinas (ver OPTIMIZATION_REPORT.md,
+        // desvio de relógio entre máquinas (ver docs/history/OPTIMIZATION_REPORT.md,
         // "Itens pendentes" — os campos t_*_ns nunca eram populados até
         // aqui). Os componentes de transporte/serialização (t_transport_*,
         // t_*serialization_ns) cruzam processos e ficam de fora
