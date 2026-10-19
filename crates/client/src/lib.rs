@@ -73,6 +73,10 @@ pub struct TaskResult {
     pub content: String,
     pub success: bool,
     pub latency_ms: u64,
+    /// O-1 (TTFC/ICL): latência do PRIMEIRO chunk observado. Em modo
+    /// não-streaming (sem chunks parciais) o único chunk é o final —
+    /// ttfc_ms ≈ latency_ms (TTFC = 100% do total, o estado pré-O-1).
+    pub ttfc_ms: u64,
     pub tokens_prompt: u32,
     pub tokens_completion: u32,
 }
@@ -327,6 +331,7 @@ pub mod dds_impl {
             let deadline = start + timeout;
 
             let mut chunks: Vec<TaskOutput> = Vec::new();
+            let mut first_chunk_ms: Option<u64> = None;
             // `status_stream` (Task DONE) e `outputs_stream` (TaskOutput chunks) são
             // tópicos DIFERENTES, lidos por readers independentes — não há garantia
             // de ordem de entrega ENTRE eles, mesmo que o agente escreva o último
@@ -348,7 +353,12 @@ pub mod dds_impl {
                 tokio::select! {
                     out = outputs_rx.recv() => {
                         match out {
-                            Ok(o) if o.task_id == task_id => chunks.push((*o).clone()),
+                            Ok(o) if o.task_id == task_id => {
+                                if first_chunk_ms.is_none() {
+                                    first_chunk_ms = Some(start.elapsed().as_millis() as u64);
+                                }
+                                chunks.push((*o).clone());
+                            }
                             Ok(_) => {}
                             Err(error) => {
                                 return Err(channel_error(TASK_OUTPUT_TOPIC, error));
@@ -394,6 +404,7 @@ pub mod dds_impl {
                         content,
                         success: true,
                         latency_ms: start.elapsed().as_millis() as u64,
+                        ttfc_ms: first_chunk_ms.unwrap_or(0),
                         tokens_prompt: 0,
                         tokens_completion,
                     });

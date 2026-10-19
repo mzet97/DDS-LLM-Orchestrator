@@ -64,7 +64,7 @@ impl FakeActuator {
     /// Chamadas efetuadas, na ordem.
     #[must_use]
     pub fn calls(&self) -> Vec<(String, bool)> {
-        self.calls.lock().expect("acessivel").clone()
+        self.calls.lock().unwrap_or_else(|p| p.into_inner()).clone()
     }
 }
 
@@ -72,11 +72,11 @@ impl Actuator for FakeActuator {
     fn set_active(&self, service: &str, active: bool) -> Result<(), ActuatorError> {
         self.states
             .lock()
-            .expect("acessivel")
+            .unwrap_or_else(|p| p.into_inner())
             .insert(String::from(service), active);
         self.calls
             .lock()
-            .expect("acessivel")
+            .unwrap_or_else(|p| p.into_inner())
             .push((String::from(service), active));
         Ok(())
     }

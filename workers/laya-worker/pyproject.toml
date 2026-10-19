@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "laya-worker"
+version = "0.1.0"
+description = "Worker de decisão Laya (fase 900): classifica Workflow.Intent e publica Routing.Decision via CycloneDDS. Somente decisão; NUNCA publica Tasks/TaskOutput."
+requires-python = ">=3.10"
+# Nota M2-01: o wheel cyclonedds 11.0.1 declara classifiers 3.10–3.13; o
+# runtime foi verificado também em 3.14 (harness M1-04) — pin oficial do
+# interpretável do worker fica para o gate de ambiente do canário (M6).
+dependencies = [
+  "cyclonedds==11.0.1",
+]
+
+[project.optional-dependencies]
+# Inferência real é OPT-IN e NÃO entra em teste unitário (R-LAYA BLOCKED até
+# pin de SDK/checkpoint/hardware pelo usuário). Versão fixada quando o gate
+# abrir; hoje o import é lazy e falha com causa tipada.
+laya = []
+
+[project.scripts]
+laya-worker = "laya_worker.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+laya_worker = ["py.typed"]

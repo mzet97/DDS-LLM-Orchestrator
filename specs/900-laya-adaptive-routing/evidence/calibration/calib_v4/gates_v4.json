@@ -1,0 +1,11 @@
+{
+ "abstention": {
+  "choice:3-5": 1.0,
+  "noul:2": 0.6781,
+  "score:3-5": 1.0
+ },
+ "pin_sha256": "10ef5945842c7855b941c7a9e46a823ae2d0801e5cc2b8751cf7d865e947b6e5",
+ "train_n": 12000,
+ "holdout_n": 2000,
+ "records_n": 144000
+}

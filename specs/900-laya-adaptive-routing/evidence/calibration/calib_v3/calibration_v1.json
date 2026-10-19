@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "temperature": [
+    1.087834119796753,
+    5.0,
+    3.9629814624786377
+  ],
+  "temperature_by_options": {
+    "noul:2": 3.9629814624786377,
+    "score:3-5": 5.0
+  },
+  "model_id_or_path": "convaiinnovations/laya",
+  "subfolder": null,
+  "config": {
+    "encoder": "answerdotai/ModernBERT-large",
+    "head_layers": 2,
+    "max_len": 512,
+    "head_max_len": 192,
+    "max_prefixes": 6,
+    "act_costs": {
+      "escalate": 0.5
+    },
+    "cost_wrong_act": 3.0,
+    "amp_dtype": "bf16",
+    "model_name": "rl-agent",
+    "training": {
+      "updates": 7313,
+      "epochs_completed": 1,
+      "hours": 1.96,
+      "world_size": 1,
+      "fine_tuned_from_checkpoint": true
+    }
+  }
+}

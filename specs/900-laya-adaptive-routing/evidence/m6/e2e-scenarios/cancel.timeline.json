@@ -1,0 +1,15 @@
+[
+ {
+  "t": 1792290993.6,
+  "event": "CANCEL publicado p/ wf-cxl-1"
+ },
+ {
+  "t": 1792290993.6,
+  "event": "wf-run exit=0"
+ },
+ {
+  "t": 1792290993.7,
+  "event": "CENÁRIO cancel",
+  "RESULT": "PASS"
+ }
+]

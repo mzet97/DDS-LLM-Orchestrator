@@ -1,0 +1,377 @@
+{
+  "piloto": true,
+  "dataset": "dataset_v1_seed.jsonl (32 PT/EN, rótulo de engenharia)",
+  "model": {
+    "sdk": "laya==0.4.10",
+    "checkpoint": "891102d372688fc2…",
+    "device": "cpu"
+  },
+  "n_test": 14,
+  "errors": 0,
+  "laya": {
+    "qos_accuracy": 0.7143,
+    "needs_planning_accuracy": 0.7857,
+    "capability_macro_f1_at_0.5": 0.5083,
+    "capability_f1": {
+      "rust_refactor": 1.0,
+      "python_refactor": 0.0,
+      "unit_testing": 1.0,
+      "security_audit": 1.0,
+      "code_review": 0.0,
+      "research": 0.6667,
+      "summarization": 0.4,
+      "translation": 0.0
+    },
+    "latency_ms": {
+      "p50": 1271,
+      "p95": 1497,
+      "p99": 5810,
+      "mean": 1639.1
+    },
+    "confianca_media": 0.169
+  },
+  "rules_baseline": {
+    "qos_accuracy": 0.8571,
+    "needs_planning_accuracy": 1.0,
+    "capability_macro_f1_at_0.5": 0.5521
+  },
+  "calibration_note": "checkpoint com aviso de temperaturas inválidas (SDK): confianças NÃO calibradas; shadow segue obrigatório",
+  "rows": [
+    {
+      "id": "pt-001",
+      "lang": "pt",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_CRITICAL",
+      "caps_top": [
+        [
+          "security_audit",
+          0.8301
+        ],
+        [
+          "code_review",
+          0.2988
+        ],
+        [
+          "unit_testing",
+          0.2146
+        ]
+      ],
+      "needs_pred": 0.38,
+      "needs_gold": false,
+      "confidence": 0.154,
+      "ms": 5810
+    },
+    {
+      "id": "pt-004",
+      "lang": "pt",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_BALANCED",
+      "caps_top": [
+        [
+          "rust_refactor",
+          1.0
+        ],
+        [
+          "python_refactor",
+          0.9743
+        ],
+        [
+          "unit_testing",
+          0.9142
+        ]
+      ],
+      "needs_pred": 0.09,
+      "needs_gold": false,
+      "confidence": 0.055,
+      "ms": 1398
+    },
+    {
+      "id": "pt-006",
+      "lang": "pt",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_LOW_COST",
+      "caps_top": [
+        [
+          "research",
+          0.8276
+        ],
+        [
+          "summarization",
+          0.0903
+        ],
+        [
+          "translation",
+          0.0865
+        ]
+      ],
+      "needs_pred": 0.82,
+      "needs_gold": false,
+      "confidence": 0.076,
+      "ms": 1428
+    },
+    {
+      "id": "pt-008",
+      "lang": "pt",
+      "qos_pred": "QI_CRITICAL",
+      "qos_gold": "QI_CRITICAL",
+      "caps_top": [
+        [
+          "unit_testing",
+          0.1072
+        ],
+        [
+          "code_review",
+          0.1062
+        ],
+        [
+          "python_refactor",
+          0.0807
+        ]
+      ],
+      "needs_pred": 0.14,
+      "needs_gold": false,
+      "confidence": 0.299,
+      "ms": 1381
+    },
+    {
+      "id": "pt-009",
+      "lang": "pt",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_BALANCED",
+      "caps_top": [
+        [
+          "research",
+          0.2686
+        ],
+        [
+          "security_audit",
+          0.1133
+        ],
+        [
+          "summarization",
+          0.1041
+        ]
+      ],
+      "needs_pred": 0.97,
+      "needs_gold": true,
+      "confidence": 0.044,
+      "ms": 1497
+    },
+    {
+      "id": "pt-012",
+      "lang": "pt",
+      "qos_pred": "QI_STREAM_LIKE",
+      "qos_gold": "QI_STREAM_LIKE",
+      "caps_top": [
+        [
+          "summarization",
+          0.1219
+        ],
+        [
+          "translation",
+          0.093
+        ],
+        [
+          "research",
+          0.0766
+        ]
+      ],
+      "needs_pred": 0.09,
+      "needs_gold": false,
+      "confidence": 0.101,
+      "ms": 1271
+    },
+    {
+      "id": "pt-015",
+      "lang": "pt",
+      "qos_pred": "QI_CRITICAL",
+      "qos_gold": "QI_CRITICAL",
+      "caps_top": [
+        [
+          "summarization",
+          0.8325
+        ],
+        [
+          "python_refactor",
+          0.7148
+        ],
+        [
+          "unit_testing",
+          0.2393
+        ]
+      ],
+      "needs_pred": 0.24,
+      "needs_gold": false,
+      "confidence": 0.13,
+      "ms": 1232
+    },
+    {
+      "id": "en-001",
+      "lang": "en",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_CRITICAL",
+      "caps_top": [
+        [
+          "security_audit",
+          0.9255
+        ],
+        [
+          "code_review",
+          0.7827
+        ],
+        [
+          "unit_testing",
+          0.2342
+        ]
+      ],
+      "needs_pred": 0.21,
+      "needs_gold": false,
+      "confidence": 0.065,
+      "ms": 1246
+    },
+    {
+      "id": "en-004",
+      "lang": "en",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_BALANCED",
+      "caps_top": [
+        [
+          "rust_refactor",
+          1.0
+        ],
+        [
+          "unit_testing",
+          0.8854
+        ],
+        [
+          "code_review",
+          0.671
+        ]
+      ],
+      "needs_pred": 0.81,
+      "needs_gold": false,
+      "confidence": 0.053,
+      "ms": 1224
+    },
+    {
+      "id": "en-006",
+      "lang": "en",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_LOW_COST",
+      "caps_top": [
+        [
+          "research",
+          0.9064
+        ],
+        [
+          "code_review",
+          0.0956
+        ],
+        [
+          "summarization",
+          0.0811
+        ]
+      ],
+      "needs_pred": 0.53,
+      "needs_gold": false,
+      "confidence": 0.036,
+      "ms": 1182
+    },
+    {
+      "id": "en-008",
+      "lang": "en",
+      "qos_pred": "QI_CRITICAL",
+      "qos_gold": "QI_CRITICAL",
+      "caps_top": [
+        [
+          "code_review",
+          0.1232
+        ],
+        [
+          "summarization",
+          0.1147
+        ],
+        [
+          "unit_testing",
+          0.1012
+        ]
+      ],
+      "needs_pred": 0.43,
+      "needs_gold": false,
+      "confidence": 0.608,
+      "ms": 1215
+    },
+    {
+      "id": "en-009",
+      "lang": "en",
+      "qos_pred": "QI_BALANCED",
+      "qos_gold": "QI_BALANCED",
+      "caps_top": [
+        [
+          "research",
+          0.3292
+        ],
+        [
+          "summarization",
+          0.099
+        ],
+        [
+          "translation",
+          0.0464
+        ]
+      ],
+      "needs_pred": 0.95,
+      "needs_gold": true,
+      "confidence": 0.031,
+      "ms": 1482
+    },
+    {
+      "id": "en-012",
+      "lang": "en",
+      "qos_pred": "QI_STREAM_LIKE",
+      "qos_gold": "QI_STREAM_LIKE",
+      "caps_top": [
+        [
+          "research",
+          0.1251
+        ],
+        [
+          "code_review",
+          0.1051
+        ],
+        [
+          "summarization",
+          0.1023
+        ]
+      ],
+      "needs_pred": 0.16,
+      "needs_gold": false,
+      "confidence": 0.109,
+      "ms": 1364
+    },
+    {
+      "id": "en-015",
+      "lang": "en",
+      "qos_pred": "QI_CRITICAL",
+      "qos_gold": "QI_CRITICAL",
+      "caps_top": [
+        [
+          "summarization",
+          0.8953
+        ],
+        [
+          "translation",
+          0.0873
+        ],
+        [
+          "security_audit",
+          0.0367
+        ]
+      ],
+      "needs_pred": 0.06,
+      "needs_gold": false,
+      "confidence": 0.599,
+      "ms": 1217
+    }
+  ]
+}

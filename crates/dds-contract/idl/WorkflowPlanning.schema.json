@@ -1,0 +1,825 @@
+{
+ "fixture_version": 1,
+ "task": "T-900-M1-01",
+ "module": "dds_llm_workflow_v1",
+ "topics": [
+  {
+   "topic": "Workflow.Intent",
+   "typename": "dds_llm_workflow_v1::WorkflowIntent",
+   "struct": "WorkflowIntent",
+   "keys": [
+    "request_id"
+   ]
+  },
+  {
+   "topic": "Routing.Decision",
+   "typename": "dds_llm_workflow_v1::RoutingDecision",
+   "struct": "RoutingDecision",
+   "keys": [
+    "request_id",
+    "decision_id"
+   ]
+  },
+  {
+   "topic": "Agent.Capabilities",
+   "typename": "dds_llm_workflow_v1::AgentCapabilities",
+   "struct": "AgentCapabilities",
+   "keys": [
+    "agent_id"
+   ]
+  },
+  {
+   "topic": "Workflow.Plan",
+   "typename": "dds_llm_workflow_v1::WorkflowPlan",
+   "struct": "WorkflowPlan",
+   "keys": [
+    "workflow_id",
+    "plan_revision"
+   ]
+  },
+  {
+   "topic": "Workflow.State",
+   "typename": "dds_llm_workflow_v1::WorkflowState",
+   "struct": "WorkflowState",
+   "keys": [
+    "workflow_id",
+    "plan_revision"
+   ]
+  }
+ ],
+ "enums": {
+  "IntentCommand": {
+   "literals": [
+    "IC_SUBMIT",
+    "IC_CANCEL"
+   ]
+  },
+  "QosIntent": {
+   "literals": [
+    "QI_BALANCED",
+    "QI_CRITICAL",
+    "QI_STREAM_LIKE",
+    "QI_LOW_COST",
+    "QI_FAILOVER"
+   ]
+  },
+  "DecisionStatus": {
+   "literals": [
+    "DS_OK",
+    "DS_ERROR"
+   ]
+  },
+  "ReasonCode": {
+   "literals": [
+    "RC_NONE",
+    "RC_INVALID_INPUT",
+    "RC_MODEL_UNAVAILABLE",
+    "RC_TIMEOUT",
+    "RC_SCHEMA_MISMATCH",
+    "RC_POLICY_DENIED",
+    "RC_LOW_CONFIDENCE",
+    "RC_EXPIRED",
+    "RC_CAPABILITY_UNAVAILABLE",
+    "RC_OVERLOADED",
+    "RC_CONFLICT",
+    "RC_INVALID_PLAN",
+    "RC_OUTPUT_INVALID",
+    "RC_IN_DOUBT",
+    "RC_CANCELLED"
+   ]
+  },
+  "NodeKind": {
+   "literals": [
+    "NK_INFERENCE",
+    "NK_TOOL"
+   ]
+  },
+  "WorkflowStatus": {
+   "literals": [
+    "WS_ACCEPTED",
+    "WS_WAITING_DECISION",
+    "WS_WAITING_PLAN",
+    "WS_RUNNING",
+    "WS_DONE",
+    "WS_FAILED",
+    "WS_CANCELLED",
+    "WS_IN_DOUBT"
+   ]
+  },
+  "NodeStatus": {
+   "literals": [
+    "NS_BLOCKED",
+    "NS_READY",
+    "NS_PUBLISHED",
+    "NS_ASSIGNED",
+    "NS_RUNNING",
+    "NS_DONE",
+    "NS_FAILED",
+    "NS_CANCELLED",
+    "NS_IN_DOUBT"
+   ]
+  }
+ },
+ "structs": {
+  "ProfileProbability": {
+   "final": true,
+   "fields": [
+    {
+     "name": "profile",
+     "type": "i32"
+    },
+    {
+     "name": "probability",
+     "type": "f64"
+    }
+   ]
+  },
+  "CapabilityProbability": {
+   "final": true,
+   "fields": [
+    {
+     "name": "capability_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "probability",
+     "type": "f64"
+    },
+    {
+     "name": "answer_confidence",
+     "type": "f64"
+    }
+   ]
+  },
+  "ToolVersion": {
+   "final": true,
+   "fields": [
+    {
+     "name": "tool_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "version",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  },
+  "InputRef": {
+   "final": true,
+   "fields": [
+    {
+     "name": "producer_node_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "output_name",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  },
+  "OutputRef": {
+   "final": true,
+   "fields": [
+    {
+     "name": "name",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "context_ref",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "content_hash",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "byte_count",
+     "type": "u32"
+    },
+    {
+     "name": "source_task_id",
+     "type": "string",
+     "bound": 70
+    }
+   ]
+  },
+  "PlanNode": {
+   "final": true,
+   "fields": [
+    {
+     "name": "node_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "kind",
+     "type": "i32"
+    },
+    {
+     "name": "required_capabilities",
+     "type": "seq",
+     "elem": {
+      "type": "string",
+      "bound": 64
+     },
+     "bound": 16
+    },
+    {
+     "name": "model_id",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "target_agent_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "prompt_template",
+     "type": "string",
+     "bound": 8192
+    },
+    {
+     "name": "dependencies",
+     "type": "seq",
+     "elem": {
+      "type": "string",
+      "bound": 64
+     },
+     "bound": 32
+    },
+    {
+     "name": "inputs",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "InputRef"
+     },
+     "bound": 16
+    },
+    {
+     "name": "output_names",
+     "type": "seq",
+     "elem": {
+      "type": "string",
+      "bound": 64
+     },
+     "bound": 8
+    },
+    {
+     "name": "max_attempts",
+     "type": "u16"
+    },
+    {
+     "name": "deadline_ns",
+     "type": "u64"
+    },
+    {
+     "name": "max_tokens",
+     "type": "u32"
+    },
+    {
+     "name": "max_output_bytes",
+     "type": "u32"
+    },
+    {
+     "name": "security_context_ref",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "priority",
+     "type": "i32"
+    },
+    {
+     "name": "side_effect_key",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  },
+  "NodeState": {
+   "final": true,
+   "fields": [
+    {
+     "name": "node_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "status",
+     "type": "i32"
+    },
+    {
+     "name": "attempt_id",
+     "type": "u32"
+    },
+    {
+     "name": "task_id",
+     "type": "string",
+     "bound": 70
+    },
+    {
+     "name": "assigned_agent_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "ready",
+     "type": "bool"
+    },
+    {
+     "name": "started_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "completed_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "outputs",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "OutputRef"
+     },
+     "bound": 8
+    },
+    {
+     "name": "reason_code",
+     "type": "i32"
+    }
+   ]
+  },
+  "WorkflowIntent": {
+   "final": true,
+   "fields": [
+    {
+     "name": "request_id",
+     "type": "string",
+     "bound": 64,
+     "key": true
+    },
+    {
+     "name": "workflow_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "client_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "schema_version",
+     "type": "u16"
+    },
+    {
+     "name": "intent_revision",
+     "type": "u32"
+    },
+    {
+     "name": "command",
+     "type": "i32"
+    },
+    {
+     "name": "expected_plan_revision",
+     "type": "u32"
+    },
+    {
+     "name": "prompt",
+     "type": "string",
+     "bound": 65536
+    },
+    {
+     "name": "created_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "deadline_ns",
+     "type": "u64"
+    },
+    {
+     "name": "security_context_ref",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "policy_revision",
+     "type": "u32"
+    },
+    {
+     "name": "questions_revision",
+     "type": "u32"
+    },
+    {
+     "name": "capability_catalog_revision",
+     "type": "u32"
+    },
+    {
+     "name": "checkpoint_revision",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "max_tokens",
+     "type": "u32"
+    },
+    {
+     "name": "max_cost_microunits",
+     "type": "u64"
+    },
+    {
+     "name": "budget_unit",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "fallback_template_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "payload_hash",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  },
+  "RoutingDecision": {
+   "final": true,
+   "fields": [
+    {
+     "name": "request_id",
+     "type": "string",
+     "bound": 64,
+     "key": true
+    },
+    {
+     "name": "decision_id",
+     "type": "string",
+     "bound": 64,
+     "key": true
+    },
+    {
+     "name": "workflow_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "schema_version",
+     "type": "u16"
+    },
+    {
+     "name": "intent_revision",
+     "type": "u32"
+    },
+    {
+     "name": "producer_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "model_id",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "checkpoint_revision",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "questions_revision",
+     "type": "u32"
+    },
+    {
+     "name": "policy_revision",
+     "type": "u32"
+    },
+    {
+     "name": "capability_catalog_revision",
+     "type": "u32"
+    },
+    {
+     "name": "qos_profile",
+     "type": "i32"
+    },
+    {
+     "name": "qos_probabilities",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "ProfileProbability"
+     },
+     "bound": 5
+    },
+    {
+     "name": "capability_probabilities",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "CapabilityProbability"
+     },
+     "bound": 16
+    },
+    {
+     "name": "requires_planning_probability",
+     "type": "f64"
+    },
+    {
+     "name": "priority_score",
+     "type": "f64"
+    },
+    {
+     "name": "priority_probabilities",
+     "type": "seq",
+     "elem": {
+      "type": "f64"
+     },
+     "bound": 3
+    },
+    {
+     "name": "confidence",
+     "type": "f64"
+    },
+    {
+     "name": "answer_confidence",
+     "type": "f64"
+    },
+    {
+     "name": "calibration_revision",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "created_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "valid_until_ns",
+     "type": "u64"
+    },
+    {
+     "name": "decision_status",
+     "type": "i32"
+    },
+    {
+     "name": "reason_code",
+     "type": "i32"
+    },
+    {
+     "name": "evidence_digest",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "payload_hash",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  },
+  "AgentCapabilities": {
+   "final": true,
+   "fields": [
+    {
+     "name": "agent_id",
+     "type": "string",
+     "bound": 64,
+     "key": true
+    },
+    {
+     "name": "schema_version",
+     "type": "u16"
+    },
+    {
+     "name": "announcement_revision",
+     "type": "u32"
+    },
+    {
+     "name": "capability_catalog_revision",
+     "type": "u32"
+    },
+    {
+     "name": "capabilities",
+     "type": "seq",
+     "elem": {
+      "type": "string",
+      "bound": 64
+     },
+     "bound": 64
+    },
+    {
+     "name": "model_ids",
+     "type": "seq",
+     "elem": {
+      "type": "string",
+      "bound": 256
+     },
+     "bound": 16
+    },
+    {
+     "name": "tool_versions",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "ToolVersion"
+     },
+     "bound": 32
+    },
+    {
+     "name": "adaptive_protocol_version",
+     "type": "u16"
+    },
+    {
+     "name": "security_context_ref",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "created_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "valid_until_ns",
+     "type": "u64"
+    }
+   ]
+  },
+  "WorkflowPlan": {
+   "final": true,
+   "fields": [
+    {
+     "name": "workflow_id",
+     "type": "string",
+     "bound": 64,
+     "key": true
+    },
+    {
+     "name": "plan_revision",
+     "type": "u32",
+     "key": true
+    },
+    {
+     "name": "schema_version",
+     "type": "u16"
+    },
+    {
+     "name": "request_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "intent_revision",
+     "type": "u32"
+    },
+    {
+     "name": "effective_decision_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "policy_revision",
+     "type": "u32"
+    },
+    {
+     "name": "capability_catalog_revision",
+     "type": "u32"
+    },
+    {
+     "name": "planner_id",
+     "type": "string",
+     "bound": 256
+    },
+    {
+     "name": "planner_revision",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "created_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "deadline_ns",
+     "type": "u64"
+    },
+    {
+     "name": "qos_profile",
+     "type": "i32"
+    },
+    {
+     "name": "nodes",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "PlanNode"
+     },
+     "bound": 32
+    },
+    {
+     "name": "plan_hash",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  },
+  "WorkflowState": {
+   "final": true,
+   "fields": [
+    {
+     "name": "workflow_id",
+     "type": "string",
+     "bound": 64,
+     "key": true
+    },
+    {
+     "name": "plan_revision",
+     "type": "u32",
+     "key": true
+    },
+    {
+     "name": "schema_version",
+     "type": "u16"
+    },
+    {
+     "name": "state_revision",
+     "type": "u32"
+    },
+    {
+     "name": "request_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "effective_decision_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "plan_hash",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "status",
+     "type": "i32"
+    },
+    {
+     "name": "reason_code",
+     "type": "i32"
+    },
+    {
+     "name": "nodes",
+     "type": "seq",
+     "elem": {
+      "type": "struct",
+      "struct": "NodeState"
+     },
+     "bound": 32
+    },
+    {
+     "name": "created_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "updated_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "expires_at_ns",
+     "type": "u64"
+    },
+    {
+     "name": "cancelled_by_request_id",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "effective_qos_config_hash",
+     "type": "string",
+     "bound": 64
+    },
+    {
+     "name": "fallback_template_id",
+     "type": "string",
+     "bound": 64
+    }
+   ]
+  }
+ },
+ "notes": [
+  "EMENDA M1-01 (2026-10-16): literais de enum prefixados (IC_/QI_/DS_/RC_/NK_/WS_/NS_) por regra de escopo IDL \u2014 idlc C 11.0.1 rejeita literais duplicados no m\u00f3dulo (ex.: CANCELLED em ReasonCode/WorkflowStatus/NodeStatus). Ordinais/sem\u00e2ntica id\u00eanticos ao contracts.md.",
+  "schema_version: valor OBRIGAT\u00d3RIO 1 em V1 garantido por valida\u00e7\u00e3o (IDL 4.2 n\u00e3o tem default de membro; ambos geradores rejeitam `= 1`).",
+  "Diverg\u00eancia conhecida: cyclonedds-build 3.0.1 gera DdsString sem bound; bounds de sequence preservados. idlc C e idlpy preservam bounds de string."
+ ]
+}

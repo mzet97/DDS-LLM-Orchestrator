@@ -3,7 +3,8 @@
 //! Interface para harnesses externos (ex. benchmark Python) dirigirem cadeias:
 //! cada etapa é uma task real reivindicada via DDS e inferida no backend real.
 //!
-//! Uso: `submit-one -- <domain> <model> <messages_json> [--timeout-ms N]`
+//! Uso: `submit-one -- <domain> <model> <messages_json> [--timeout-ms N]
+//!      [--max-tokens N] [--temperature F] [--stream]`
 //! Saída (stdout): `{"task_id","content","success","latency_ms"}`.
 //! Requer `--features dds` (usa `DdsClientDds`).
 
@@ -14,18 +15,36 @@ use client::{ClientConfig, DdsClient};
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 4 {
-        eprintln!("uso: submit-one -- <domain> <model> <messages_json> [--timeout-ms N]");
+        eprintln!(
+            "uso: submit-one -- <domain> <model> <messages_json> \
+             [--timeout-ms N] [--max-tokens N] [--temperature F] [--stream]"
+        );
         std::process::exit(2);
     }
     let domain: u32 = args[1].parse()?;
     let model = args[2].clone();
     let messages_json = args[3].clone();
     let mut timeout_ms = 120_000u64;
+    let mut max_tokens = 256u32;
+    let mut temperature = 0.7f32;
+    let mut stream = false;
     let mut i = 4;
     while i < args.len() {
         if args[i] == "--timeout-ms" {
             timeout_ms = args.get(i + 1).ok_or("--timeout-ms exige valor")?.parse()?;
             i += 2;
+        } else if args[i] == "--max-tokens" {
+            max_tokens = args.get(i + 1).ok_or("--max-tokens exige valor")?.parse()?;
+            i += 2;
+        } else if args[i] == "--temperature" {
+            temperature = args
+                .get(i + 1)
+                .ok_or("--temperature exige valor")?
+                .parse()?;
+            i += 2;
+        } else if args[i] == "--stream" {
+            stream = true;
+            i += 1;
         } else {
             return Err(format!("argumento desconhecido: {}", args[i]).into());
         }
@@ -38,7 +57,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let helper = DdsClient::new(config.clone());
     let client = DdsClientDds::new(config)?;
-    let task = helper.create_task(&model, &messages_json, 5, false);
+    let mut task = helper.create_task(&model, &messages_json, 5, stream);
+    // B-BENCH/O-1: parâmetros de inferência sob medida por chamada (default
+    // do create_task: 0.7/256 — o driver usa max-tokens 2048 p/ gemma4 e
+    // temperature 0 p/ determinismo; stream=true habilita TTFC no DdsEngine).
+    task.temperature = temperature;
+    task.max_tokens = max_tokens;
     let task_id = task.task_id.clone();
     match client.submit(task).await {
         Ok(r) => {
@@ -49,6 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "content": r.content,
                     "success": r.success,
                     "latency_ms": r.latency_ms,
+                    "ttfc_ms": r.ttfc_ms,
                     "tokens_prompt": r.tokens_prompt,
                     "tokens_completion": r.tokens_completion,
                 })

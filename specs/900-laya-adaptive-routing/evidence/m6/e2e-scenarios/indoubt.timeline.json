@@ -1,0 +1,21 @@
+[
+ {
+  "t": 1792291708.8,
+  "event": "intent com prazo de 40s publicada"
+ },
+ {
+  "t": 1792291868.9,
+  "event": "attempts",
+  "rows": [
+   [
+    "direct-0",
+    "in_doubt"
+   ]
+  ]
+ },
+ {
+  "t": 1792291868.9,
+  "event": "CENÁRIO indoubt",
+  "RESULT": "PASS"
+ }
+]

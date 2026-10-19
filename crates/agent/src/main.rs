@@ -69,6 +69,26 @@ struct Args {
     /// Restrição de provedor publicada em `LLM.InferenceRequest`.
     #[arg(long, value_enum, default_value = "local-only")]
     provider_constraint: ProviderConstraint,
+
+    /// T-900-M3-02: liga o modo adaptativo (barreira Plan/State/Task para
+    /// tasks `laya1-`; tasks legadas seguem as regras clássicas intocadas).
+    #[arg(long, default_value_t = false)]
+    adaptive: bool,
+
+    /// Capacidades anunciadas em `Agent.Capabilities` (catálogo rev 1;
+    /// obrigatórias com --adaptive).
+    #[arg(long, default_value = "")]
+    adaptive_capabilities: String,
+
+    /// Domínio DDS dedicado do plano adaptativo (isolamento D-ISOLATION).
+    #[arg(long, default_value_t = 0)]
+    adaptive_domain: u32,
+
+    /// O-4: período de publicação do heartbeat (AgentState em AgentRegistry).
+    /// Default 5 s (comportamento histórico). O reaper do orchestrator usa
+    /// --agents-stale-after-ms; piso prático = lease DDSI de ownership.
+    #[arg(long, default_value_t = 5_000)]
+    heartbeat_ms: u64,
 }
 
 fn parse_specialization(s: &str) -> Specialization {
@@ -118,6 +138,20 @@ async fn main() -> Result<()> {
         );
     }
 
+    // T-900-M3-02: config extra para o runtime adaptativo (o base é movido).
+    #[cfg(feature = "dds")]
+    let adaptive_config = AgentConfig {
+        agent_id: args.agent_id.clone(),
+        hostname: hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string()),
+        model: args.model.clone(),
+        specialization: spec,
+        slots: args.slots,
+        dds_domain: args.dds_domain,
+        target_agent_prefix: args.target_agent_prefix.clone(),
+    };
+
     let config = AgentConfig {
         agent_id: args.agent_id.clone(),
         hostname: hostname::get()
@@ -159,7 +193,48 @@ async fn main() -> Result<()> {
     };
     #[cfg(not(feature = "security"))]
     let runtime = Arc::new(AgentDds::new(config)?);
-    let _heartbeat = runtime.spawn_heartbeat();
+
+    // T-900-M3-02: modo adaptativo OPT-IN — barreira + feeders + auto-anúncio.
+    #[cfg(feature = "dds")]
+    let _adaptive_guard = if args.adaptive {
+        use agent::adaptive::dds_feeder;
+        use agent::adaptive::AdaptiveBarrier;
+        use std::sync::Arc;
+
+        let caps: Vec<String> = args
+            .adaptive_capabilities
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        anyhow::ensure!(
+            !caps.is_empty(),
+            "--adaptive exige --adaptive-capabilities (rótulos do catálogo rev 1)"
+        );
+        let barrier = Arc::new(AdaptiveBarrier::new(&args.agent_id));
+        let space = Arc::new(dds_feeder::mount(args.adaptive_domain)?);
+        dds_feeder::spawn_feeders(Arc::clone(&space), Arc::clone(&barrier)).await;
+        let announcer = tokio::spawn(dds_feeder::announce_self(
+            space,
+            args.agent_id.clone(),
+            caps,
+            workflow_engine::catalog_v1().revision,
+        ));
+        // AgentDds não é Clone: recria o runtime base e aplica a barreira.
+        let rt = AgentDds::new(adaptive_config.clone())?.with_adaptive(barrier);
+        Some((Arc::new(rt), announcer))
+    } else {
+        None
+    };
+    // rebinding: usa o runtime COM barreira quando --adaptive
+    let runtime = match _adaptive_guard.as_ref() {
+        Some((rt, _)) => Arc::clone(rt),
+        None => runtime,
+    };
+    // P2 (review PR#10): o heartbeat corre NO runtime que processa (com
+    // adaptive, o runtime original nunca via os slots/completions — o
+    // registry reportava o agente permanentemente idle).
+    let _heartbeat = runtime.spawn_heartbeat(std::time::Duration::from_millis(args.heartbeat_ms));
 
     // T-820-09: valor desconhecido de `--engine` era engolido pelo `else` e
     // caía no branch DDS silenciosamente (ex.: typo `--engine ddd` subia um

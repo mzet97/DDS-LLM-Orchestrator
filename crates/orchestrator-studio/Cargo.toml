@@ -9,6 +9,7 @@ description = "Desktop nativo do DDS Orchestrator Studio (egui), fase 800."
 [dependencies]
 studio-core = { path = "../studio-core", version = "0.1" }
 studio-node = { path = "../studio-node", version = "0.1" }
+studio-ssh = { path = "../studio-ssh", version = "0.1" }
 eframe = "0.36"
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -30,6 +31,8 @@ default = []
 dds = ["dep:dds-dataspace", "dep:dds-contract", "dep:futures", "dep:client", "client/dds", "dds-dataspace/dds"]
 
 [dev-dependencies]
+russh = { workspace = true }
+rand = { workspace = true }
 axum = { workspace = true }
 serde_json = { workspace = true }
 # T-890-08 (G-37): testes de UI automatizados (egui_kittest). EXCEÇÃO

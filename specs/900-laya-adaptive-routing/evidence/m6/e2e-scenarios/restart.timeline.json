@@ -1,0 +1,30 @@
+[
+ {
+  "t": 1792294595.0,
+  "event": "task materializada: laya1-0c16f1fdf069b042ab…"
+ },
+ {
+  "t": 1792294595.0,
+  "event": "wf-run KILLado (SIGKILL)"
+ },
+ {
+  "t": 1792294603.8,
+  "event": "wf-run2 exit=0"
+ },
+ {
+  "t": 1792294603.8,
+  "event": "attempts pós-restart",
+  "rows": [
+   [
+    1,
+    "done",
+    "laya1-0c16f1fdf069b042aba1a7df24d9e8307866b95c7a20fe1139dfdb51ee7f07dd"
+   ]
+  ]
+ },
+ {
+  "t": 1792294603.8,
+  "event": "CENÁRIO restart",
+  "RESULT": "PASS"
+ }
+]

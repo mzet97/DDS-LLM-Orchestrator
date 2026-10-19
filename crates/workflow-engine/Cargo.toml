@@ -1,0 +1,44 @@
+[package]
+name = "workflow-engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Engine/validator da fase 900: decisão Rust observadora (M2), catálogo de capabilities (M3), DAG/engine (M5)."
+
+[dependencies]
+dds-contract = { version = "=0.1.0", path = "../dds-contract" }
+thiserror = { workspace = true }
+sha2 = "0.10"
+serde = { workspace = true }
+rusqlite = { workspace = true }
+anyhow = { workspace = true, optional = true }
+serde_json = { workspace = true }
+
+# Observador DDS (bin wf-observe, T-900-M2-04/V04): feature `dds`.
+dds-dataspace = { version = "=0.1.0", path = "../dds-dataspace" }
+cyclonedds = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, optional = true }
+
+reqwest = { version = "0.12", features = ["json"], optional = true }
+
+[features]
+default = []
+dds = ["dep:cyclonedds", "dep:tokio", "dep:futures", "dep:tracing-subscriber",
+       "dep:anyhow", "dep:reqwest", "dds-contract/dds", "dds-dataspace/dds"]
+
+[[bin]]
+name = "wf-run"
+path = "src/bin/wf_run.rs"
+required-features = ["dds"]
+
+[[bin]]
+name = "wf-observe"
+path = "src/bin/wf_observe.rs"
+required-features = ["dds"]
+
+[lints]
+workspace = true

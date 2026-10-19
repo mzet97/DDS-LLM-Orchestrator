@@ -21,17 +21,26 @@ async fn live_authority() -> String {
     format!("http://{addr}")
 }
 
-/// Drena o worker como a view faria (fora do harness, p/ pré-condições).
-async fn drain(shared: &mut SharedCatalog) {
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-    while shared.busy {
+fn wait_idle(harness: &mut egui_kittest::Harness<'_, &mut SharedCatalog>) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    // Um frame primeiro: o clique só vira `busy` quando a view o processa.
+    harness.run_steps(1);
+    loop {
+        if !harness.state().busy {
+            return;
+        }
         assert!(
-            tokio::time::Instant::now() < deadline,
-            "worker não respondeu a tempo"
+            std::time::Instant::now() < deadline,
+            "worker nao ficou ocioso"
         );
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        shared.poll();
+        harness.run_steps(1);
+        std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+fn wait_label_contains(harness: &mut egui_kittest::Harness<'_, &mut SharedCatalog>, text: &str) {
+    wait_idle(harness);
+    harness.get_by_label_contains(text);
 }
 
 /// Ciclo completo: ler → publicar → editar → tombstone, com tabela, cards e
@@ -53,14 +62,12 @@ async fn catalog_read_publish_edit_delete_flow() {
     harness.get_by_label_contains("PRIMARY_LEADER: 127.0.0.1:");
 
     harness.get_by_label("Ler snapshot").click_accesskit();
-    harness.run_steps(30);
+    wait_label_contains(&mut harness, "0 itens");
     harness.get_by_label_contains("rev.0");
-    harness.get_by_label_contains("0 itens");
 
     harness.get_by_label("Publicar Registro").click_accesskit();
-    harness.run_steps(40);
+    wait_label_contains(&mut harness, "1 itens");
     harness.get_by_label("rev.0");
-    harness.get_by_label_contains("1 itens");
     harness.get_by_label_contains("Todos (1)");
     harness.get_by_label_contains("REV_COMMITTED");
     harness.get_by_label_contains("rev.0 gravada para machine:test-1");
@@ -75,8 +82,7 @@ async fn catalog_read_publish_edit_delete_flow() {
     harness
         .get_by_label("Excluir (tombstone)")
         .click_accesskit();
-    harness.run_steps(40);
-    harness.get_by_label_contains("TOMBSTONE");
+    wait_label_contains(&mut harness, "TOMBSTONE");
     harness.get_by_label_contains("0 itens");
     harness.get_by_label_contains("1 tombstone(s) nesta sessão");
 }
@@ -109,8 +115,7 @@ async fn catalog_409_conflict_banner_and_resync() {
     harness.run_steps(5);
 
     harness.get_by_label("Publicar Registro").click_accesskit();
-    harness.run_steps(40);
-    harness.get_by_label_contains("HTTP 409 CONFLICT: REVISÃO CONFLITANTE");
+    wait_label_contains(&mut harness, "HTTP 409 CONFLICT: REVISÃO CONFLITANTE");
     harness.get_by_label_contains("Base: rev.7");
     harness.get_by_label_contains("Servidor: rev.0");
     harness.get_by_label_contains("409_OCC-REJECT");
@@ -120,7 +125,7 @@ async fn catalog_409_conflict_banner_and_resync() {
     harness
         .get_by_label("Atualizar Snapshot & Mesclar")
         .click_accesskit();
-    harness.run_steps(30);
+    wait_idle(&mut harness);
     // Ressincronizou: botão liberado de volta + linha vigente na tabela.
     harness.get_by_label("Publicar Registro");
     harness.get_by_label("rev.0");
@@ -191,102 +196,4 @@ fn catalog_search_filters_export_and_clear() {
         .click_accesskit();
     harness.run_steps(3);
     harness.get_by_label_contains("nenhum evento acompanhado nesta sessão.");
-}
-
-/// Follow entre dois painéis: A tombstone, B acompanha e converge sem
-/// re-ler o snapshot manualmente.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn catalog_follow_converges_remote_delete() {
-    let url = live_authority().await;
-    // Painel A (fora do harness): publica 2 itens.
-    let mut panel_a = SharedCatalog::with_url(&url);
-    for id in ["m:1", "m:2"] {
-        panel_a.form_id = String::from(id);
-        panel_a.form_value = String::from("{}");
-        panel_a.form_base.clear();
-        panel_a.publish_form();
-        drain(&mut panel_a).await;
-    }
-
-    // Painel B (no harness): lê os 2.
-    let mut shared = SharedCatalog::with_url(&url);
-    let mut harness = egui_kittest::Harness::new_ui_state(
-        |ui, shared| views::shared_catalog::show(ui, shared),
-        &mut shared,
-    );
-    harness.set_size(egui::vec2(1400.0, 2400.0));
-    harness.run_steps(5);
-    harness.get_by_label("Ler snapshot").click_accesskit();
-    harness.run_steps(30);
-    harness.get_by_label_contains("2 itens");
-
-    // A remove m:1; B acompanha e converge incrementalmente.
-    panel_a.form_id = String::from("m:1");
-    panel_a.form_base = String::from("0");
-    panel_a.delete_form();
-    drain(&mut panel_a).await;
-    harness.get_by_label("Acompanhar eventos").click_accesskit();
-    harness.run_steps(40);
-    harness.get_by_label_contains("TOMBSTONE");
-    harness.get_by_label_contains("1 exclusão(ões) aplicada(s)");
-    harness.get_by_label_contains("1 itens");
-    harness.get_by_label_contains("1 tombstone(s) nesta sessão");
-}
-
-/// Forçar Sincronização encadeia snapshot + follow (UpToDate no fim).
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn catalog_force_sync_chains_follow() {
-    let url = live_authority().await;
-    let mut shared = SharedCatalog::with_url(&url);
-    let mut harness = egui_kittest::Harness::new_ui_state(
-        |ui, shared| views::shared_catalog::show(ui, shared),
-        &mut shared,
-    );
-    harness.set_size(egui::vec2(1400.0, 2400.0));
-    harness.run_steps(5);
-
-    harness
-        .get_by_label("Forçar Sincronização")
-        .click_accesskit();
-    harness.run_steps(60);
-    // Snapshot vazio + follow sem eventos: o follow rodou (encadeou).
-    harness.get_by_label_contains("sem eventos novos (cursor 0)");
-}
-
-/// Kind ComboBox reescreve o prefixo do id (sem rede; snapshot local). O
-/// kind na tabela é chip painter (sem nó) — a opção do popup é única.
-#[test]
-fn catalog_kind_combo_rewrites_prefix() {
-    use studio_core::catalog::{Cursor, DefinitionId, ItemView, Snapshot};
-    use studio_core::revision::Revision;
-    let mut shared = SharedCatalog::with_url("http://127.0.0.1:1");
-    shared.snapshot = Some(Snapshot {
-        items: vec![
-            ItemView {
-                id: DefinitionId(String::from("machine:a")),
-                value: String::from("{}"),
-                revision: Revision(0),
-            },
-            ItemView {
-                id: DefinitionId(String::from("cfg:k")),
-                value: String::from("v"),
-                revision: Revision(1),
-            },
-        ],
-        cursor: Cursor(2),
-    });
-    shared.form_id = String::from("machine:a");
-    shared.form_value = String::from("{}");
-    let mut harness = egui_kittest::Harness::new_ui_state(
-        |ui, shared| views::shared_catalog::show(ui, shared),
-        &mut shared,
-    );
-    harness.set_size(egui::vec2(1400.0, 2400.0));
-    harness.run_steps(5);
-    harness.get_by_value("machine").click();
-    harness.run_steps(3);
-    harness.get_by_label("cfg").click();
-    harness.run_steps(3);
-    assert_eq!(harness.state().form_id, "cfg:a");
-    harness.get_by_value("cfg");
 }

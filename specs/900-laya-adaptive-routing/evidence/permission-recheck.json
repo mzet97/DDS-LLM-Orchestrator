@@ -1,0 +1,41 @@
+{
+  "name": "permission-recheck",
+  "started_utc": "2026-10-16T22:32:27.845873+00:00",
+  "cwd": "/var/mnt/HD1TB/tese/src/rust",
+  "command": [
+    "cargo",
+    "test",
+    "-p",
+    "studio-node",
+    "--lib",
+    "--locked",
+    "catalog_auth::tests::append_failure_rolls_back_memory_to_journal_state",
+    "--",
+    "--exact"
+  ],
+  "wrapper": [
+    "unshare",
+    "--user",
+    "--map-root-user",
+    "--net",
+    "sh",
+    "-c",
+    "ip link set lo up && exec setpriv --bounding-set=-all \"$@\"",
+    "m0"
+  ],
+  "environment_overrides": {
+    "CYCLONEDDS_STATIC": "1",
+    "CARGO_TARGET_DIR": "/var/home/mzet/.cache/tese-m0-hd1tb-5a7c15b-20261016",
+    "CARGO_BUILD_JOBS": "4",
+    "CARGO_PROFILE_DEV_DEBUG": "0",
+    "CARGO_PROFILE_TEST_DEBUG": "0",
+    "CARGO_NET_OFFLINE": "true",
+    "RUST_TEST_THREADS": "1",
+    "CYCLONEDDS_URI": "<CycloneDDS><Domain Id=\"any\"><General><Interfaces><NetworkInterface name=\"lo\"/></Interfaces><AllowMulticast>false</AllowMulticast></General><Discovery><ParticipantIndex>auto</ParticipantIndex><MaxAutoParticipantIndex>100</MaxAutoParticipantIndex><Peers><Peer Address=\"127.0.0.1\"/></Peers></Discovery></Domain></CycloneDDS>"
+  },
+  "timeout_seconds": 1200,
+  "exit_code": 0,
+  "ended_utc": "2026-10-16T22:32:36.427041+00:00",
+  "elapsed_seconds": 8.581,
+  "log_sha256": "df42d96d792a3bc23fae8965a6cffe7c148ac234976bf99485b3f3f44dce2910"
+}

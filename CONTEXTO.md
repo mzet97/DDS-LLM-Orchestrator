@@ -1,6 +1,24 @@
 # src/rust — todos os projetos: função e como usar
 
 > Guia autocontido para uma IA sem nenhum contexto prévio do repositório.
+
+## Novidades 2026-10-18 (fase 900 + otimizações O-*) — ler antes de usar bins
+
+- **workflow-engine** (crates/workflow-engine): runtime fase 900 — bins `wf-run`,
+  `wf-observe`, `dag-validate`; worker Python em `workers/laya-worker/` (SDK laya
+  0.4.10, venv `~/.cache/tese-laya`); dossiê em `specs/900-laya-adaptive-routing/`.
+- **Otimizações do orquestrador** (evidências `specs/905-otimizacao/`):
+  - O-1: fork llama.cpp rebuildado com gemma4+DDS+streaming (build `/var/tmp/llama-o1-build`,
+    `--alias` OBRIGATÓRIO = model_name das tasks; filtro silencioso no bridge);
+  - O-2: revalidação de claim lê o MESH (`read_task_mesh`) — janela de confirmação
+    50 ms default (`AGENT_CONFIRM_DELAY_MS`); dupla-execução sob rajada: 0;
+  - O-4/O-5: flags `--agents-stale-after-ms/--registry-interval-ms/
+    --control-interval-ms/--qos-interval-ms` (orch) e `--heartbeat-ms` (agent).
+- **submit-one**: `--max-tokens/--temperature/--stream` + `ttfc_ms` no resultado
+  (build de benchmark: `/var/tmp/tese-target-bbench/release/submit-one`).
+- **CYCLONEDDS_URI uniforme em TODOS os processos do teste** (inclusive o
+  llama-server C++): configs divergentes = participantes não se descobrem.
+
 > Verificado contra o código em 2026-09-10. Todos os caminhos abaixo são
 > **absolutos** (corte o prefixo `/home/mzet/projetos/tese/` se o checkout
 > estiver em outro lugar). Bins exigem `--features dds` no build.

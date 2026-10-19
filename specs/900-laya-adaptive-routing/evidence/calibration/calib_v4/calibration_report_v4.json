@@ -1,0 +1,83 @@
+{
+ "dataset": "CARROT-LLM-Routing/SPROUT (derivado sprout_to_laya, seed 900)",
+ "n": {
+  "train": 12000,
+  "holdout": 2000,
+  "records": 144000
+ },
+ "labeling": "POR MEDIÇÃO: Pareto custo×qualidade sobre scores de juiz de 13 modelos (cheap>=0.95→LOW_COST; frontier>=0.9 com gap>=0.25→CRITICAL; mid>=0.9→BALANCED); complexidade por dificuldade medida; urgency=1 neutro; caps code=False",
+ "before": {
+  "choice_accuracy": 0.148,
+  "noul_accuracy": 0.8636111111111111,
+  "score_mae": 0.564045225,
+  "mean_confidence": 0.7847849,
+  "ece": 0.04994779500000008,
+  "brier": 0.10562950014349999,
+  "aurc": 0.06754199626611257,
+  "selective_accuracy@50": 0.9628148740503798,
+  "selective_accuracy@80": 0.9016875,
+  "latency_p50_ms": 84.09564149999937,
+  "latency_p95_ms": 246.4413289999925,
+  "cost_per_decision_p50_ms": 84.09564149999937,
+  "cost_per_decision_p95_ms": 246.4413289999925
+ },
+ "after": {
+  "choice_accuracy": 0.148,
+  "noul_accuracy": 0.8636111111111111,
+  "score_mae": 0.49562765000000003,
+  "mean_confidence": 0.7307914000000001,
+  "ece": 0.05050914500000003,
+  "brier": 0.10498873900849999,
+  "aurc": 0.07054943034399011,
+  "selective_accuracy@50": 0.9628148740503798,
+  "selective_accuracy@80": 0.9018247719035121,
+  "latency_p50_ms": 84.9560429999201,
+  "latency_p95_ms": 246.35266699988279,
+  "cost_per_decision_p50_ms": 84.9560429999201,
+  "cost_per_decision_p95_ms": 246.35266699988279
+ },
+ "calibration": {
+  "path": "calibration_v4.json",
+  "sha256": "10ef5945842c7855b941c7a9e46a823ae2d0801e5cc2b8751cf7d865e947b6e5"
+ },
+ "temperature_map": {
+  "temperature": [
+   2.0248754024505615,
+   3.797848701477051,
+   2.4042086601257324
+  ],
+  "temperature_by_options": {
+   "choice:3-5": 2.0248754024505615,
+   "noul:2": 2.4042086601257324,
+   "score:3-5": 3.797848701477051
+  }
+ },
+ "abstention": {
+  "choice:3-5": 1.0,
+  "noul:2": 0.6781,
+  "score:3-5": 1.0
+ },
+ "distribution": {
+  "train_qos": {
+   "QI_LOW_COST": 10201,
+   "QI_CRITICAL": 449,
+   "QI_BALANCED": 1350
+  },
+  "test_qos": {
+   "QI_LOW_COST": 1695,
+   "QI_BALANCED": 240,
+   "QI_CRITICAL": 65
+  },
+  "train_complexity": {
+   "2": 4825,
+   "1": 2331,
+   "0": 4604,
+   "3": 240
+  },
+  "train_planning": {
+   "True": 2701,
+   "False": 9299
+  }
+ },
+ "note": "holdout = split TEST oficial do SPROUT (dados reais, nunca vistos no fit); license do SPROUT sem campo explícito"
+}

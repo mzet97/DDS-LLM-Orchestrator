@@ -78,7 +78,7 @@ async fn agent_claim_process_complete_e2e() {
         target_agent_prefix: String::new(),
     };
     let runtime = Arc::new(AgentDds::new(config).unwrap());
-    let _hb = runtime.clone().spawn_heartbeat();
+    let _hb = runtime.clone().spawn_heartbeat(Duration::from_secs(5));
     let engine = Arc::new(MockEngine::new("chunk", 3, 10));
     let runtime2 = Arc::clone(&runtime);
     let claim_loop = tokio::spawn(async move { runtime2.run(engine).await });

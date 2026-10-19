@@ -45,7 +45,10 @@ mod app {
         dds_secure: bool,
         #[arg(long)]
         dds_security_dir: Option<PathBuf>,
-        #[arg(long, default_value = "nfcm")]
+        /// Gestor de QoS do control loop. DEFAULT "static" desde T-900-M7-02
+        /// (fuzzy/NFCM é LEGADO restrito a reprodução: use nfcm|zadeh|fcm|
+        /// fcm-dhl explicitamente para reexecutar experimentos históricos).
+        #[arg(long, default_value = "static")]
         qos_manager: String,
         #[arg(long)]
         qos_profile: Option<String>,
@@ -54,6 +57,22 @@ mod app {
         /// EXP1b: despacho central emulado (orquestrador fixa target_agent).
         #[arg(long)]
         dispatch_mode: bool,
+        /// O-4: idade sem heartbeat que marca um agente como morto no
+        /// registry monitor (reap_dead_agents). Default 15 s (comportamento
+        /// histórico). Piso prático da reatribuição = lease DDSI de ownership.
+        #[arg(long, default_value_t = 15_000)]
+        agents_stale_after_ms: u64,
+        /// O-5: período do check do registry monitor (semântica CORRIGIDA:
+        /// é o check_every do reaper, default 2 s — o default 15000 antigo
+        /// estava trocado com o stale_after).
+        #[arg(long, default_value_t = 2_000)]
+        registry_interval_ms: u64,
+        /// O-5: período do control loop de QoS (só gestores fuzzy legados).
+        #[arg(long, default_value_t = 2_000)]
+        control_interval_ms: u64,
+        /// O-5: período do qos monitor (telemetria T1–T6).
+        #[arg(long, default_value_t = 5_000)]
+        qos_interval_ms: u64,
     }
 
     #[cfg(feature = "security")]
@@ -148,12 +167,25 @@ mod app {
                 .with_fuzzy_routing(args.fuzzy_routing)
                 .with_dispatch_mode(args.dispatch_mode),
         );
-        let background = vec![
+        // T-900-M7-02: o control loop NFCM só sobe para gestores FUZZY
+        // legados (reprodução explícita). Com "static" (novo default) não há
+        // mutação de knobs em runtime — QoS estrutural fixa (ADR-002) e o
+        // monitoramento segue em spawn_qos_monitor/registry_monitor.
+        let static_manager = args.qos_manager == "static";
+        let mut background = vec![
             orchestrator.spawn_cache_feeders(),
-            orchestrator.spawn_registry_monitor(Duration::from_secs(15), Duration::from_secs(2)),
-            orchestrator.spawn_control_loop(Duration::from_secs(2)),
-            orchestrator.spawn_qos_monitor(Duration::from_secs(5)),
+            orchestrator.spawn_registry_monitor(
+                Duration::from_millis(args.agents_stale_after_ms),
+                Duration::from_millis(args.registry_interval_ms),
+            ),
         ];
+        if !static_manager {
+            background.push(
+                orchestrator.spawn_control_loop(Duration::from_millis(args.control_interval_ms)),
+            );
+        }
+        background
+            .push(orchestrator.spawn_qos_monitor(Duration::from_millis(args.qos_interval_ms)));
         let backend: Arc<dyn HttpBackend> = orchestrator;
         let app = http::router(http_config.clone(), backend);
         let address = http_config.socket_addr();

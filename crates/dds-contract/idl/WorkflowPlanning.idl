@@ -1,0 +1,359 @@
+// WorkflowPlanning.idl
+// Contrato do roteamento adaptativo Laya/DDS (fase 900, T-900-M1-01).
+//
+// Fonte da proposta: specs/900-laya-adaptive-routing/contracts.md (revisão M0-1).
+// Módulo IDL: dds_llm_workflow_v1. Cinco tópicos novos; NÃO substitui nem edita
+// OrchestratorV4.idl / OrchestratorDDS.idl (19 tópicos existentes preservados).
+//
+// Tópicos (ownership DDS Shared em todos):
+//   Workflow.Intent     -> dds_llm_workflow_v1::WorkflowIntent     (chave: request_id)
+//   Routing.Decision    -> dds_llm_workflow_v1::RoutingDecision    (chaves: request_id, decision_id)
+//   Agent.Capabilities  -> dds_llm_workflow_v1::AgentCapabilities  (chave: agent_id)
+//   Workflow.Plan       -> dds_llm_workflow_v1::WorkflowPlan       (chaves: workflow_id, plan_revision)
+//   Workflow.State      -> dds_llm_workflow_v1::WorkflowState      (chaves: workflow_id, plan_revision)
+//
+// Restrições de sintaxe verificadas nos geradores (T-900-M1-01, 2026-10-16):
+// - NÃO usar valores default de membro (`= 1`): idlc C 11.0.1 rejeita (syntax
+//   error) e cyclonedds-build 3.0.1 rejeita ("Expected Semi, got Assign").
+//   `schema_version = 1` é valor OBRIGATÓRIO garantido por contrato/validação
+//   (fixture + receptor), não por sintaxe IDL — mesmo precedente das consts
+//   TASK_PRIORITY_* do OrchestratorV4.idl.
+// - `@final` em TODAS as structs: sem ela o idlc C emite warning de
+//   extensibilidade implícita; no gerador Rust a anotação é aceita e ignorada.
+// - EMENDA 3 (M1-02, 2026-10-17): campos de ENUM nas structs viram `long`
+//   carregando o ORDINAL do enum declarado. Motivo: cyclonedds 3.0.1 não
+//   implementa `DdsType` para enums (DdsEnumDerive), então structs de tópico
+//   com campo enum-tipado não compilam — mesmo precedente do V4
+//   (`Task.status: long // TaskStatus`, `Task.model_required: long`).
+//   Ordinais canônicos continuam nos enums declarados abaixo; o receptor
+//   valida a faixa (regra de contrato, D10). O encoding de digest do ordinal
+//   (u32 BE) é byte-idêntico ao `long` para os valores válidos (verificado:
+//   os 15 vetores golden permaneceram com hashes idênticos após a emenda).
+// - EMENDA à proposta M0-1 (contracts.md): literais de enum GANHAM PREFIXO
+//   (IC_/QI_/DS_/RC_/NK_/WS_/NS_) porque literais IDL vivem no escopo do
+//   módulo e colidem entre enums (idlc C 11.0.1: "Declaration 'CANCELLED'
+//   collides with an earlier declaration" — ReasonCode/WorkflowStatus/
+//   NodeStatus compartilham CANCELLED/IN_DOUBT/RUNNING/DONE/FAILED).
+//   ORDINAIS e semântica mantidos exatamente como em contracts.md; mesmo
+//   precedente dos prefixos TS_/AH_/FR_ do OrchestratorV4.idl. O parser
+//   interno do cyclonedds-build é leniente quanto a essa regra — divergência
+//   registrada em evidence/m1-01.
+//
+// Divergência conhecida (evidence m1-01): cyclonedds-build 3.0.1 gera DdsString
+// SEM o bound para `string<N>` (bounds de sequence são preservados como
+// DdsBoundedSequence<T,N>); idlc C e idlpy Python preservam o bound. Impacto
+// em TypeIds XTypes a tratar no gate de interop M1 (R-INTEROP).
+
+module dds_llm_workflow_v1 {
+
+    // ============================================================
+    // Enums compartilhados
+    // ============================================================
+
+    // Workflow.Intent: comando imutável da intenção.
+    enum IntentCommand {
+        IC_SUBMIT,   // 0 - submeter workflow (intent_revision=1, expected_plan_revision=0)
+        IC_CANCEL    // 1 - cancelar workflow existente (novo request_id, prompt vazio)
+    };
+
+    // Objetivo semântico de QoS escolhido pelo Laya (validado pelo Rust).
+    // NÃO é configuração DDS nativa por amostra (ADR-002).
+    enum QosIntent {
+        QI_BALANCED,      // 0
+        QI_CRITICAL,      // 1
+        QI_STREAM_LIKE,   // 2
+        QI_LOW_COST,      // 3
+        QI_FAILOVER       // 4
+    };
+
+    // Routing.Decision: previsão ou erro tipado.
+    enum DecisionStatus {
+        DS_OK,       // 0 - previsão válida (distribuições completas/consistentes)
+        DS_ERROR     // 1 - erro (reason_code != RC_NONE; campos de previsão ignorados)
+    };
+
+    // Causas tipadas compartilhadas por decisão/estado (ordem congelada).
+    enum ReasonCode {
+        RC_NONE,                  // 0
+        RC_INVALID_INPUT,         // 1
+        RC_MODEL_UNAVAILABLE,     // 2
+        RC_TIMEOUT,               // 3
+        RC_SCHEMA_MISMATCH,       // 4
+        RC_POLICY_DENIED,         // 5
+        RC_LOW_CONFIDENCE,        // 6
+        RC_EXPIRED,               // 7
+        RC_CAPABILITY_UNAVAILABLE,// 8
+        RC_OVERLOADED,            // 9
+        RC_CONFLICT,              // 10
+        RC_INVALID_PLAN,          // 11
+        RC_OUTPUT_INVALID,        // 12
+        RC_IN_DOUBT,              // 13
+        RC_CANCELLED              // 14
+    };
+
+    // Workflow.Plan: tipo de execução do nó. TOOL fica rejeitado pelo
+    // validador até o gate de idempotência/autorização (V10).
+    enum NodeKind {
+        NK_INFERENCE,   // 0
+        NK_TOOL         // 1
+    };
+
+    // Workflow.State: ciclo de vida do workflow (projeção monotônica).
+    enum WorkflowStatus {
+        WS_ACCEPTED,         // 0
+        WS_WAITING_DECISION, // 1
+        WS_WAITING_PLAN,     // 2
+        WS_RUNNING,          // 3
+        WS_DONE,             // 4
+        WS_FAILED,           // 5
+        WS_CANCELLED,        // 6
+        WS_IN_DOUBT          // 7
+    };
+
+    // Workflow.State: estado por nó (deriva do journal; nunca autorização isolada).
+    enum NodeStatus {
+        NS_BLOCKED,    // 0
+        NS_READY,      // 1
+        NS_PUBLISHED,  // 2
+        NS_ASSIGNED,   // 3
+        NS_RUNNING,    // 4
+        NS_DONE,       // 5
+        NS_FAILED,     // 6
+        NS_CANCELLED,  // 7
+        NS_IN_DOUBT    // 8
+    };
+
+    // ============================================================
+    // Structs de suporte (aninhadas, imutáveis em V1 — @final)
+    // ============================================================
+
+    // Distribuição sobre perfis de QoS; cada perfil aparece uma vez (max 5).
+    @final
+    struct ProfileProbability {
+        long profile;                        // QosIntent ordinal (0..4)
+        double probability;    // finito em [0,1]; distribuição soma 1 (tol. 1e-6)
+    };
+
+    // Probabilidade POR capacidade (não boolean); sem duplicatas (max 16).
+    @final
+    struct CapabilityProbability {
+        string<64> capability_id;     // Label: identificador de catálogo versionado
+        double probability;
+        double answer_confidence;
+    };
+
+    // Versões de ferramentas anunciadas pelo agente (max 32).
+    @final
+    struct ToolVersion {
+        string<64> tool_id;     // Label
+        string<64> version;
+    };
+
+    // Referência a saída declarada de nó predecessor.
+    @final
+    struct InputRef {
+        string<64> producer_node_id;    // Id
+        string<64> output_name;         // Label declarado em output_names
+    };
+
+    // Saída validada de nó; context_ref resolve apenas snapshot existente.
+    @final
+    struct OutputRef {
+        string<64> name;             // Label
+        string<256> context_ref;     // Ref opaca validada localmente
+        string<64> content_hash;     // Digest SHA-256 hex
+        unsigned long byte_count;
+        string<70> source_task_id;   // TaskId: "laya1-" + SHA-256 hex (64)
+    };
+
+    // Nó do plano validado (max 32 nós, depth<=16, fan-out<=8).
+    @final
+    struct PlanNode {
+        string<64> node_id;                        // Id único no plano
+        long kind;                                // NodeKind ordinal (0..1): INFERENCE ou TOOL
+        sequence<string<64>, 16> required_capabilities;   // Labels do catálogo
+        string<256> model_id;                      // ModelId
+        string<64> target_agent_id;                // vazio = agentes por capacidade; preenchido = igualdade exata (sem prefix)
+        string<8192> prompt_template;
+        sequence<string<64>, 32> dependencies;     // node_ids predecessores, sem dup/ciclo
+        sequence<InputRef, 16> inputs;             // outputs declarados de predecessores
+        sequence<string<64>, 8> output_names;      // Labels declarados
+        unsigned short max_attempts;               // 1..3
+        unsigned long long deadline_ns;            // <= deadline do workflow
+        unsigned long max_tokens;                  // teto gerado POR TENTATIVA
+        unsigned long max_output_bytes;            // <= 1 MiB
+        string<256> security_context_ref;          // não amplia intent/policy
+        long priority;                             // escala de aplicação 1/5/10
+        string<64> side_effect_key;                // determinística; exigida p/ TOOL
+    };
+
+    // Estado por nó (projeção do journal pelo engine).
+    @final
+    struct NodeState {
+        string<64> node_id;             // Id
+        long status;                        // NodeStatus ordinal (0..8)
+        unsigned long attempt_id;       // 0 antes da 1a tentativa; depois 1..max_attempts
+        string<70> task_id;             // TaskId físico por tentativa (idempotência)
+        string<64> assigned_agent_id;
+        boolean ready;                  // projeção de validação, não autorização
+        unsigned long long started_at_ns;
+        unsigned long long completed_at_ns;
+        sequence<OutputRef, 8> outputs;
+        long reason_code;                      // ReasonCode ordinal (0..14)
+    };
+
+    // ============================================================
+    // Tópico Workflow.Intent
+    // ============================================================
+    // Comando imutável do ingresso autorizado Rust. SUBMIT inicial usa
+    // intent_revision=1 e expected_plan_revision=0. Republicação com mesmo
+    // request_id exige mesmo conteúdo/payload_hash. max_tokens é o teto TOTAL
+    // de tokens gerados pelo workflow (planner + todas as tentativas);
+    // max_cost_microunits=0 significa orçamento ZERO, não ilimitado.
+    // fallback_template_id vazio = rejeição em fallback, nunca escolha automática.
+
+    @final
+    struct WorkflowIntent {
+        @key string<64> request_id;              // Id ASCII não vazio
+        string<64> workflow_id;
+        string<64> client_id;
+        unsigned short schema_version;           // valor obrigatório 1 em V1 (validado por contrato)
+        unsigned long intent_revision;           // Revision: começa em 1, não recicla
+        long command;                        // IntentCommand ordinal (0..1)
+        unsigned long expected_plan_revision;    // 0 no SUBMIT; revisão exata no CANCEL
+        string<65536> prompt;                    // UTF-8; bytes <= bound; sem truncamento
+        unsigned long long created_at_ns;        // Unix epoch ns
+        unsigned long long deadline_ns;
+        string<256> security_context_ref;        // Ref validada localmente
+        unsigned long policy_revision;
+        unsigned long questions_revision;
+        unsigned long capability_catalog_revision;
+        string<64> checkpoint_revision;          // Digest SHA-256 hex
+        unsigned long max_tokens;                // teto agregado do workflow
+        unsigned long long max_cost_microunits;  // teto na budget_unit
+        string<64> budget_unit;                  // Label da moeda/unidade aprovada
+        string<64> fallback_template_id;
+        string<64> payload_hash;                 // Digest (preimage exclui payload_hash)
+    };
+
+    // ============================================================
+    // Tópico Routing.Decision
+    // ============================================================
+    // Previsão ou erro imutável do worker Laya. Válida apenas para as revisões
+    // esperadas e dentro de valid_until_ns (<= deadline da intenção). Erro usa
+    // reason_code != NONE e ignora campos de previsão. calibration_revision
+    // vazia só é aceita em shadow. Várias instâncias Laya podem publicar a
+    // mesma chave; idempotência/decisão efetiva são resolvidas pelo journal do
+    // engine (sem consensus implícito).
+
+    @final
+    struct RoutingDecision {
+        @key string<64> request_id;
+        @key string<64> decision_id;
+        string<64> workflow_id;
+        unsigned short schema_version;           // obrigatório 1 em V1
+        unsigned long intent_revision;
+        string<64> producer_id;
+        string<256> model_id;                    // ModelId sem credenciais
+        string<64> checkpoint_revision;          // Digest
+        unsigned long questions_revision;
+        unsigned long policy_revision;
+        unsigned long capability_catalog_revision;
+        long qos_profile;                        // QosIntent ordinal (0..4) — escolha única do Laya
+        sequence<ProfileProbability, 5> qos_probabilities;          // cada perfil 1x
+        sequence<CapabilityProbability, 16> capability_probabilities; // sem duplicatas
+        double requires_planning_probability;    // noul: probabilidade, não boolean
+        double priority_score;                   // score esperado [0,2]; sem arredondar
+        sequence<double, 3> priority_probabilities;   // LOW/NORMAL/HIGH
+        double confidence;                       // != answer_confidence (docs Laya)
+        double answer_confidence;
+        string<64> calibration_revision;
+        unsigned long long created_at_ns;
+        unsigned long long valid_until_ns;
+        long decision_status;                  // DecisionStatus ordinal (0..1)
+        long reason_code;                      // ReasonCode ordinal (0..14)
+        string<64> evidence_digest;              // Digest
+        string<64> payload_hash;                 // Digest (preimage exclui payload_hash)
+    };
+
+    // ============================================================
+    // Tópico Agent.Capabilities
+    // ============================================================
+    // Snapshot substituível de capacidades semânticas do agente (distinto de
+    // ModelSpecialization). announcement_revision crescente; expires em até
+    // 10 s (heartbeat 5 s). Saúde/slots/especialização continuam em
+    // AgentRegistry (não duplicados aqui). Anúncio NÃO concede permissão.
+
+    @final
+    struct AgentCapabilities {
+        @key string<64> agent_id;
+        unsigned short schema_version;           // obrigatório 1 em V1
+        unsigned long announcement_revision;     // crescente
+        unsigned long capability_catalog_revision;
+        sequence<string<64>, 64> capabilities;   // Labels do catálogo autorizado
+        sequence<string<256>, 16> model_ids;     // ModelIds
+        sequence<ToolVersion, 32> tool_versions;
+        unsigned short adaptive_protocol_version;    // 1 em V1
+        string<256> security_context_ref;
+        unsigned long long created_at_ns;
+        unsigned long long valid_until_ns;       // <= created_at_ns + 10 s
+    };
+
+    // ============================================================
+    // Tópico Workflow.Plan
+    // ============================================================
+    // Plano validado imutável por revisão. planner_id="static-template" para
+    // plano direto sem LLM (planner_revision = hash do template); isso NÃO
+    // atribui o plano ao Laya. A soma conservadora
+    // reserva_planner + Σ(node.max_tokens × node.max_attempts) deve caber no
+    // max_tokens da intenção; caso contrário o plano é inválido.
+
+    @final
+    struct WorkflowPlan {
+        @key string<64> workflow_id;
+        @key unsigned long plan_revision;        // Revision: 1 no plano confirmado V1
+        unsigned short schema_version;           // obrigatório 1 em V1
+        string<64> request_id;
+        unsigned long intent_revision;
+        string<64> effective_decision_id;
+        unsigned long policy_revision;
+        unsigned long capability_catalog_revision;
+        string<256> planner_id;                  // ModelId ou "static-template"
+        string<64> planner_revision;             // Digest
+        unsigned long long created_at_ns;
+        unsigned long long deadline_ns;
+        long qos_profile;                     // QosIntent ordinal (0..4)
+        sequence<PlanNode, 32> nodes;            // max 32 nós
+        string<64> plan_hash;                    // Digest (preimage exclui apenas plan_hash)
+    };
+
+    // ============================================================
+    // Tópico Workflow.State
+    // ============================================================
+    // Projeção monotônica por state_revision (mesmo número com conteúdo
+    // diferente é conflito). Antes de plano validado: plan_revision=0, nodes
+    // vazio, plan_hash vazio (agentes NUNCA executam a partir desse estado).
+    // Estado terminal publicado antes de disposal. Negação de admissão usa
+    // FAILED + POLICY_DENIED.
+
+    @final
+    struct WorkflowState {
+        @key string<64> workflow_id;
+        @key unsigned long plan_revision;
+        unsigned short schema_version;           // obrigatório 1 em V1
+        unsigned long state_revision;            // monotônica
+        string<64> request_id;
+        string<64> effective_decision_id;
+        string<64> plan_hash;                    // vazio antes de plano confirmado
+        long status;                      // WorkflowStatus ordinal (0..7)
+        long reason_code;                      // ReasonCode ordinal (0..14)
+        sequence<NodeState, 32> nodes;
+        unsigned long long created_at_ns;
+        unsigned long long updated_at_ns;
+        unsigned long long expires_at_ns;
+        string<64> cancelled_by_request_id;      // vazio se não cancelado
+        string<64> effective_qos_config_hash;    // hash da configuração DDS efetiva
+        string<64> fallback_template_id;         // template usado, se houver
+    };
+
+};

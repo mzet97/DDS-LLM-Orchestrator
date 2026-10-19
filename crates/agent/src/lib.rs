@@ -9,6 +9,7 @@
 //! - `claim`: Claim loop, seleção, confirmação de ownership
 //! - `heartbeat`: Heartbeat dedicado (AgentState a cada 5s)
 
+pub mod adaptive;
 pub mod claim;
 pub mod engine;
 pub mod engine_http;

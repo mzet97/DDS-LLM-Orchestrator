@@ -25,3 +25,7 @@
 2. `spec.md` REQ-803/804 foram marcados como entregues (T-800-04/05) — o texto original os deixava "(planejado)".
 3. Painel "Catálogo" local foi removido (fase 830, T-830-04): duplicava em leitura o painel Compartilhado.
 4. O prompt mestre proíbe declarar 100% sem evidência remota (linha 1112) — este REPORT não o faz.
+
+## Adendo 2026-10-18 — MSRV dos testes da GUI (MEDIUM da revisão)
+
+A exceção continua válida e agora está registrada como decisão: `egui_kittest 0.36.2` (par do egui 0.36) exige rustc ≥1.95 apenas em dev-dependencies. O código de produção do workspace permanece em `rust-version = 1.85`. Consequência operacional: `cargo test -p orchestrator-studio` exige toolchain ≥1.95; os demais crates testam em 1.85. Não há downgrade viável do kittest sem perder o par com o egui — aceito e documentado, não é pendência de código.

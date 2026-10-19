@@ -1,0 +1,24 @@
+{
+  "rules": {
+    "n": 32,
+    "qos_accuracy": 0.9062,
+    "needs_planning_accuracy": 0.9375
+  },
+  "laya": {
+    "n": 32,
+    "qos_accuracy": 0.75,
+    "needs_planning_accuracy": 0.8125
+  },
+  "planner_only": {
+    "n": 32,
+    "planner_invocations": 23,
+    "plan_validity": 0.7188,
+    "plan_nodes_mean": 2.57
+  },
+  "laya_planner": {
+    "n": 32,
+    "planner_invocations": 9,
+    "plan_validity": 1.0,
+    "plan_nodes_mean": 2.56
+  }
+}

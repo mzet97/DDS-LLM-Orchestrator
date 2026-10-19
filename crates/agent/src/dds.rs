@@ -28,7 +28,23 @@ fn now_ns() -> u64 {
 }
 
 /// Janela de propagação para a confirmação de ownership (readback).
-const CONFIRM_DELAY: Duration = Duration::from_millis(250);
+/// O-2: parametrizável por env (AGENT_CONFIRM_DELAY_MS). Default 50 ms desde
+/// O-2: a segurança contra dupla-execução vem da REVALIDAÇÃO pré-claim no
+/// mesh (read_task_mesh), não da janela — a janela só arbitra claims
+/// SIMULTÂNEOS (propagação ao RHC é escala de ms). Default histórico: 250 ms
+/// (medido com revalidação no mesh: 50 ms → 0 duplas/300 e p50 −51% sob
+/// rajada 100-concorrente; ver specs/905-otimizacao/o2/).
+fn confirm_delay() -> Duration {
+    static V: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *V.get_or_init(|| {
+        Duration::from_millis(
+            std::env::var("AGENT_CONFIRM_DELAY_MS")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(50),
+        )
+    })
+}
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Timeout do ack do write final de TaskOutput (RUST-PROTO-005): se o pool
@@ -50,6 +66,12 @@ pub struct AgentDds {
     dataspace: Arc<DataSpace>,
     writer_pool: Arc<WriterPool>,
     claim_permits: Arc<Semaphore>,
+    /// T-900-M3-02: barreira adaptativa OPT-IN (`--adaptive`); `None` = o
+    /// caminho legado roda intocado (REQ-900-012: EXP1b/EXP4 preservados).
+    adaptive: Option<Arc<crate::adaptive::AdaptiveBarrier>>,
+    /// T-900 (V06): tasks laya1- que chegaram ANTES de Plan/State (barreira
+    /// incompleta) — re-checadas pelo sweeper até completar ou vencer.
+    deferred: std::sync::Mutex<Vec<dds_contract::generated::dds_llm_orchestrator::Task>>,
 }
 
 impl AgentDds {
@@ -82,7 +104,54 @@ impl AgentDds {
             agent: Agent::new(config),
             dataspace: Arc::new(dataspace),
             writer_pool: Arc::new(writer_pool),
+            adaptive: None,
+            deferred: std::sync::Mutex::new(Vec::new()),
         })
+    }
+
+    /// T-900-M3-02: liga a barreira adaptativa (builder; sem isso o
+    /// comportamento é 100% legado).
+    pub fn with_adaptive(mut self, barrier: Arc<crate::adaptive::AdaptiveBarrier>) -> Self {
+        self.adaptive = Some(barrier);
+        self
+    }
+
+    pub fn adaptive(&self) -> Option<&Arc<crate::adaptive::AdaptiveBarrier>> {
+        self.adaptive.as_ref()
+    }
+
+    /// Filtro combinado: legado + barreira (se ativa). Usado ANTES do
+    /// enfileiramento e REVALIDADO antes do write de ASSIGNED (RUST-CLAIM-012
+    /// + janela de revogação M3-01).
+    fn claim_eligible(
+        this: &Self,
+        task: &dds_contract::generated::dds_llm_orchestrator::Task,
+        cfg: &ClaimConfig,
+    ) -> bool {
+        if !claim::is_eligible_with(task, cfg, |id| this.agent.is_claimed(id)) {
+            return false;
+        }
+        match &this.adaptive {
+            None => true,
+            Some(barrier) => {
+                // P1 (review PR#10): o `AgentState` autoritativo do PRÓPRIO
+                // agente vem do cache do registry (tópico AgentRegistry,
+                // alimentado pelos heartbeats) — antes `None` pulava as
+                // checagens de saúde/slots/modelo da elegibilidade (M3-01).
+                // Ausente no cache (janela de startup) mantém o comportamento
+                // tolerante anterior (a barreira decide sem o registry).
+                let own_state = this
+                    .dataspace
+                    .caches()
+                    .read_agent(&cfg.agent_id)
+                    .map(|a| (*a).clone());
+                matches!(
+                    barrier.check(task, own_state.as_ref(), &cfg.target_agent_prefix, now_ns(),),
+                    crate::adaptive::AdaptiveDecision::Proceed
+                        | crate::adaptive::AdaptiveDecision::Legacy
+                )
+            }
+        }
     }
 
     pub fn agent(&self) -> &Agent {
@@ -101,7 +170,7 @@ impl AgentDds {
     /// uso a cada ciclo, ambos via `spawn_blocking` (`Command::output` é
     /// bloqueante e não pode rodar direto no runtime async). Falha → log e
     /// mantém zeros/valor anterior (nunca derruba o heartbeat).
-    pub fn spawn_heartbeat(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
+    pub fn spawn_heartbeat(self: &Arc<Self>, period: Duration) -> tokio::task::JoinHandle<()> {
         let ds = Arc::clone(&self.dataspace);
         let status = self.agent.status();
         tokio::spawn(async move {
@@ -109,7 +178,7 @@ impl AgentDds {
             if let Err(e) = tokio::task::spawn_blocking(move || boot.detect_vram()).await {
                 tracing::warn!(error = %e, "heartbeat: detecção de VRAM falhou (mantendo zeros)");
             }
-            let mut interval = tokio::time::interval(Duration::from_secs(5));
+            let mut interval = tokio::time::interval(period);
             loop {
                 interval.tick().await;
                 let cycle = Arc::clone(&status);
@@ -164,6 +233,9 @@ impl AgentDds {
             })
         };
 
+        // T-900 (V06): tx do sweeper ANTES da ingestão (que move o original).
+        let sweeper_tx = tx.clone();
+
         // Ingestão: drena o stream DDS para a fila bounded.
         let ingestion = {
             let this = Arc::clone(&self);
@@ -174,7 +246,24 @@ impl AgentDds {
                     // T-820-09: point-check de claimed (sem clonar o HashSet
                     // por amostra DDS — era `claimed_set().await` aqui, uma
                     // cópia O(n) no hot loop).
-                    if !claim::is_eligible_with(&task, &cfg, |id| this.agent.is_claimed(id)) {
+                    if !Self::claim_eligible(&this, &task, &cfg) {
+                        // T-900 (V06): barreira INCOMPLETA (task antes de
+                        // Plan/State no snapshot) NÃO descarta — o take()
+                        // consumiu a amostra do RHC; diferir para re-checar
+                        // quando a barreira completar.
+                        if let Some(barrier) = this.adaptive.as_ref() {
+                            if matches!(
+                                barrier.check(&task, None, &cfg.target_agent_prefix, now_ns(),),
+                                crate::adaptive::AdaptiveDecision::Block(
+                                    crate::adaptive::Blocked::UnresolvedNode
+                                )
+                            ) {
+                                let mut d = this.deferred.lock().expect("deferred");
+                                if d.len() < 64 {
+                                    d.push((*task).clone());
+                                }
+                            }
+                        }
                         continue;
                     }
                     let queued = QueuedClaim {
@@ -190,6 +279,37 @@ impl AgentDds {
             })
         };
 
+        {
+            let this = Arc::clone(&self);
+            let cfg = claim_cfg.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(1));
+                loop {
+                    interval.tick().await;
+                    let retry: Vec<_> = {
+                        let mut d = this.deferred.lock().expect("deferred");
+                        std::mem::take(&mut *d)
+                    };
+                    for task in retry {
+                        let arc = std::sync::Arc::new(task);
+                        if Self::claim_eligible(&this, &arc, &cfg) {
+                            let _ = sweeper_tx
+                                .send(QueuedClaim {
+                                    task: arc,
+                                    enqueued_at: Instant::now(),
+                                })
+                                .await;
+                        } else {
+                            let mut d = this.deferred.lock().expect("deferred");
+                            if d.len() < 64 {
+                                d.push((*arc).clone());
+                            }
+                        }
+                    }
+                }
+            });
+        }
+
         // Dispatcher: 1 permit por tentativa de claim, com revalidação
         // imediatamente antes do write de ASSIGNED.
         while let Some(queued) = rx.recv().await {
@@ -201,16 +321,28 @@ impl AgentDds {
                 Err(_) => break, // semáforo fechado: encerra o dispatcher
             };
 
-            // Revalidação com estado FRESCO do cache (RUST-CLAIM-012): a
-            // amostra que entrou na fila pode estar obsoleta.
-            let fresh = match self.dataspace.caches().read_task(&task_id) {
-                Some(t) => t,
-                None => {
-                    tracing::debug!(task_id, "claim descartado: task não está no cache");
+            // Revalidação com estado FRESCO DO MESH (O-2/RUST-CLAIM-012): o
+            // CACHE da aplicação é alimentado pelo stream de ingestão, que
+            // sofre backpressure sob rajada (fila 4×slots) — um loser com
+            // backlog validava contra PENDING obsoleto, escrevia ASSIGNED
+            // com writer mais forte e SOBRESCREVIA o estado terminal do
+            // vencedor (Exclusive cuida de força, não de recência) →
+            // dupla-execução (medido 2026-10-18: 7% @250 ms e 13,5% @600 ms
+            // — janela maior = fila drena mais devagar = cache mais velho).
+            // O RHC do reader (read_task_mesh) é independente da fila: lê o
+            // estado ARBITRADO corrente da instância.
+            let fresh = match self.dataspace.read_task_mesh(&task_id) {
+                Ok(Some(t)) => t,
+                Ok(None) => {
+                    tracing::debug!(task_id, "claim descartado: task ausente do mesh");
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!(task_id, error = %e, "claim descartado: falha ao ler mesh");
                     continue;
                 }
             };
-            if !claim::is_eligible_with(&fresh, &claim_cfg, |id| self.agent.is_claimed(id)) {
+            if !Self::claim_eligible(&self, &fresh, &claim_cfg) {
                 continue;
             }
             if fresh.deadline_ns > 0 && fresh.deadline_ns <= now_ns() {
@@ -238,7 +370,7 @@ impl AgentDds {
             let engine = Arc::clone(&engine);
             let claim_cfg = claim_cfg.clone();
             tokio::spawn(async move {
-                this.attempt_claim_and_process(fresh, &claim_cfg, &*engine, permit)
+                this.attempt_claim_and_process(Arc::new(fresh), &claim_cfg, &*engine, permit)
                     .await;
             });
         }
@@ -274,7 +406,7 @@ impl AgentDds {
         // a fila cheia, e não varre o limite global de 256 amostras.
         let confirmation_deadline = Instant::now() + CONFIRM_TIMEOUT;
         let mine = loop {
-            tokio::time::sleep(CONFIRM_DELAY).await;
+            tokio::time::sleep(confirm_delay()).await;
             match self.dataspace.read_task_mesh(&task_id) {
                 Err(e) => {
                     tracing::warn!(task_id, error = %e, "claim: falha ao confirmar ownership");
@@ -475,7 +607,7 @@ impl AgentDds {
                                        // "completion" (lowercase) violava o contrato e o `/sync` do
                                        // orchestrator recebia `FinishReason::parse → None`.
                 final_task.finish_reason = orch_common::FinishReason::Completion.as_str().into();
-                if let Err(e) = self.dataspace.write_task(final_task).await {
+                if let Err(e) = self.dataspace.write_task(final_task.clone()).await {
                     // T-820-09: DONE perdido deixaria a task em RUNNING sem
                     // terminalidade; não há segundo write seguro (o DONE já
                     // falhou) — registra e deixa o reaper de progresso do
@@ -483,13 +615,21 @@ impl AgentDds {
                     self.agent.status().record_failure();
                     anyhow::bail!("falha ao publicar DONE: {e}");
                 }
+                // O-4b: verificação de chegada + republish idempotente. Se
+                // esta task foi HERDADA de um agente morto cujo writer tinha
+                // força maior, o RHC de TODOS os readers (inclusive o nosso)
+                // rejeita o nosso DONE enquanto o lease do writer morto não
+                // expira (~10 s) — o ack do dds_write só cobre transporte,
+                // não arbitragem de ownership. Republicamos até o readback
+                // do MESH mostrar o nosso DONE (bounded ~lease+margem).
+                self.ensure_terminal_visible(&final_task, 3).await;
                 self.agent.status().record_completion(latency_ms);
                 tracing::info!(task_id, latency_ms, "task concluída");
             }
             Some(err_msg) => {
                 final_task.status = 4; // FAILED
                 final_task.finish_reason = err_msg.clone();
-                if let Err(e) = self.dataspace.write_task(final_task).await {
+                if let Err(e) = self.dataspace.write_task(final_task.clone()).await {
                     // T-820-09: se até o FAILED falhar, só resta o log — o
                     // reaper de progresso (T-820-03) é a rede de segurança.
                     tracing::error!(
@@ -498,12 +638,70 @@ impl AgentDds {
                         "falha ao publicar FAILED — task pode ficar sem terminalidade"
                     );
                 }
+                // O-4b: mesma garantia para o FAILED (herança de writer morto).
+                self.ensure_terminal_visible(&final_task, 4).await;
                 self.agent.status().record_failure();
                 anyhow::bail!(err_msg);
             }
         }
 
         Ok(())
+    }
+
+    /// O-4b (PARCIAL, default OFF — ver specs/905-otimizacao/o4b/README.md):
+    /// republish idempotente do terminal até o readback do mesh confirmar.
+    /// No cenário real medido (kill -9 + herança pós-lease), o readback do
+    /// PRÓPRIO sobrevivente já aceita o seu DONE (o republisher nunca dispara)
+    /// e o CLIENTE continua sem receber — a perda está adiante (cliente
+    /// condição dupla DONE+chunk, ou interferência do requeue strength-200
+    /// do orchestrator). Ativar experimentalmente com AGENT_ENSURE_TERMINAL=1.
+    async fn ensure_terminal_visible(&self, task: &Task, want_status: i32) {
+        if std::env::var("AGENT_ENSURE_TERMINAL").is_err() {
+            return;
+        }
+        let task_id = task.task_id.clone();
+        let deadline = Instant::now() + Duration::from_secs(12);
+        let mut attempts = 0u32;
+        loop {
+            match self.dataspace.read_task_mesh(&task_id) {
+                Ok(Some(current))
+                    if current.status == want_status
+                        && current.assigned_agent == task.assigned_agent =>
+                {
+                    if attempts > 0 {
+                        tracing::info!(
+                            task_id,
+                            attempts,
+                            "terminal confirmado no mesh pós-republish"
+                        );
+                    }
+                    return;
+                }
+                Ok(Some(current)) if current.status == 3 || current.status == 4 => {
+                    // terminal por outro dono: recuperação paralela venceu
+                    tracing::info!(
+                        task_id,
+                        status = current.status,
+                        "terminal publicado por outro dono"
+                    );
+                    return;
+                }
+                _ => {}
+            }
+            if Instant::now() >= deadline {
+                tracing::warn!(
+                    task_id,
+                    attempts,
+                    "terminal não visível no mesh pós prazo (republisher exausto)"
+                );
+                return;
+            }
+            attempts += 1;
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            if let Err(e) = self.dataspace.write_task(task.clone()).await {
+                tracing::warn!(task_id, error = %e, "republish do terminal falhou");
+            }
+        }
     }
 
     /// T-820-09: publica FAILED best-effort em caminhos de erro pós-claim.

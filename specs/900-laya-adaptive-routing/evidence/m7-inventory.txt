@@ -1,0 +1,6 @@
+qos-nfcm v0.1.0 (/var/mnt/HD1TB/tese/src/rust/crates/qos-nfcm)
+├── benchmarks v0.1.0 (/var/mnt/HD1TB/tese/src/rust/crates/benchmarks)
+└── orchestrator v0.1.0 (/var/mnt/HD1TB/tese/src/rust/crates/orchestrator)
+---
+0
+deps qos-nfcm no caminho 900 (grep manifests): 0

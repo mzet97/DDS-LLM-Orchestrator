@@ -1,0 +1,67 @@
+[
+ {
+  "t": 0.0,
+  "event": "llama-server starting"
+ },
+ {
+  "t": 65.0,
+  "event": "llama-server healthy"
+ },
+ {
+  "t": 65.0,
+  "event": "wf-run started"
+ },
+ {
+  "t": 65.0,
+  "event": "laya-worker started (real)"
+ },
+ {
+  "t": 65.0,
+  "event": "agent started (--adaptive, http engine)"
+ },
+ {
+  "t": 72.7,
+  "event": "2 intents published"
+ },
+ {
+  "t": 112.6,
+  "event": "wf-run exited",
+  "rc": 0
+ },
+ {
+  "t": 112.6,
+  "event": "wf-run result",
+  "failed": "",
+  "terminal": true,
+  "workflow": "wf-e2e-2"
+ },
+ {
+  "t": 112.6,
+  "event": "wf-run result",
+  "failed": "",
+  "terminal": true,
+  "workflow": "wf-e2e-1"
+ },
+ {
+  "t": 112.6,
+  "event": "worker stats",
+  "shadow": {
+   "intents_seen": 2,
+   "decisions_ok": 2,
+   "decisions_error": 0,
+   "tasks_written": 0
+  },
+  "tasks_written": 0
+ },
+ {
+  "t": 112.6,
+  "event": "agent log",
+  "claims": 0,
+  "lines": 8
+ },
+ {
+  "t": 112.6,
+  "event": "E2E RESULTADO",
+  "PASS": true
+ }
+]

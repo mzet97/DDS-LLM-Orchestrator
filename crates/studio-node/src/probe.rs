@@ -51,7 +51,7 @@ impl Probe for FakeProbe {
     fn is_active(&self, service: &str) -> bool {
         self.states
             .lock()
-            .expect("sonda acessivel")
+            .unwrap_or_else(|p| p.into_inner())
             .get(service)
             .copied()
             .unwrap_or(false)

@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="pt-BR" data-theme="auto">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DDS-LLM Orchestrator - Painel de Controle</title>
+<style>
+:root{color-scheme:dark;--bg:#10151f;--panel:#171e2c;--line:#2b3648;--txt:#e9edf3;--mut:#9aa7ba;--acc:#4cc2ff;--ok:#3fb97f;--bad:#e05d5d}
+[data-theme="light"]{color-scheme:light;--bg:#f2f4f7;--panel:#ffffff;--line:#d4dae2;--txt:#1c2431;--mut:#5d6b7f;--acc:#0369a1}
+*{box-sizing:border-box}body{margin:0;font-family:ui-sans-system,system-ui,sans-serif;background:var(--bg);color:var(--txt)}
+header{display:flex;align-items:center;gap:16px;padding:10px 18px;border-bottom:1px solid var(--line);background:var(--panel);flex-wrap:wrap}
+header h1{font-size:16px;margin:0}header small{color:var(--mut)}
+nav{display:flex;gap:4px}nav a{color:var(--mut);text-decoration:none;padding:7px 11px;border-radius:6px}nav a.active{color:var(--acc);background:rgba(76,194,255,.12)}
+main{max-width:1080px;margin:0 auto;padding:18px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;margin-bottom:12px}
+button{background:var(--panel);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:6px 12px;cursor:pointer}button:hover{border-color:var(--acc)}
+input,select,textarea{background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:7px;padding:7px 9px}
+textarea{width:100%;min-height:100px}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto;max-height:340px;white-space:pre-wrap}
+.mut{color:var(--mut);font-size:13px}.run{color:var(--ok)}.stop{color:var(--bad)}.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:8px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}.big{font-size:24px;font-weight:700}
+#toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:6px}.toast{background:var(--panel);border:1px solid var(--acc);border-radius:8px;padding:9px 13px}
+footer{max-width:1080px;margin:0 auto;padding:10px 18px;color:var(--mut);font-size:12px}
+</style>
+<script>
+const savedTheme = JSON.parse(localStorage.getItem('cp_user_config')||'{}').theme;
+if(savedTheme) document.documentElement.dataset.theme = savedTheme;
+function toast(m){const d=document.createElement('div');d.className='toast';d.textContent=m;document.getElementById('toasts').appendChild(d);setTimeout(()=>d.remove(),4000)}
+async function api(method,path,body){const r=await fetch(path,{method,headers:{'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d}
+function esc(s){return String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]))}
+function fmtUp(s){if(s==null)return'–';s=Math.floor(s);const h=Math.floor(s/3600),m=Math.floor(s%3600/60);return h?h+'h '+m+'m':(m?m+'m '+(s%60)+'s':s+'s')}
+function toggleTheme(){const cur=document.documentElement.dataset.theme==='light'?'dark':'light';document.documentElement.dataset.theme=cur;const cfg=JSON.parse(localStorage.getItem('cp_user_config')||'{}');cfg.theme=cur;localStorage.setItem('cp_user_config',JSON.stringify(cfg));api('POST','/api/settings',{theme:cur}).catch(()=>{})}
+</script>
+</head>
+<body>
+<header>
+  <div><h1>DDS-LLM Orchestrator</h1><small>Painel de Controle</small></div>
+  <nav>
+    <a href="/" data-nav="/">Dashboard</a><a href="/services" data-nav="/services">Serviços</a><a href="/tests" data-nav="/tests">Testes</a><a href="/chat" data-nav="/chat">Chat</a><a href="/vms" data-nav="/vms">Cluster</a><a href="/settings" data-nav="/settings">Config</a>
+  </nav>
+  <span style="flex:1"></span><span class="mut" id="op-status"></span>
+  <button onclick="toggleTheme()" title="Alternar tema">Tema</button>
+</header>
+<script>document.querySelectorAll('[data-nav]').forEach(a=>{if(a.dataset.nav===location.pathname)a.classList.add('active')});function setBusy(b){document.getElementById('op-status').textContent=b?'operação em andamento…':'';document.title=(b?'● ':'')+'DDS-LLM Orchestrator - Painel de Controle'}</script>
+<main>
+
+<h2>Configurações do painel</h2>
+<div class="card"><div id="view" class="mut">carregando…</div></div>
+<div class="card"><h3>Preferências</h3>
+<div class="row"><label>Tema <select id="theme"><option>auto</option><option>light</option><option>dark</option></select></label>
+<label>Preset padrão <input id="defaultPreset" type="text" placeholder="minimal"></label>
+<label>Refresh (ms) <input id="refreshMs" type="number" value="5000" min="500"></label>
+<button id="save">Salvar</button></div>
+<h3>Configuração bruta (JSON)</h3><pre id="raw">{}</pre></div>
+<script>
+async function load(){
+  const s=await api('GET','/api/settings');
+  document.getElementById('raw').textContent=JSON.stringify(s,null,2);
+  document.getElementById('view').innerHTML='Painel/supervisor: '+esc(s.supervisor.host)+':'+s.supervisor.port+' · DDS domínio '+s.dds.domain+'<br>Inventário: '+esc(s.paths.ansible_inventory)+'<br>Logs: '+esc(s.paths.log_dir)+'<br>Modelo: '+esc(s.model.llama_model_path);
+  const u=s.user_config||{}; if(u.theme) document.getElementById('theme').value=u.theme; if(u.default_preset) document.getElementById('defaultPreset').value=u.default_preset; if(u.refresh_interval_ms) document.getElementById('refreshMs').value=u.refresh_interval_ms;
+}
+document.getElementById('save').onclick=async()=>{
+  const payload={theme:document.getElementById('theme').value, default_preset:document.getElementById('defaultPreset').value, refresh_interval_ms:+document.getElementById('refreshMs').value};
+  const r=await api('POST','/api/settings',payload);
+  localStorage.setItem('cp_user_config',JSON.stringify(payload));
+  document.documentElement.dataset.theme = payload.theme==='auto' ? 'dark' : payload.theme;
+  toast('salvo: '+(r.saved||[]).join(', ')); load();
+};
+load();
+</script>
+
+</main>
+<footer>v0.2.0 — DDS-LLM Orchestrator Control Panel (Rust)</footer>
+<div id="toasts" role="status" aria-live="polite"></div>
+</body>
+</html>

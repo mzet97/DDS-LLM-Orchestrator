@@ -1,0 +1,17 @@
+{
+  "runs": 5,
+  "arms": {
+    "static/rules": {
+      "qos_accuracy_mean": 0.9062,
+      "p50_ms_mean": 0,
+      "p95_ms_max": 0,
+      "outliers_total": 1
+    },
+    "laya": {
+      "qos_accuracy_mean": 0.75,
+      "p50_ms_mean": 1317,
+      "p95_ms_max": 1661,
+      "outliers_total": 10
+    }
+  }
+}

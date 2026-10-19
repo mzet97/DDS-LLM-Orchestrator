@@ -154,11 +154,18 @@ certificates are test fixtures only; do not reuse them in production.
 | `mcp-gateway` | Routes MCP tool calls (filesystem/github/web) with policy enforcement |
 | `observability` | Collects QoS metrics, violations, and execution traces |
 | `benchmarks` | Generates load (Poisson/burst traffic) and drives validation scenarios |
+| `workflow-engine` | Fase 900 (Laya adaptive routing): validator de `Routing.Decision` com pin de calibração, journal SQLite transacional, DAG validator, planner HTTP — ver `specs/900-laya-adaptive-routing/` |
+| `studio-*` (`orchestrator-studio`, `studio-core`, `studio-node`) | Studio: GUI egui multi-host (19º tópico `Studio.NodePresence`) + daemon de instalações |
+
+Extras fora de `crates/`: `workers/laya-worker/` (worker Python Laya real + harness de
+calibração/interop/E2E da fase 900) e `specs/905-otimizacao/` (evidências das otimizações
+O-1/O-2/O-4b do plano de otimização do orquestrador).
 
 ## Configuration
 
 - DDS transport configs live in the main project at `src/llama_cpp/dds/cyclonedds-*.xml` and `config/dds/`; this Rust workspace consumes the same topic namespace but does not ship the C++ server configs
 - Set transport via: `CYCLONEDDS_URI=file://path/to/cyclonedds-*.xml`
+- **Todos os processos de um mesmo teste DEVEM usar a mesma `CYCLONEDDS_URI`** (config divergente entre processos = zero descoberta mútua; o default do host mira uma NIC stale — lição O-1, ver `specs/905-otimizacao/o1/README.md`)
 - Build target dir (required off SMB/CIFS): `CARGO_TARGET_DIR=$HOME/.cache/tese-rust-target`
 - Static CycloneDDS link (required on SMB/CIFS): `CYCLONEDDS_STATIC=1`
 
