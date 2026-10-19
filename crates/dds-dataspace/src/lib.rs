@@ -54,6 +54,13 @@ use dds_contract::topics;
 /// T-302: ciclo de vida (sobe/derruba limpo). T-303..T-306 constroem a API async
 /// (`DataSpaceApi`) por cima.
 #[cfg(feature = "dds")]
+/// Janela de tolerância para snapshots de política "do futuro" (idêntica à
+/// `DEFAULT_FUTURE_SKEW` do mcp-gateway): snapshots além dela são lixo de
+/// relógio/editor e NÃO entram no cache (guard em `stream_security_snapshots`
+/// — sem isso, um snapshot futuro envenenava o dedupe por timestamp e
+/// suprimia snapshots legítimos posteriores; PR #10).
+const SECURITY_SNAPSHOT_FUTURE_SKEW_NS: u64 = 5_000_000_000;
+
 pub struct DataSpace {
     // Ordem de drop: filhos (writers/readers) antes dos pais (topics/pub/sub/participant).
 
@@ -763,6 +770,7 @@ mod streams {
     /// um waitset derrubado).
     pub(super) const STREAM_TAKE_BACKOFF_INITIAL: std::time::Duration =
         std::time::Duration::from_millis(100);
+
     pub(super) const STREAM_TAKE_BACKOFF_MAX: std::time::Duration =
         std::time::Duration::from_secs(5);
 }
@@ -1502,6 +1510,29 @@ impl DataSpace {
                         Ok(snaps) if !snaps.is_empty() => {
                             backoff = STREAM_TAKE_BACKOFF_INITIAL;
                             for s in snaps {
+                                // PR#10/CI: snapshot com timestamp no futuro
+                                // distante é descartado NA ADMISSÃO — o
+                                // gateway o rejeitaria de qualquer forma, e
+                                // deixá-lo entrar no cache envenenava o
+                                // dedupe por timestamp (snapshot legítimo
+                                // posterior tinha ts menor e nunca o
+                                // substituía; teste
+                                // rejected_future_snapshot_does_not_poison_
+                                // valid_recovery flakeava no runner).
+                                let now_ns = std::time::SystemTime::now()
+                                    .duration_since(std::time::UNIX_EPOCH)
+                                    .map(|d| u64::try_from(d.as_nanos()).unwrap_or(u64::MAX))
+                                    .unwrap_or(0);
+                                if s.timestamp_ns.saturating_sub(now_ns)
+                                    > SECURITY_SNAPSHOT_FUTURE_SKEW_NS
+                                {
+                                    tracing::warn!(
+                                        policy_id = %s.policy_id,
+                                        version = s.version,
+                                        "snapshot futuro descartado na admissão do stream"
+                                    );
+                                    continue;
+                                }
                                 let (snap, accepted) = caches.upsert_security_snapshot(s);
                                 if accepted {
                                     yield snap;
