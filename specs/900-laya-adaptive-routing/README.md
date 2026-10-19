@@ -1,5 +1,7 @@
 # 900 — Laya adaptive routing: dossiê SDD
 
+> **2026-10-19 — DECISÃO DO AUTOR: frente DENTRO da dissertação** (não é estudo complementar; ver nota no REPORT.md e notes.md 2026-10-19 (4)).
+
 Entrega documental M0, baseada no HEAD `5a7c15b0be3ad0638d8a041338eda41c9587ae03`, branch `studio/phase-800-node`. **Atualização 2026-10-17 (M1 COMPLETO):** o usuário autorizou \"fazer todos os specs\"; a sessão executora concluiu M1-01..M1-04 (contrato isolado com 3 emendas documentadas, integração dds-contract + bindings Python no worker futuro, WorkflowSpace DDS/in-memory com erros tipados, interop real Rust↔Python 4/4 e regressão dos 19 tópicos verde). M2–M7 em andamento na mesma sessão; nenhum commit criado.
 
 **Entrada para a próxima IA:** [PROMPT_CONTINUACAO_LAYA_DDS.md](PROMPT_CONTINUACAO_LAYA_DDS.md).

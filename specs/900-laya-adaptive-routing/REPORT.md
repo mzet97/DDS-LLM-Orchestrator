@@ -1,5 +1,12 @@
 # M0 — Auditoria, especificação e handoff Laya/DDS
 
+> **DECISÃO DO AUTOR (2026-10-19): esta frente FAZ PARTE da dissertação** — o
+> enquadramento "estudo complementar / não-RQ5" que aparece em partes deste
+> dossiê (spec/plan/PROTOCOL_M6, redigidos antes da campanha e da calibração
+> v4) está SUPERSSO: aplica-se a leitura histórica dos trechos que dizem
+> "complementar". A forma editorial no .tex (RQ5 própria ou integrada às
+> RQ1–RQ4) fica para a pass de escrita. Ver notes.md 2026-10-19 (4).
+
 ## Estado
 
 **PASS — entrega documental M0 concluída e verificada; revisão do usuário ainda necessária para aprovar contratos/ADRs e liberar implementação. M1–M7 NÃO INICIADOS.** Não há worker, engine, novo IDL, alteração de claim/QoS ou retirada NFCM implementados nesta entrega. O usuário confirmou que outra IA fará a implementação; esta sessão entrega documentação, plano e contexto. PASS refere-se à entrega documental e às verificações listadas, não às funcionalidades propostas nem aos gates não executados.
