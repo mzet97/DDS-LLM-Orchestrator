@@ -21,7 +21,7 @@ struct CacheEntry {
 
 /// Cache de políticas por `policy_id`, com expiração por TTL.
 ///
-/// `ahash` em vez do hasher default (Fase 2 do `OPTIMIZATION_PLAN.md`).
+/// `ahash` em vez do hasher default (Fase 2 do `docs/history/OPTIMIZATION_PLAN.md`).
 #[derive(Debug, Default)]
 pub struct PolicyCache {
     entries: DashMap<String, CacheEntry, ahash::RandomState>,

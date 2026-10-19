@@ -23,13 +23,13 @@ alerta sobre o descasamento arquivo↔legenda no `.tex`).
 | 3 | [`300-control-plane/`](./300-control-plane/) | orchestrator + client + gateway | ✅ concluída (REPORT 2026-07-18; E2E Rust-only; 50/50 sem deadlock) |
 | 4 | [`400-baselines/`](./400-baselines/) | Zadeh/FCM/DHL + consolidação | ✅ concluída (REPORT 2026-07-18; paridade exata; Python arquivado) |
 
-> **WF-8 (subsistemas da dissertação) — ✅ concluída 2026-07-19** (plano em `../PLANO_EXECUCAO.md` §WF-8):
+> **WF-8 (subsistemas da dissertação) — ✅ concluída 2026-07-19** (plano em `../docs/history/PLANO_EXECUCAO.md` §WF-8):
 > crates `policy-engine` (39 testes), `context-store` (17), `mcp-gateway` (11), `observability` (15) e
 > `benchmarks` (18 unit + 3 loopback DDS) verdes neste host; perfis QoS do `dds-dataspace` alinhados 1:1
 > com o `dds_data_space.py`. Restam da WF-8/WF-9: `compat-http`/`compat-grpc` (opcional) e os números
 > para a tese (comparativos finais no cluster).
 
-> Atualizado em 2026-07-17 (auditoria WF-0). Plano detalhado de execução: `../PLANO_EXECUCAO.md`.
+> Atualizado em 2026-07-17 (auditoria WF-0). Plano detalhado de execução: `../docs/history/PLANO_EXECUCAO.md`.
 
 ## Convenções
 - **REQ-XXX**: requisito (na `spec.md`), com critério de aceite verificável.

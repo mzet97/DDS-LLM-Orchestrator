@@ -1,4 +1,4 @@
-//! Microbenchmark (Fase R3 do `OPTIMIZATION_PLAN.md`): `DataWriter::write`
+//! Microbenchmark (Fase R3 do `docs/history/OPTIMIZATION_PLAN.md`): `DataWriter::write`
 //! (via `WriteArena`/`write_to_native`) vs `write_output_loan` (zero-copy,
 //! Fase 4) para `TaskOutput` — o tópico de maior volume de samples por
 //! sessão de inferência (um por chunk de streaming).

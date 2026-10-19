@@ -132,7 +132,7 @@ impl Scheduler {
 
 /// Registry de agentes (REQ-403, T-403).
 ///
-/// `ahash` em vez do hasher default (Fase 2 do `OPTIMIZATION_PLAN.md`) — lookup
+/// `ahash` em vez do hasher default (Fase 2 do `docs/history/OPTIMIZATION_PLAN.md`) — lookup
 /// de alta frequência no control loop (seleção de agente por task).
 pub struct AgentRegistry {
     agents: dashmap::DashMap<

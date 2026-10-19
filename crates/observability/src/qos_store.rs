@@ -6,7 +6,7 @@ use dashmap::DashMap;
 
 /// Store em memória para métricas QoS.
 ///
-/// `ahash` em vez do hasher default (Fase 2 do `OPTIMIZATION_PLAN.md`).
+/// `ahash` em vez do hasher default (Fase 2 do `docs/history/OPTIMIZATION_PLAN.md`).
 #[derive(Default)]
 pub struct QosStore {
     metrics: DashMap<String, serde_json::Value, ahash::RandomState>,

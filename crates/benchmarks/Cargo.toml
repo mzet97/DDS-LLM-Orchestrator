@@ -28,7 +28,7 @@ default = []
 # `agent/dds` está aqui (e não forçado no dev-dependency abaixo) para que
 # `cargo check/test --workspace --all-targets` sem `--features dds` NÃO
 # dispare o build C do CycloneDDS via `tests/dds_loopback.rs` (que já é
-# `#![cfg(feature = "dds")]`) — ver OPTIMIZATION_AUDIT.md item corrigido.
+# `#![cfg(feature = "dds")]`) — ver docs/history/OPTIMIZATION_AUDIT.md item corrigido.
 dds = ["dep:cyclonedds", "client/dds", "dds-dataspace/dds", "dds-contract/dds", "agent/dds"]
 
 [[bin]]

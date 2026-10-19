@@ -30,5 +30,5 @@ número não justificar (a análise diz que sim, mas medimos para confirmar), o 
 - ~~`[NEEDS-CLARIFICATION]` — o `llama-server` C++ está buildado com DDS neste host?~~
   **Resolvido em 2026-07-17:** NÃO. `src/llama_cpp/build/` contém artefatos macOS arm64
   (Mach-O, `.dylib`) de outra máquina; não há `llama-server` ELF neste host.
-  Pré-requisito: build Linux com `cmake -DLLAMA_DDS=ON` (PLANO_EXECUCAO.md, WF-1.4).
+  Pré-requisito: build Linux com `cmake -DLLAMA_DDS=ON` (docs/history/PLANO_EXECUCAO.md, WF-1.4).
   Os demais REQ não dependem dele.

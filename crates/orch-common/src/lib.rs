@@ -23,7 +23,7 @@ pub struct UnknownEnumValue {
 /// `long` no wire; ver `OrchestratorV4.idl`). Discriminantes explícitos para
 /// que `as i32` continue produzindo exatamente o valor que já trafega hoje —
 /// esta é uma view tipada por cima do campo cru, não uma mudança de wire
-/// format (P3 do `OPTIMIZATION_PLAN.md`: consumidores que comparam o `i32`
+/// format (P3 do `docs/history/OPTIMIZATION_PLAN.md`: consumidores que comparam o `i32`
 /// cru continuam funcionando sem alteração).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]

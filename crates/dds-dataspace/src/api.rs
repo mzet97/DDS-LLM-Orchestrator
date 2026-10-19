@@ -54,7 +54,7 @@ pub trait DataSpaceApi: Send + Sync {
     async fn write_task_without_ownership(&self, task: Task) -> Result<(), DataSpaceError>;
 
     /// Lê uma task por ID. Retorna `Arc<Task>` — o cache já guarda `Arc`
-    /// internamente (Fase 3 do `OPTIMIZATION_PLAN.md`); antes este método
+    /// internamente (Fase 3 do `docs/history/OPTIMIZATION_PLAN.md`); antes este método
     /// desreferenciava e clonava a `Task` inteira em cada leitura.
     async fn read_task(&self, task_id: &str) -> Result<Option<Arc<Task>>, DataSpaceError>;
 

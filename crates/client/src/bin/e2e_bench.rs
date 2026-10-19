@@ -2,7 +2,7 @@
 //!
 //! Submete N tasks reais via DDS (`DdsClientDds`) contra um `llama-server`
 //! real + agente(s) real(is) já rodando, e reporta p50/p95/p99 de latência.
-//! Ver `tese/src/rust/OPTIMIZATION_REPORT.md` §"Comparação real E2E".
+//! Ver `docs/history/OPTIMIZATION_REPORT.md` §"Comparação real E2E".
 //!
 //! Uso (sequencial): `... --bin e2e-bench -- <domain> <n>`
 //! Uso (concorrente, Fase R6): `... --bin e2e-bench -- <domain> <n> --concurrent`

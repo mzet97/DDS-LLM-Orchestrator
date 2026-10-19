@@ -13,7 +13,7 @@ workload/benchmark.
 
 | Binário | Uso |
 |---|---|
-| `submit-one` | `<domain> <model> <messages_json> [--timeout-ms N]` → JSON em stdout |
+| `submit-one` | `<domain> <model> <messages_json> [--timeout-ms N] [--max-tokens N] [--temperature F] [--stream]` → JSON com `content/latency_ms/ttfc_ms/tokens` |
 | `wf-run` | `--domain 78 --workload {seq_chain_v1\|fork_join_v1\|fork_join_serial_v1} --entry ... [--prompts-dir DIR] [--model M] [--workflow-id ID] [--out F] [--timeout-ms N] [--target-agent T]` |
 | `e2e-bench` | `<domain> <n> [--concurrent]` → `RESULT_JSON {...}` (p50/p95/p99) |
 
@@ -22,8 +22,11 @@ cd src/rust
 cargo run -p client --features dds --bin submit-one -- 0 qwen3.5-0.8b '[{"role":"user","content":"oi"}]'
 ```
 
-`wf-run`: `seq_chain_v1` = A→B→C; `fork_join_v1`/`fork_join_serial_v1` = barreira;
+`wf-run` (ESTE, legado 880): `seq_chain_v1` = A→B→C; `fork_join_v1`/`fork_join_serial_v1` = barreira;
 `--target-agent` para EXP4. `e2e-bench --concurrent` compartilha um `DdsClientDds`.
+⚠️ O `workflow-engine` também tem um bin `wf-run` (fase 900) — nomes iguais em
+crates distintos se sobrescrevem no mesmo target dir; use `cargo run -p <crate> --bin wf-run`.
+`ttfc_ms` (O-1): latência do primeiro chunk — não-streaming dá ttfc≈latency (100%).
 
 ## API pública (lib)
 

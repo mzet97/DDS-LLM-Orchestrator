@@ -75,7 +75,7 @@ fn push_capped<T>(vec: &mut Vec<T>, item: T) {
 /// Mock DataSpace em memória para testes.
 ///
 /// `tasks`/`outputs` guardam `Arc<Task>`/`Arc<TaskOutput>` (Fase 3 do
-/// `OPTIMIZATION_PLAN.md`) para espelhar o `DataSpace` real (`cache.rs` já
+/// `docs/history/OPTIMIZATION_PLAN.md`) para espelhar o `DataSpace` real (`cache.rs` já
 /// guardava `Arc` internamente; só o mock ainda clonava a struct inteira).
 pub struct InMemoryDataSpace {
     // Tópicos originais
