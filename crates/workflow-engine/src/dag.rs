@@ -201,30 +201,38 @@ pub fn validate_candidate(
         });
     }
 
-    // ciclo + profundidade: DFS com cores
+    // ciclo + profundidade: DFS com cores + MEMO de profundidade.
+    // P2 (review PR#10): o visitado devolvia 0 e perdia a profundidade
+    // computada — numa cadeia topologicamente ordenada todo nó media 1 e o
+    // limite MAX_DEPTH nunca disparava. Agora `memo` guarda a profundidade
+    // real de cada nó concluído.
     fn depth_first(
         id: &str,
         by_id: &std::collections::HashMap<&str, &CandidateNode>,
         state: &mut std::collections::HashMap<String, u8>,
-        _depth: usize,
+        memo: &mut std::collections::HashMap<String, usize>,
     ) -> Result<usize, DagError> {
-        match state.get(id).copied() {
-            Some(2) => return Ok(0), // já concluído
-            Some(1) => return Err(DagError::Cycle(id.to_string())),
-            _ => {}
+        if let Some(d) = memo.get(id) {
+            return Ok(*d);
+        }
+        if let Some(1) = state.get(id).copied() {
+            return Err(DagError::Cycle(id.to_string()));
         }
         state.insert(id.to_string(), 1);
         let mut max_child = 0usize;
         for d in &by_id.get(id).expect("id validado").dependencies {
-            let d = depth_first(d, by_id, state, _depth + 1)?;
+            let d = depth_first(d, by_id, state, memo)?;
             max_child = max_child.max(d);
         }
         state.insert(id.to_string(), 2);
-        Ok(max_child + 1)
+        let depth = max_child + 1;
+        memo.insert(id.to_string(), depth);
+        Ok(depth)
     }
     let mut state = std::collections::HashMap::new();
+    let mut memo = std::collections::HashMap::new();
     for n in &cand.nodes {
-        let d = depth_first(&n.node_id, &by_id, &mut state, 0)?;
+        let d = depth_first(&n.node_id, &by_id, &mut state, &mut memo)?;
         if d > MAX_DEPTH {
             return Err(DagError::LimitViolation(format!(
                 "profundidade {d} > {MAX_DEPTH} via {}",

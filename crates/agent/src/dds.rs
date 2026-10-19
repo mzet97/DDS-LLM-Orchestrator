@@ -133,16 +133,24 @@ impl AgentDds {
         }
         match &this.adaptive {
             None => true,
-            Some(barrier) => matches!(
-                barrier.check(
-                    task,
-                    None, // registry do self: o loop injeta via update abaixo
-                    &cfg.target_agent_prefix,
-                    now_ns(),
-                ),
-                crate::adaptive::AdaptiveDecision::Proceed
-                    | crate::adaptive::AdaptiveDecision::Legacy
-            ),
+            Some(barrier) => {
+                // P1 (review PR#10): o `AgentState` autoritativo do PRÓPRIO
+                // agente vem do cache do registry (tópico AgentRegistry,
+                // alimentado pelos heartbeats) — antes `None` pulava as
+                // checagens de saúde/slots/modelo da elegibilidade (M3-01).
+                // Ausente no cache (janela de startup) mantém o comportamento
+                // tolerante anterior (a barreira decide sem o registry).
+                let own_state = this
+                    .dataspace
+                    .caches()
+                    .read_agent(&cfg.agent_id)
+                    .map(|a| (*a).clone());
+                matches!(
+                    barrier.check(task, own_state.as_ref(), &cfg.target_agent_prefix, now_ns(),),
+                    crate::adaptive::AdaptiveDecision::Proceed
+                        | crate::adaptive::AdaptiveDecision::Legacy
+                )
+            }
         }
     }
 
@@ -661,19 +669,31 @@ impl AgentDds {
                         && current.assigned_agent == task.assigned_agent =>
                 {
                     if attempts > 0 {
-                        tracing::info!(task_id, attempts, "terminal confirmado no mesh pós-republish");
+                        tracing::info!(
+                            task_id,
+                            attempts,
+                            "terminal confirmado no mesh pós-republish"
+                        );
                     }
                     return;
                 }
                 Ok(Some(current)) if current.status == 3 || current.status == 4 => {
                     // terminal por outro dono: recuperação paralela venceu
-                    tracing::info!(task_id, status = current.status, "terminal publicado por outro dono");
+                    tracing::info!(
+                        task_id,
+                        status = current.status,
+                        "terminal publicado por outro dono"
+                    );
                     return;
                 }
                 _ => {}
             }
             if Instant::now() >= deadline {
-                tracing::warn!(task_id, attempts, "terminal não visível no mesh pós prazo (republisher exausto)");
+                tracing::warn!(
+                    task_id,
+                    attempts,
+                    "terminal não visível no mesh pós prazo (republisher exausto)"
+                );
                 return;
             }
             attempts += 1;

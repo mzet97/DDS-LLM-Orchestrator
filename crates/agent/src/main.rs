@@ -193,7 +193,6 @@ async fn main() -> Result<()> {
     };
     #[cfg(not(feature = "security"))]
     let runtime = Arc::new(AgentDds::new(config)?);
-    let _heartbeat = runtime.spawn_heartbeat(std::time::Duration::from_millis(args.heartbeat_ms));
 
     // T-900-M3-02: modo adaptativo OPT-IN — barreira + feeders + auto-anúncio.
     #[cfg(feature = "dds")]
@@ -221,8 +220,7 @@ async fn main() -> Result<()> {
             caps,
             workflow_engine::catalog_v1().revision,
         ));
-        // AgentDds não é Clone: recria o runtime base e aplica a barreira
-        // (o heartbeat continua no runtime original — compartilham dataspace).
+        // AgentDds não é Clone: recria o runtime base e aplica a barreira.
         let rt = AgentDds::new(adaptive_config.clone())?.with_adaptive(barrier);
         Some((Arc::new(rt), announcer))
     } else {
@@ -233,6 +231,10 @@ async fn main() -> Result<()> {
         Some((rt, _)) => Arc::clone(rt),
         None => runtime,
     };
+    // P2 (review PR#10): o heartbeat corre NO runtime que processa (com
+    // adaptive, o runtime original nunca via os slots/completions — o
+    // registry reportava o agente permanentemente idle).
+    let _heartbeat = runtime.spawn_heartbeat(std::time::Duration::from_millis(args.heartbeat_ms));
 
     // T-820-09: valor desconhecido de `--engine` era engolido pelo `else` e
     // caía no branch DDS silenciosamente (ex.: typo `--engine ddd` subia um

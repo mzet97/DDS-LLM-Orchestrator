@@ -16,7 +16,7 @@ use dds_contract::workflow::dds_llm_workflow_v1 as w;
 use dds_dataspace::api::{DataSpaceApi, DataSpaceError};
 use dds_dataspace::workflow_space::{WorkflowSpaceApi, WorkflowSpaceError};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 /// TaskStatus do V4.
@@ -92,6 +92,17 @@ struct WfRuntime {
 }
 
 /// O runtime do engine (uma instância por processo — engine único, ADR-004).
+/// Parâmetros de execução materializados do PlanNode (P1 review PR#10):
+/// a Task publicada carrega model/target/max_tokens declarados no nó.
+struct TaskSpec<'a> {
+    prompt: &'a str,
+    priority: i32,
+    deadline_ns: u64,
+    model_id: &'a str,
+    target_agent_id: &'a str,
+    max_tokens: u32,
+}
+
 pub struct EngineRuntime<DS: DataSpaceApi, WS: WorkflowSpaceApi> {
     dataspace: Arc<DS>,
     wspace: Arc<WS>,
@@ -101,6 +112,9 @@ pub struct EngineRuntime<DS: DataSpaceApi, WS: WorkflowSpaceApi> {
     workflows: HashMap<String, WfRuntime>,
     /// task_id -> (workflow, node)
     task_index: HashMap<String, (String, String)>,
+    /// P1 (review PR#10): tasks já marcadas IN_DOUBT por este processo —
+    /// evita re-marcar a cada tick (atividade falsa no timeout global).
+    in_doubt_marked: HashSet<String>,
 }
 
 impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
@@ -119,6 +133,7 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
             cfg,
             workflows: HashMap::new(),
             task_index: HashMap::new(),
+            in_doubt_marked: HashSet::new(),
         }
     }
 
@@ -129,12 +144,22 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
         // novo é materializado; revisão esperada deve casar (IC_CANCEL=1).
         if intent.command == 1 {
             if let Some(wfr) = self.workflows.get_mut(&wf) {
-                if wfr.intent.intent_revision == intent.expected_plan_revision
+                // P1 (review PR#10): `expected_plan_revision` refere-se à
+                // revisão do PLANO corrente — comparar contra
+                // `graph.plan_revision` (a partir do momento em que há
+                // plano); sem plano ainda, o cancelamento de nível de
+                // intenção casa com a revisão da própria intenção.
+                let current_rev = if wfr.graph.plan_revision > 0 {
+                    wfr.graph.plan_revision
+                } else {
+                    wfr.intent.intent_revision
+                };
+                if current_rev == intent.expected_plan_revision
                     || intent.expected_plan_revision == 0
                 {
                     wfr.terminal = true;
                     wfr.failed_reason = None; // CANCELLED não é falha
-                    self.publish_state(&wf, 7).await?; // WS_CANCELLED
+                    self.publish_state(&wf, 6).await?; // WS_CANCELLED (=6; era 7=IN_DOUBT)
                     return Ok(());
                 }
             }
@@ -174,7 +199,37 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
             None => return Ok(false), // decisão sem intent registrada
         };
         let intent = self.workflows[&wf].intent.clone();
-        let verdict = validate(decision, &intent, &self.cfg.decision_policy, None);
+        // P1 (review PR#10): now REAL — `None` desativa a checagem de
+        // expiração e admitiria decisão vencida (replay de histórico DDS).
+        let verdict = validate(decision, &intent, &self.cfg.decision_policy, Some(now_ns()));
+
+        // P1 (review PR#10): decisão SHADOW mantém a fronteira — NADA é
+        // materializado (sem journal, sem planner, sem Plan, sem Tasks).
+        // A decisão foi OBSERVADA (o tópico já a carrega; o QoS telemetry
+        // abaixo registra o mapeamento p/ comparação shadow×ativo). O
+        // workflow segue aguardando: uma decisão futura com pin casando
+        // (`shadow_only=false`) percorre o caminho normal.
+        if let Verdict::Accept {
+            shadow_only: true, ..
+        } = &verdict
+        {
+            let mapping = qos_mapper::map(&verdict, &intent, &self.cfg.mapper_policy);
+            let qos_record = match &mapping {
+                qos_mapper::QosMapping::Applied(e) => Some(QosTelemetryRecord::applied(
+                    &intent.workflow_id.to_string(),
+                    e,
+                )),
+                qos_mapper::QosMapping::Rejected(_) => None,
+            };
+            let wfr = self.workflows.get_mut(&wf).expect("wf");
+            wfr.qos = qos_record;
+            tracing::info!(
+                wf = %intent.workflow_id.to_string(),
+                decision = %decision.decision_id.to_string(),
+                "decisão aceita em SHADOW (pin ausente/divergente): nada materializado"
+            );
+            return Ok(false);
+        }
 
         let mapping = match &verdict {
             Verdict::Accept { .. } => qos_mapper::map(&verdict, &intent, &self.cfg.mapper_policy),
@@ -327,6 +382,9 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
                     ) {
                         Ok(tid) => tid,
                         Err(crate::engine::EngineError::AlreadyDone(_)) => continue,
+                        // P1 (review PR#10): tentativa IN_DOUBT/consumida —
+                        // bloqueada, o tick segue nos demais nós.
+                        Err(crate::engine::EngineError::ReservationConsumed(_, _)) => continue,
                         Err(e) => {
                             return Err(RuntimeError::Journal(
                                 crate::journal::JournalError::Corrupted(format!(
@@ -341,23 +399,37 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
                 }
                 self.task_index
                     .insert(task_id.clone(), (wf.clone(), node_id.clone()));
-                let (prompt, priority, deadline) = {
+                // P1 (review PR#10): os parâmetros de execução do nó
+                // VALIDADO são materializados na Task (model/target/
+                // max_tokens) — antes a Task ia vazia com 256 tokens,
+                // ignorando o plano (até o DirectTemplate declarava 512
+                // e recebia 256).
+                {
                     let wfr = &self.workflows[&wf];
-                    let spec = wfr.graph.node(&node_id).expect("nó validado");
+                    let node = wfr.graph.node(&node_id).expect("nó validado");
                     let prompt = wfr
                         .prompts
                         .get(&node_id)
                         .cloned()
                         .unwrap_or_else(|| wfr.intent.prompt.to_string());
-                    let deadline = if wfr.intent.deadline_ns > 0 {
+                    let deadline_ns = if wfr.intent.deadline_ns > 0 {
                         wfr.intent.deadline_ns
                     } else {
                         now_ns() + self.cfg.default_task_deadline_ns
                     };
-                    (prompt, spec.priority, deadline)
-                };
-                self.publish_task(&task_id, &prompt, priority, deadline)
+                    self.publish_task(
+                        &task_id,
+                        TaskSpec {
+                            prompt: &prompt,
+                            priority: node.priority,
+                            deadline_ns,
+                            model_id: &node.model_id,
+                            target_agent_id: &node.target_agent_id,
+                            max_tokens: u32::try_from(node.max_tokens).unwrap_or(u32::MAX),
+                        },
+                    )
                     .await?;
+                }
                 self.publish_state(&wf, 3).await?;
                 published += 1;
             }
@@ -451,18 +523,39 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
 
     /// Sweeper: tentativas que não terminaram antes do prazo → IN_DOUBT
     /// (nunca re-tenta efeito incerto automaticamente).
+    ///
+    /// P1 (review PR#10): cada tentativa vencida é marcada UMA vez (conjunto
+    /// `in_doubt_marked`) e o workflow recebe `WS_IN_DOUBT` na primeira
+    /// marcação — antes a mesma task era re-marcada a cada tick, o contador
+    /// de atividade nunca zerava e o timeout global do wf-run não disparava.
     pub async fn tick_timeouts(&mut self) -> Result<usize, RuntimeError> {
         let now = now_ns();
         let all = self.dataspace.all_tasks().await?;
         let mut marked = 0;
+        let mut in_doubt_workflows: Vec<String> = Vec::new();
         for task in all {
             if task.status == TS_DONE || task.status == TS_FAILED {
                 continue;
             }
             if task.deadline_ns > 0 && now > task.deadline_ns {
-                self.journal.mark_in_doubt(&task.task_id.to_string())?;
+                let task_id = task.task_id.to_string();
+                if !self.in_doubt_marked.insert(task_id.clone()) {
+                    continue; // já marcada neste processo
+                }
+                self.journal.mark_in_doubt(&task_id)?;
+                if let Some((wf, _)) = self.task_index.get(&task_id).cloned() {
+                    if let Some(wfr) = self.workflows.get_mut(&wf) {
+                        wfr.terminal = true;
+                        wfr.failed_reason =
+                            Some(format!("in_doubt: task {task_id} venceu o prazo"));
+                    }
+                    in_doubt_workflows.push(wf);
+                }
                 marked += 1;
             }
+        }
+        for wf in in_doubt_workflows {
+            self.publish_state(&wf, 7).await?; // WS_IN_DOUBT
         }
         Ok(marked)
     }
@@ -489,13 +582,15 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
             .map(|(k, _)| k.clone())
     }
 
-    async fn publish_task(
-        &self,
-        task_id: &str,
-        prompt: &str,
-        priority: i32,
-        deadline_ns: u64,
-    ) -> Result<(), RuntimeError> {
+    async fn publish_task(&self, task_id: &str, spec: TaskSpec<'_>) -> Result<(), RuntimeError> {
+        let TaskSpec {
+            prompt,
+            priority,
+            deadline_ns,
+            model_id,
+            target_agent_id,
+            max_tokens,
+        } = spec;
         let messages = format!(
             "[{{\"role\":\"user\",\"content\":{}}}]",
             serde_json::json!(prompt)
@@ -504,12 +599,15 @@ impl<DS: DataSpaceApi, WS: WorkflowSpaceApi> EngineRuntime<DS, WS> {
             task_id: task_id.to_string(),
             client_id: "wf-engine".to_string(),
             assigned_agent: String::new(),
-            target_agent: String::new(),
+            // P1 (review PR#10): execução conforme o PLANO validado —
+            // target/model/tokens vêm do PlanNode (vazio = herda o claim
+            // livre legado; max_tokens do nó substitui o default 256).
+            target_agent: target_agent_id.to_string(),
             model_required: 0,
-            model_name: String::new(),
+            model_name: model_id.to_string(),
             messages_json: messages,
             temperature: 0.1,
-            max_tokens: 256,
+            max_tokens,
             stream: false,
             status: 0, // PENDING
             priority,

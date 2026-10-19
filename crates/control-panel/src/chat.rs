@@ -127,7 +127,18 @@ impl ClientChatTransport {
     }
 
     /// Envia o payload e devolve o conteúdo do resultado.
-    pub async fn send_async(&self, payload: &str, timeout_s: f64) -> Result<String, String> {
+    ///
+    /// P2 (review PR#10): especialização exigida e limite de tokens seguem
+    /// na Task — antes o spec só moldava o messages_json (request de VISION/
+    /// TRANSCRIPTION ia para agente TEXT) e o max_tokens escolhido na UI era
+    /// descartado (Task fixa em 256).
+    pub async fn send_async(
+        &self,
+        payload: &str,
+        spec: Specialization,
+        max_tokens: u32,
+        timeout_s: f64,
+    ) -> Result<String, String> {
         use client::{ClientConfig, DdsClient};
         let config = ClientConfig {
             client_id: self.client_id.clone(),
@@ -135,7 +146,15 @@ impl ClientChatTransport {
             timeout_ms: (timeout_s * 1000.0) as u64,
         };
         let factory = DdsClient::new(config.clone());
-        let task = factory.create_task("", payload, 5, false);
+        let mut task = factory.create_task("", payload, 5, false);
+        // ordinais do contrato (dds_types.py): 0=TEXT 1=VISION 2=EMBEDDING
+        // 3=TRANSCRIPTION — cast direto do enum local alinharia errado.
+        task.model_required = match spec {
+            Specialization::Text => 0,
+            Specialization::Vision => 1,
+            Specialization::Transcription => 3,
+        };
+        task.max_tokens = max_tokens;
         let transport = client::dds_impl::DdsClientDds::new(config).map_err(|e| e.to_string())?;
         let result = transport.submit(task).await.map_err(|e| e.to_string())?;
         if result.success {

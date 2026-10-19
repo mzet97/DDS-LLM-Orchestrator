@@ -934,13 +934,19 @@ pub mod dds_impl {
 
         /// `read()` de um reader dedicado (não drena o RHC; KeepLast(1) por
         /// chave limita o histórico retornado).
-        fn read_latest<T: cyclonedds::DdsType>(
+        /// Lê o histórico do reader e devolve a ÚLTIMA amostra que casa com
+        /// o predicado. P2 (review PR#10): o `read_latest` antigo fazia
+        /// `pop()` de UMA amostra arbitrária (o reader KeepLast(1)-por-chave
+        /// carrega a mais recente de CADA instância) e o filtro do chamador
+        /// descartava tudo se a amostra sorteada não fosse a chave pedida.
+        fn read_latest_where<T: cyclonedds::DdsType + Clone>(
             &self,
             topic: &Topic<T>,
+            pred: impl Fn(&T) -> bool,
         ) -> Result<Option<T>, WorkflowSpaceError> {
             let reader = DataReader::new(&self.subscriber, topic).map_err(err)?;
-            let mut samples = reader.read().map_err(err)?;
-            Ok(samples.pop())
+            let samples = reader.read().map_err(err)?;
+            Ok(samples.iter().rfind(|s| pred(s)).cloned())
         }
     }
 
@@ -961,8 +967,9 @@ pub mod dds_impl {
                 return Ok(Some(hit));
             }
             Ok(self
-                .read_latest(&self.intent_topic)?
-                .filter(|i| i.request_id.to_string() == request_id)
+                .read_latest_where(&self.intent_topic, |i| {
+                    i.request_id.to_string() == request_id
+                })?
                 .map(Arc::new))
         }
 
@@ -991,13 +998,10 @@ pub mod dds_impl {
             if let Some(hit) = self.caches.read_decision(request_id, decision_id) {
                 return Ok(Some(hit));
             }
-            self.read_latest(&self.decision_topic).map(|o| {
-                o.filter(|d| {
-                    d.request_id.to_string() == request_id
-                        && d.decision_id.to_string() == decision_id
-                })
-                .map(Arc::new)
+            self.read_latest_where(&self.decision_topic, |d| {
+                d.request_id.to_string() == request_id && d.decision_id.to_string() == decision_id
             })
+            .map(|o| o.map(Arc::new))
         }
 
         fn subscribe_decisions(&self) -> Pin<Box<dyn Stream<Item = Arc<RoutingDecision>> + Send>> {
@@ -1024,10 +1028,8 @@ pub mod dds_impl {
             if let Some(hit) = self.caches.read_capabilities(agent_id) {
                 return Ok(Some(hit));
             }
-            self.read_latest(&self.caps_topic).map(|o| {
-                o.filter(|c| c.agent_id.to_string() == agent_id)
-                    .map(Arc::new)
-            })
+            self.read_latest_where(&self.caps_topic, |c| c.agent_id.to_string() == agent_id)
+                .map(|o| o.map(Arc::new))
         }
 
         fn subscribe_capabilities(
@@ -1054,12 +1056,10 @@ pub mod dds_impl {
             if let Some(hit) = self.caches.read_plan(workflow_id, plan_revision) {
                 return Ok(Some(hit));
             }
-            self.read_latest(&self.plan_topic).map(|o| {
-                o.filter(|p| {
-                    p.workflow_id.to_string() == workflow_id && p.plan_revision == plan_revision
-                })
-                .map(Arc::new)
+            self.read_latest_where(&self.plan_topic, |p| {
+                p.workflow_id.to_string() == workflow_id && p.plan_revision == plan_revision
             })
+            .map(|o| o.map(Arc::new))
         }
 
         fn subscribe_plans(&self) -> Pin<Box<dyn Stream<Item = Arc<WorkflowPlan>> + Send>> {
@@ -1084,12 +1084,10 @@ pub mod dds_impl {
             if let Some(hit) = self.caches.read_state(workflow_id, plan_revision) {
                 return Ok(Some(hit));
             }
-            self.read_latest(&self.state_topic).map(|o| {
-                o.filter(|s| {
-                    s.workflow_id.to_string() == workflow_id && s.plan_revision == plan_revision
-                })
-                .map(Arc::new)
+            self.read_latest_where(&self.state_topic, |s| {
+                s.workflow_id.to_string() == workflow_id && s.plan_revision == plan_revision
             })
+            .map(|o| o.map(Arc::new))
         }
 
         fn subscribe_states(&self) -> Pin<Box<dyn Stream<Item = Arc<WorkflowState>> + Send>> {

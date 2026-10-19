@@ -19,6 +19,10 @@ pub struct NodeSpec {
     pub max_attempts: u32,
     pub max_tokens: u64,
     pub priority: i32,
+    /// P1 (review PR#10): parâmetros de execução declarados no plano —
+    /// materializados na Task pelo scheduler (vazio = legado, sem fixação).
+    pub model_id: String,
+    pub target_agent_id: String,
 }
 
 impl NodeSpec {
@@ -30,6 +34,8 @@ impl NodeSpec {
             max_attempts: c.max_attempts.max(1),
             max_tokens: c.max_tokens,
             priority: c.priority,
+            model_id: c.model_id.clone(),
+            target_agent_id: c.target_agent_id.clone(),
         }
     }
 }
@@ -81,6 +87,10 @@ pub enum EngineError {
     },
     #[error("nó {0} já concluído (duplicata ignorada)")]
     AlreadyDone(String),
+    #[error(
+        "tentativa {1} do nó {0} com reserva consumida/IN_DOUBT: re-execução automática bloqueada"
+    )]
+    ReservationConsumed(String, u32),
 }
 
 /// Estado por nó mantido EM MEMÓRIA pelo engine (derivável do journal após
@@ -90,6 +100,9 @@ pub struct NodeProgress {
     pub active_attempt: u32,
     pub done: bool,
     pub failed: bool,
+    /// P1 (review PR#10): tentativa ativa com desfecho incerto (IN_DOUBT) —
+    /// bloqueada p/ re-execução automática (nem materializa nem agenda).
+    pub in_doubt: bool,
     pub outputs: Vec<(String, String)>, // (nome, content_hash)
 }
 
@@ -119,6 +132,13 @@ impl EngineState {
                             progress.failed = true;
                             progress.active_attempt = attempt;
                             break;
+                        }
+                        "in_doubt" => {
+                            // P1 (review PR#10): efeito com desfecho incerto
+                            // NÃO é re-agendado no recovery — o nó fica
+                            // bloqueado (resolução manual/monitor).
+                            progress.active_attempt = attempt;
+                            progress.in_doubt = true;
                         }
                         other => {
                             progress.active_attempt = attempt;
@@ -156,6 +176,12 @@ impl EngineState {
         if progress.done {
             return Err(EngineError::AlreadyDone(node_id.into()));
         }
+        if progress.in_doubt {
+            return Err(EngineError::ReservationConsumed(
+                node_id.into(),
+                progress.active_attempt,
+            ));
+        }
         let attempt = progress.active_attempt.max(1);
         progress.active_attempt = attempt;
 
@@ -167,14 +193,26 @@ impl EngineState {
         );
         // Reserva idempotente por tentativa: replay não duplica; ERRO na
         // reserva RECUSA a publicação (fail-closed — contracts).
+        // P1 (review PR#10): `AlreadyConsumed` (reserva consumida ou IN_DOUBT)
+        // RECUSA a materialização — antes o outcome era ignorado e o mesmo
+        // efeito incerto era re-publicado (no recovery pós-restart).
         let key = format!("attempt:{}:{}:{}", graph.workflow_id, node_id, attempt);
-        journal.reserve(
+        match journal.reserve(
             &graph.workflow_id,
             &key,
             &key,
             spec.max_tokens,
             budget_microunits_per_attempt,
-        )?;
+        )? {
+            crate::journal::ReserveOutcome::Reserved { .. }
+            | crate::journal::ReserveOutcome::Replayed { .. } => {}
+            crate::journal::ReserveOutcome::AlreadyConsumed => {
+                // A tentativa já foi consumida OU marcada IN_DOUBT: efeito
+                // com desfecho incerto NÃO se re-executa automaticamente.
+                progress.in_doubt = true;
+                return Err(EngineError::ReservationConsumed(node_id.into(), attempt));
+            }
+        }
         journal.record_attempt(&graph.workflow_id, node_id, attempt, &task_id, "published")?;
         journal.outbox_append(
             &|_| Ok(()),

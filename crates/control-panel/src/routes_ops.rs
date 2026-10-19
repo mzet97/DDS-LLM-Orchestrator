@@ -58,8 +58,17 @@ pub(crate) async fn chat_send(
         Ok(payload) => payload,
         Err(e) => return err(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()),
     };
-    let _ = body.max_tokens;
-    chat_event_stream(state, payload, body.timeout_s.unwrap_or(60.0)).await
+    // P2 (review PR#10): repassa o limite de tokens escolhido na UI (antes
+    // descartado — a Task nascia sempre com 256).
+    let max_tokens = body.max_tokens.unwrap_or(256).clamp(1, 8192);
+    chat_event_stream(
+        state,
+        payload,
+        spec,
+        max_tokens,
+        body.timeout_s.unwrap_or(60.0),
+    )
+    .await
 }
 
 pub(crate) async fn inventory_public(State(state): State<Arc<AppState>>) -> Json<Value> {
@@ -141,6 +150,8 @@ pub(crate) async fn chat_ready() -> Json<Value> {
 pub(crate) async fn chat_event_stream(
     state: Arc<AppState>,
     payload: String,
+    spec: crate::chat::Specialization,
+    max_tokens: u32,
     timeout_s: f64,
 ) -> Response {
     #[cfg(feature = "dds")]
@@ -149,7 +160,9 @@ pub(crate) async fn chat_event_stream(
             state.supervisor.config().default_dds_domain as u32,
             "control-panel-chat",
         );
-        transport.send_async(&payload, timeout_s).await
+        transport
+            .send_async(&payload, spec, max_tokens, timeout_s)
+            .await
     };
     #[cfg(not(feature = "dds"))]
     let result: Result<String, String> = {
@@ -212,5 +225,12 @@ pub(crate) async fn chat_stream(
             Ok(payload) => payload,
             Err(e) => return err(StatusCode::UNPROCESSABLE_ENTITY, &e.to_string()),
         };
-    chat_event_stream(state, payload, q.timeout_s.unwrap_or(60.0)).await
+    chat_event_stream(
+        state,
+        payload,
+        crate::chat::Specialization::Text,
+        256,
+        q.timeout_s.unwrap_or(60.0),
+    )
+    .await
 }
