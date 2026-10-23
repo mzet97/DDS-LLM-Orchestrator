@@ -1,0 +1,34 @@
+{
+  "frozen_at": "2026-10-22T15:41:56-03:00",
+  "finalist": {
+    "arm": "c",
+    "checkpoint_sha256": "a83279a1d6d6 (ver sha256 completo em models/arm_d../manifests)",
+    "init": "t900 35813054…",
+    "data": "train.jsonl (gold destilação 1317 linhas + expected)",
+    "loss": "soft-ce", "seed": 904, "epochs": 4,
+    "calibration_pin": "6e1543f375698e1984fdbb52507356413a9010440b6c613dc3c767d0f90d132f",
+    "calibration_split": "calibration (265 pares, NUNCA usado em treino)"
+  },
+  "selection_basis": "dev 336: melhor QoS Macro-F1 (0.863), STREAM F1 (0.901), planning (0.830), caps (0.773); precedência do spec",
+  "baselines_no_sealed": ["b0_t900", "b1_t902b", "b2_t903c"],
+  "sealed": {
+    "pool_sha256": "bf11db4637f279117be0cb7fa6680be67c4d036b8e571be97e48982297470207", 
+    "labels_sha256": "3db79b7746c0f5c2c66a9574a05ea9f3ae15b437d73e8ff1e2ec6da31671a347",
+    "n": 567,
+    "openings_allowed": 1,
+    "models_to_run": ["arm_c (com calibração)", "b0_t900", "b1_t902b", "b2_t903c"]
+  },
+  "gates_sealed": {
+    "qos_macro_f1_min": 0.85,
+    "stream_precision_min": 0.75,
+    "stream_recall_min": 0.80,
+    "stream_f1_min": 0.77,
+    "urgency_macro_f1_min": 0.90,
+    "planning_accuracy_min": 0.98,
+    "complexity_macro_f1_min": 0.94,
+    "caps_macro_f1_mean_min": 0.97,
+    "latency": "sem regressão material vs b0 (p50)"
+  },
+  "eval_script_sha256_prefix": "e4146727387bed07",
+  "rule_after": "sem re-tentativa; falha ⇒ novo teste exigiria T905 com dados novos; status só KEEP_T900 | T904_OFFLINE_ELIGIBLE_AWAITING_APPROVAL | BLOCKED_WITH_TRAINED_CANDIDATE"
+}

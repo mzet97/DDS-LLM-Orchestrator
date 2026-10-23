@@ -18,7 +18,8 @@ import urllib.request
 
 from laya_worker.questions import CAPABILITY_CATALOG
 
-SERVER = "http://127.0.0.1:8901"
+import os
+SERVER = os.environ.get("LLM_PLANNER_SERVER", "http://127.0.0.1:8901")
 
 PLANNER_SYSTEM = (
     "You are a task planner. Decompose the user request into 1 to 4 subtasks. "

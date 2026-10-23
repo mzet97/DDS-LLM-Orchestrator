@@ -32,6 +32,8 @@ def main() -> int:
     ap.add_argument("outdir")
     ap.add_argument("--limit", type=int, default=0, help="usar só os N primeiros (debug)")
     ap.add_argument("--seed", type=int, default=900)
+    ap.add_argument("--checkpoint", default="convaiinnovations/laya",
+                    help="checkpoint dir (default: ID remoto do BASE)")
     args = ap.parse_args()
 
     import laya
@@ -55,7 +57,7 @@ def main() -> int:
     train, holdout = rows[:cut], rows[cut:]
     print(f"dataset: {len(rows)} | train {len(train)} | holdout {len(holdout)}", flush=True)
 
-    agent = laya.load("convaiinnovations/laya")
+    agent = laya.load(args.checkpoint)
 
     # holdout em arquivo temporário (Dataset.from_jsonl é a porta do SDK)
     def normalize(row):

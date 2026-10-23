@@ -1,0 +1,58 @@
+{
+  "date": "2026-10-21",
+  "method": "sha256 calculado sobre bytes reais nesta campanha (herda matriz M0 da T904-runtime: evidence/checkpoint_hashes_m0.txt)",
+  "t900_baseline": {
+    "sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+    "bytes": 842609220,
+    "weights_local": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_specialized_v1/model.safetensors",
+    "assembled_dir": "/home/mzet/.cache/tese-laya/checkpoints/teachers/t900-specialized",
+    "assembled_load_test": "PASS (laya.load local, T904-runtime M3 smoke + carga em campanha)",
+    "status": "VERIFICADO",
+    "note": "typo documental em t903/decision.json (0d3f714) — vale o hash dos bytes reais"
+  },
+  "teachers": [
+    {
+      "id": "t900",
+      "sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+      "assembled_dir": "/home/mzet/.cache/tese-laya/checkpoints/teachers/t900-specialized",
+      "load_test": "PASS",
+      "strength_reported": "planning acc 0.9889, complexity acc 0.9511, caps Macro-F1 0.99 (holdout T900, REPORTADO); STREAM recall 0.2051",
+      "admissible_questions": "decidir no dev comum (teacher_registry)"
+    },
+    {
+      "id": "t902-arm-b",
+      "sha256": "5d7dd6522d94347f47566499e09cbd2ad90b4fccbeb26a91c6885fa8c0eda4c0",
+      "bytes": 842609220,
+      "weights_local": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_B/model.safetensors",
+      "assembled_dir": "/home/mzet/.cache/tese-laya/checkpoints/teachers/t902-arm-b",
+      "assembled_load_test": "PASS (laya.load local 10.8s, 2026-10-21)",
+      "status": "VERIFICADO",
+      "strength_reported": "urgency Macro-F1 0.9981 e QoS Macro-F1 0.7308 no sealed T902 (REPORTADO); STREAM recall 0.0417"
+    },
+    {
+      "id": "t903-arm-c",
+      "sha256": "7de213c7b24fca603f1f58e04ad4f8029fef396d5cf0e24e3c0067bb996cd05d",
+      "bytes": 842609220,
+      "weights_local": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_C/model.safetensors",
+      "assembled_dir": "/home/mzet/.cache/tese-laya/checkpoints/teachers/t903-arm-c",
+      "assembled_load_test": "PASS (laya.load local 7.7s, 2026-10-21)",
+      "status": "VERIFICADO",
+      "strength_reported": "STREAM recall 0.7143 / precision 0.5464 no sealed T903 (REPORTADO); QoS F1 0.8186"
+    }
+  ],
+  "t901": {
+    "weights": "AUSENTE localmente (VM Colab, sessoes podadas) — NAO e teacher nesta campanha",
+    "contribution": "t901/contrastive.jsonl (270 revisados, en/pt) como material auditado da particao C; auditoria de rotulos/familias"
+  },
+  "prohibited_for_training": [
+    {"name": "golden450/specialized_holdout/old_golden450", "sha256": "1c01ae3ea15cacd49518236c4bb9001184336ebbeec98e88e57fb1368c1e1464"},
+    {"name": "t902_sealed_SEALED.jsonl", "sha256": "db457693d939cc62721b43f3eba4abb3048a30e14d6bb006cff725a2332c8ef9"},
+    {"name": "t903_sealed (506)", "sha256": "7578942a962bf3eb2dacb83e146802866d1d31abae5eea17628167d79f88d166"},
+    {"name": "calib_v4/v4_test.jsonl (split TEST SPROUT, holdout do BASE)", "sha256": "ver-regeneracao-seed-900"}
+  ],
+  "environment": {
+    "sdk": "laya==0.4.10 (venv /home/mzet/.cache/tese-laya/venv, torch 2.14.1+cpu local; T4 no Colab)",
+    "colab_cli": "0.7.4, saldo 368 CU no inicio da campanha, 0 sessoes ativas",
+    "generator": "VM .61 (agent@192.168.1.61) gemma-4-12b-it :8083 saudavel, RTX 3080, python 3.12.3"
+  }
+}

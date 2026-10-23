@@ -1,0 +1,144 @@
+{
+ "model": "/content/laya_t904/teachers/t902b",
+ "split": "/content/laya_t904/data/dev.jsonl",
+ "n": 336,
+ "qos": {
+  "confusion_matrix": {
+   "QI_BALANCED": {
+    "QI_BALANCED": 86,
+    "QI_CRITICAL": 24,
+    "QI_STREAM_LIKE": 32,
+    "QI_LOW_COST": 4,
+    "QI_FAILOVER": 6
+   },
+   "QI_CRITICAL": {
+    "QI_BALANCED": 25,
+    "QI_CRITICAL": 53,
+    "QI_STREAM_LIKE": 20,
+    "QI_LOW_COST": 7,
+    "QI_FAILOVER": 10
+   },
+   "QI_STREAM_LIKE": {
+    "QI_BALANCED": 17,
+    "QI_CRITICAL": 14,
+    "QI_STREAM_LIKE": 6,
+    "QI_LOW_COST": 1,
+    "QI_FAILOVER": 0
+   },
+   "QI_LOW_COST": {
+    "QI_BALANCED": 4,
+    "QI_CRITICAL": 1,
+    "QI_STREAM_LIKE": 0,
+    "QI_LOW_COST": 10,
+    "QI_FAILOVER": 0
+   },
+   "QI_FAILOVER": {
+    "QI_BALANCED": 0,
+    "QI_CRITICAL": 3,
+    "QI_STREAM_LIKE": 0,
+    "QI_LOW_COST": 0,
+    "QI_FAILOVER": 13
+   }
+  },
+  "per_class": {
+   "QI_BALANCED": {
+    "precision": 0.6515,
+    "recall": 0.5658,
+    "f1": 0.6056,
+    "support": 152
+   },
+   "QI_CRITICAL": {
+    "precision": 0.5579,
+    "recall": 0.4609,
+    "f1": 0.5048,
+    "support": 115
+   },
+   "QI_STREAM_LIKE": {
+    "precision": 0.1034,
+    "recall": 0.1579,
+    "f1": 0.125,
+    "support": 38
+   },
+   "QI_LOW_COST": {
+    "precision": 0.4545,
+    "recall": 0.6667,
+    "f1": 0.5405,
+    "support": 15
+   },
+   "QI_FAILOVER": {
+    "precision": 0.4483,
+    "recall": 0.8125,
+    "f1": 0.5778,
+    "support": 16
+   }
+  },
+  "macro_f1": 0.4707,
+  "accuracy": 0.5
+ },
+ "stream": {
+  "precision": 0.1034,
+  "recall": 0.1579,
+  "f1": 0.125,
+  "fpr_balanced_to_stream": 0.1745
+ },
+ "needs_planning": {
+  "accuracy": 0.5
+ },
+ "complexity": {
+  "mae": 0.4558,
+  "within_one": 0.9762
+ },
+ "urgency": {
+  "mae": 0.6161,
+  "within_one": 0.8125
+ },
+ "caps_macro_f1_mean": 0.5997,
+ "caps": {
+  "rust_refactor": {
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0
+  },
+  "python_refactor": {
+   "precision": 0.8276,
+   "recall": 0.5217,
+   "f1": 0.64
+  },
+  "unit_testing": {
+   "precision": 1.0,
+   "recall": 0.4026,
+   "f1": 0.5741
+  },
+  "security_audit": {
+   "precision": 0.9423,
+   "recall": 0.7903,
+   "f1": 0.8596
+  },
+  "code_review": {
+   "precision": 0.902,
+   "recall": 0.6667,
+   "f1": 0.7667
+  },
+  "research": {
+   "precision": 0.6875,
+   "recall": 0.8556,
+   "f1": 0.7624
+  },
+  "summarization": {
+   "precision": 1.0,
+   "recall": 0.3,
+   "f1": 0.4615
+  },
+  "translation": {
+   "precision": 0.6111,
+   "recall": 0.9167,
+   "f1": 0.7333
+  }
+ },
+ "latency_ms": {
+  "p50": 142.8,
+  "p95": 166.4,
+  "p99": 171.4
+ },
+ "total_s": 48.3
+}
