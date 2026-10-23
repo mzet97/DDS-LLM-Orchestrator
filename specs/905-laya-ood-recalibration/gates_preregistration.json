@@ -1,0 +1,30 @@
+{
+  "frozen_at": "2026-10-22 (ANTES de qualquer treino/ajuste do T905)",
+  "baseline_vigente": "bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a (+ calib 6e1543f3…)",
+  "sealed_t905": "novo, famílias novas medidas; abertura única; n alvo 450-550 com ICs ±0.05 nas prevalências reais",
+  "gates_absolutos": {
+    "qos_macro_f1_min": 0.85,
+    "stream_precision_min": 0.75,
+    "stream_recall_min": 0.80,
+    "stream_f1_min": 0.77,
+    "urgency_macro_f1_min": 0.85,
+    "planning_accuracy_min": 0.95,
+    "complexity_macro_f1_min": 0.70,
+    "caps_macro_f1_mean_min": 0.85
+  },
+  "mudancas_vs_t904_e_justificativa": {
+    "urgency 0.90 -> 0.85": "0.90 não tinha base empírica em OOD; melhor absoluto hoje 0.746; dados medidos por prazo de banco",
+    "planning 0.98 -> 0.95": "0.98 era valor de holdout sintético; 0.926 já atingido com dados da T904",
+    "complexity 0.94 -> 0.70": "rótulos medidos do nº de estágios do cenário (T904 usava rótulos inferidos)",
+    "caps 0.97 -> 0.85": "caps reais exigidas e mencionadas no texto (T904: sub-representadas em texto real)"
+  },
+  "nao_inferioridade": {
+    "vs": "vigente bda679e7… no MESMO sealed",
+    "margin": -0.02,
+    "per_question": true,
+    "ci": "pareado por família; se clusters insuficientes, declarar IC não confiável"
+  },
+  "operacional": {"latencia_p50_max": "+10% vs vigente", "integrity": "worker/DDS/Rust inalterados; shadow tasks_seen=0"},
+  "protocolo": "freeze do finalista (SHA+calibração+thresholds) → abertura única para finalista + vigente → decisão KEEP_VIGENTE | T905_OFFLINE_ELIGIBLE_AWAITING_APPROVAL | BLOCKED_WITH_TRAINED_CANDIDATE; sem re-tentativa",
+  "rotulos": "urgency/complexity/needs_planning/caps = OURO DE CONSTRUÇÃO (prazo do banco, nº de estágios, caps requeridas — texto construído para descrevê-los); qos = dual-LLM + adjudicação política v3; lote de revisão humana (300 estratificados) entregue ao autor como camada golden async"
+}
