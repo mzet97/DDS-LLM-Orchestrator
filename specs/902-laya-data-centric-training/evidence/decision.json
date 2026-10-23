@@ -1,0 +1,17 @@
+{
+  "decision": "KEEP_T900",
+  "selected_checkpoint_sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+  "finalist": "arm_B (5d7dd6522d94347f47566499e09cbd2ad90b4fccbeb26a91c6885fa8c0eda4c0)",
+  "sealed": {"sha256": "db457693d939cc62721b43f3eba4abb3048a30e14d6bb006cff725a2332c8ef9", "n": 528, "opened_once": true},
+  "evidence": {
+    "qos_macroF1": {"t900": 0.3233, "arm_B": 0.7308, "delta": 0.4074, "ci95": [0.3612, 0.4594]},
+    "stream_recall": {"t900": 0.0, "arm_B": 0.0417, "gate": 0.75, "met": false},
+    "urgency_macroF1": {"t900": 0.2898, "arm_B": 0.9981, "delta": 0.7083, "ci95": [0.6726, 0.7423]},
+    "planning_acc": {"t900": 0.6155, "arm_B": 1.0},
+    "complexity_acc": {"t900": 0.2765, "arm_B": 1.0},
+    "caps_macroF1_sealed": {"t900": 0.7202, "arm_B": 0.7194},
+    "old_golden_qosF1": {"t900": 0.8029, "arm_B": 0.8051}
+  },
+  "justification": "Ganho significativo de QoS/urgencia no sealed vem de CRITICAL/FAILOVER/LOW_COST/BALANCED e prazos, mas o alvo primario QI_STREAM_LIKE colapsa com frases novas (recall 0.0417, gate 0.75). Promover trocaria o checkpoint vigente por outro que nao resolve streaming fora das frases de treino. KEEP_T900.",
+  "next": "T903: streaming com variacao lexical ampla e exemplos reais revisados, novo sealed; nao reusar este sealed para tuning."
+}

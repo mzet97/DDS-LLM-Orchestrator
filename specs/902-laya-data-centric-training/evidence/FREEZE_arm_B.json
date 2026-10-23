@@ -1,0 +1,11 @@
+{
+  "finalist": "arm_B",
+  "base": "ckpt_t900 (358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f)",
+  "weights_sha256": "5d7dd6522d94347f47566499e09cbd2ad90b4fccbeb26a91c6885fa8c0eda4c0",
+  "training": "laya-train --data t902_train_focal.jsonl --eval t902_dev.jsonl --base ckpt_t900 --device cuda --seed 902 --epochs 4 --loss rlcd; 2130+ updates (focal 2889 rows)",
+  "selection_rule": "dev agrupado: B e C empatam 1.0 em QoS F1/STREAM/urgency; desempate por nao-regressao no golden antigo (QoS F1 B 0.8051 > C 0.7911)",
+  "dev_metrics": "QoS acc/F1 1.0/1.0, STREAM recall 1.0, urgency F1 1.0, planning 1.0, complexity 1.0 (dev_new 264)",
+  "old_golden_regression": "QoS F1 0.8051 vs T900 0.8029; STREAM 0.2051 igual (rotulos antigos sem cue); sem regressao relevante",
+  "sealed_protocol": "t902_sealed_SEALED.jsonl SHA db457693d939cc62721b43f3eba4abb3048a30e14d6bb006cff725a2332c8ef9, 528 exemplos, aberto 1x apos este freeze, sem ajuste posterior",
+  "known_limits": "dev e sealed sinteticos por construcao com cues explicitos; sealed usa frases B distintas e cenarios novos; distribuicao de classes do sealed e desenhada (STREAM 168/528)"
+}

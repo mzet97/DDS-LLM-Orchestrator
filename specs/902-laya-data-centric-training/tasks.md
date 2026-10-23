@@ -1,0 +1,11 @@
+# Tarefas M0-M9
+- M0 [x] inventario/orcamento (Given hashes, When auditado, Then baseline integro registrado)
+- M1 [x] politica + auditoria estratificada (Given politica, When amostra revisada, Then taxa mislabel registrada)
+- M2 [x] piloto 300-500 + escala condicional (Given piloto limpo, When suporte por classe ok, Then escalar)
+- M3 [x] splits agrupados + sealed lacrado (Given grupos, When split, Then overlap=0 e hashes)
+- M4 [x] baselines/pre-registro (Given matriz, When dry-run ok, Then treinar)
+- M5 [x] treinos T4 (Given validate ok, When treino termina, Then artefato loadable+manifesto)
+- M6 [x] avaliacao dev/IC (Given dev, When bootstrap, Then gate aplicado)
+- M7 [x] freeze + sealed 1x (Given freeze, When abre teste, Then decision.json)
+- M8 [x] Rust/DDS shadow real (Given candidato/seed, When shadow, Then tasks=0)
+- M9 [x] handoff (Given evidencias, When REPORT, Then reproducao verificada)

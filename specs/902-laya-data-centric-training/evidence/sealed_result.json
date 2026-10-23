@@ -1,0 +1,176 @@
+{
+  "sealed_sha256": "db457693d939cc62721b43f3eba4abb3048a30e14d6bb006cff725a2332c8ef9",
+  "results": {
+    "t900": {
+      "overall": {
+        "choice_accuracy": 0.3712121212121212,
+        "noul_accuracy": 0.877104377104377,
+        "score_mae": 0.9032410037878787,
+        "mean_confidence": 0.9889199337121212,
+        "ece": 0.16948941287878785,
+        "brier": 0.16997732705871213,
+        "aurc": 0.11461659734099268,
+        "selective_accuracy@50": 0.8903767589650476,
+        "selective_accuracy@80": 0.8903767589650476,
+        "latency_p50_ms": 173.71186449963716,
+        "latency_p95_ms": 190.25298700216808,
+        "cost_per_decision_p50_ms": 173.71186449963716,
+        "cost_per_decision_p95_ms": 190.25298700216808
+      },
+      "qos_acc": 0.3712121212121212,
+      "qos_f1": 0.32334631908009853,
+      "qos_per_label": {
+        "QI_BALANCED": {
+          "precision": 0.3915,
+          "recall": 0.7269,
+          "f1": 0.5089,
+          "support": 216
+        },
+        "QI_CRITICAL": {
+          "precision": 0.2,
+          "recall": 0.0312,
+          "f1": 0.0541,
+          "support": 96
+        },
+        "QI_FAILOVER": {
+          "precision": 1.0,
+          "recall": 0.5,
+          "f1": 0.6667,
+          "support": 24
+        },
+        "QI_LOW_COST": {
+          "precision": 0.24,
+          "recall": 1.0,
+          "f1": 0.3871,
+          "support": 24
+        },
+        "QI_STREAM_LIKE": {
+          "precision": 0,
+          "recall": 0.0,
+          "f1": 0,
+          "support": 168
+        }
+      },
+      "stream_rec": 0.0,
+      "urg_acc": 0.3371212121212121,
+      "urg_f1": 0.2898057748234316,
+      "urg_per_label": {
+        "0": {
+          "precision": 0.2381,
+          "recall": 0.4938,
+          "f1": 0.3213,
+          "support": 162
+        },
+        "1": {
+          "precision": 0.5318,
+          "recall": 0.436,
+          "f1": 0.4792,
+          "support": 211
+        },
+        "2": {
+          "precision": 0.3158,
+          "recall": 0.0387,
+          "f1": 0.069,
+          "support": 155
+        }
+      },
+      "plan_acc": 0.615530303030303,
+      "cx_acc": 0.2765151515151515,
+      "caps_f1": 0.7202346364654758
+    },
+    "arm_B_finalist": {
+      "overall": {
+        "choice_accuracy": 0.6950757575757576,
+        "noul_accuracy": 0.9318181818181818,
+        "score_mae": 0.04479886363636364,
+        "mean_confidence": 0.9874119791666667,
+        "ece": 0.08530657196969714,
+        "brier": 0.09020392962689394,
+        "aurc": 0.11061142019708299,
+        "selective_accuracy@50": 0.9293310463121783,
+        "selective_accuracy@80": 0.9278141213625084,
+        "latency_p50_ms": 172.4549995014968,
+        "latency_p95_ms": 185.6490859972837,
+        "cost_per_decision_p50_ms": 172.4549995014968,
+        "cost_per_decision_p95_ms": 185.6490859972837
+      },
+      "qos_acc": 0.6950757575757576,
+      "qos_f1": 0.7307858006177537,
+      "qos_per_label": {
+        "QI_BALANCED": {
+          "precision": 0.6792,
+          "recall": 1.0,
+          "f1": 0.809,
+          "support": 216
+        },
+        "QI_CRITICAL": {
+          "precision": 0.6194,
+          "recall": 1.0,
+          "f1": 0.7649,
+          "support": 96
+        },
+        "QI_FAILOVER": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 24
+        },
+        "QI_LOW_COST": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 24
+        },
+        "QI_STREAM_LIKE": {
+          "precision": 1.0,
+          "recall": 0.0417,
+          "f1": 0.08,
+          "support": 168
+        }
+      },
+      "stream_rec": 0.041666666666666664,
+      "urg_acc": 0.9981060606060606,
+      "urg_f1": 0.9981364230014282,
+      "urg_per_label": {
+        "0": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 162
+        },
+        "1": {
+          "precision": 1.0,
+          "recall": 0.9953,
+          "f1": 0.9976,
+          "support": 211
+        },
+        "2": {
+          "precision": 0.9936,
+          "recall": 1.0,
+          "f1": 0.9968,
+          "support": 155
+        }
+      },
+      "plan_acc": 1.0,
+      "cx_acc": 1.0,
+      "caps_f1": 0.7193696738069189
+    }
+  },
+  "paired_bootstrap_finalist_vs_t900": {
+    "qos_profile": {
+      "delta": 0.40743948153765513,
+      "ci95": [
+        0.36116217991836486,
+        0.4594096431346055
+      ]
+    },
+    "urgency": {
+      "delta": 0.7083306481779966,
+      "ci95": [
+        0.6726125480964671,
+        0.7422993742195737
+      ]
+    }
+  },
+  "note": "abertura unica pos-freeze FREEZE_arm_B.json; nenhum ajuste posterior"
+}
