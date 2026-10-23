@@ -1,0 +1,129 @@
+{"published": "Workflow.Intent", "request_id": "t904-ok"}
+{"published": "Workflow.Intent", "request_id": "t904-nopin"}
+{"published": "Workflow.Intent", "request_id": "t904-empty"}
+{"published": "Workflow.Intent", "request_id": "t904-oldrev"}
+{"published": "Workflow.Intent", "request_id": "t904-expired"}
+{"decision": {"request_id": "t904-ok", "decision_id": "dec-t904-ok", "model_id": "local:laya-t900-specialized-v1", "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f", "calibration_revision": "", "qos_profile": 2, "decision_status": 0, "reason_code": 0, "confidence": 0.9998, "created_at_ns": 1792607718978530949, "valid_until_ns": 1792607838978530949}}
+{"decision": {"request_id": "t904-nopin", "decision_id": "dec-t904-nopin", "model_id": "local:laya-t900-specialized-v1", "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f", "calibration_revision": "", "qos_profile": 2, "decision_status": 0, "reason_code": 0, "confidence": 0.9998, "created_at_ns": 1792607731703246343, "valid_until_ns": 1792607851703246343}}
+{"decision": {"request_id": "t904-empty", "decision_id": "dec-t904-empty", "model_id": "local:laya-t900-specialized-v1", "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f", "calibration_revision": "", "qos_profile": 0, "decision_status": 0, "reason_code": 0, "confidence": 0.9956, "created_at_ns": 1792607733077584767, "valid_until_ns": 1792607853077584767}}
+{"decision": {"request_id": "t904-oldrev", "decision_id": "dec-t904-oldrev", "model_id": "unavailable", "checkpoint_revision": "", "calibration_revision": "", "qos_profile": 0, "decision_status": 1, "reason_code": 4, "confidence": 0.0, "created_at_ns": 1792607734525376722, "valid_until_ns": 1792607854525376722}}
+{"decision": {"request_id": "t904-expired", "decision_id": "dec-t904-expired", "model_id": "unavailable", "checkpoint_revision": "", "calibration_revision": "", "qos_profile": 0, "decision_status": 1, "reason_code": 3, "confidence": 0.0, "created_at_ns": 1792607734525516937, "valid_until_ns": 1792607705991946610}}
+{"published": "forged", "request_id": "t904-badpin"}
+{"published": "forged", "request_id": "t904-stale"}
+{"published": "forged", "request_id": "t904-badcal"}
+{"decision": {"request_id": "t904-badpin", "decision_id": "dec-t904-badpin", "model_id": "forged", "checkpoint_revision": "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c", "calibration_revision": "", "qos_profile": 1, "decision_status": 0, "reason_code": 0, "confidence": 0.8, "created_at_ns": 1792607735204489252, "valid_until_ns": 1792608335204461129}}
+{"decision": {"request_id": "t904-stale", "decision_id": "dec-t904-stale", "model_id": "forged", "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f", "calibration_revision": "", "qos_profile": 1, "decision_status": 0, "reason_code": 0, "confidence": 0.8, "created_at_ns": 1792607735204532123, "valid_until_ns": 1792607675204461129}}
+{"decision": {"request_id": "t904-badcal", "decision_id": "dec-t904-badcal", "model_id": "forged", "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f", "calibration_revision": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "qos_profile": 1, "decision_status": 0, "reason_code": 0, "confidence": 0.8, "created_at_ns": 1792607735204547422, "valid_until_ns": 1792608335204461129}}
+{
+ "domain": 231,
+ "decisions_published": [
+  {
+   "request_id": "t904-ok",
+   "decision_id": "dec-t904-ok",
+   "model_id": "local:laya-t900-specialized-v1",
+   "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+   "calibration_revision": "",
+   "qos_profile": 2,
+   "decision_status": 0,
+   "reason_code": 0,
+   "confidence": 0.9998,
+   "created_at_ns": 1792607718978530949,
+   "valid_until_ns": 1792607838978530949
+  },
+  {
+   "request_id": "t904-nopin",
+   "decision_id": "dec-t904-nopin",
+   "model_id": "local:laya-t900-specialized-v1",
+   "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+   "calibration_revision": "",
+   "qos_profile": 2,
+   "decision_status": 0,
+   "reason_code": 0,
+   "confidence": 0.9998,
+   "created_at_ns": 1792607731703246343,
+   "valid_until_ns": 1792607851703246343
+  },
+  {
+   "request_id": "t904-empty",
+   "decision_id": "dec-t904-empty",
+   "model_id": "local:laya-t900-specialized-v1",
+   "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+   "calibration_revision": "",
+   "qos_profile": 0,
+   "decision_status": 0,
+   "reason_code": 0,
+   "confidence": 0.9956,
+   "created_at_ns": 1792607733077584767,
+   "valid_until_ns": 1792607853077584767
+  },
+  {
+   "request_id": "t904-oldrev",
+   "decision_id": "dec-t904-oldrev",
+   "model_id": "unavailable",
+   "checkpoint_revision": "",
+   "calibration_revision": "",
+   "qos_profile": 0,
+   "decision_status": 1,
+   "reason_code": 4,
+   "confidence": 0.0,
+   "created_at_ns": 1792607734525376722,
+   "valid_until_ns": 1792607854525376722
+  },
+  {
+   "request_id": "t904-expired",
+   "decision_id": "dec-t904-expired",
+   "model_id": "unavailable",
+   "checkpoint_revision": "",
+   "calibration_revision": "",
+   "qos_profile": 0,
+   "decision_status": 1,
+   "reason_code": 3,
+   "confidence": 0.0,
+   "created_at_ns": 1792607734525516937,
+   "valid_until_ns": 1792607705991946610
+  },
+  {
+   "request_id": "t904-badpin",
+   "decision_id": "dec-t904-badpin",
+   "model_id": "forged",
+   "checkpoint_revision": "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c",
+   "calibration_revision": "",
+   "qos_profile": 1,
+   "decision_status": 0,
+   "reason_code": 0,
+   "confidence": 0.8,
+   "created_at_ns": 1792607735204489252,
+   "valid_until_ns": 1792608335204461129
+  },
+  {
+   "request_id": "t904-stale",
+   "decision_id": "dec-t904-stale",
+   "model_id": "forged",
+   "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+   "calibration_revision": "",
+   "qos_profile": 1,
+   "decision_status": 0,
+   "reason_code": 0,
+   "confidence": 0.8,
+   "created_at_ns": 1792607735204532123,
+   "valid_until_ns": 1792607675204461129
+  },
+  {
+   "request_id": "t904-badcal",
+   "decision_id": "dec-t904-badcal",
+   "model_id": "forged",
+   "checkpoint_revision": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+   "calibration_revision": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+   "qos_profile": 1,
+   "decision_status": 0,
+   "reason_code": 0,
+   "confidence": 0.8,
+   "created_at_ns": 1792607735204547422,
+   "valid_until_ns": 1792608335204461129
+  }
+ ],
+ "worker_stdout": "{\"shadow\": {\"intents_seen\": 5, \"decisions_ok\": 3, \"decisions_error\": 2, \"tasks_written\": 0}, \"tasks_written\": 0}",
+ "worker_stderr": "/home/mzet/.cache/tese-laya/venv/lib64/python3.13/site-packages/laya/agent.py:2149: RuntimeWarning: laya: this checkpoint ships invalid temperatures or values outside [0.5, 5]; using choice:11+=0.10058280825614929 -> 0.5. Treat confidence from the affected entries as uncalibrated.\n  return Agent(model_id_or_path, device=device, token=token, subfolder=subfolder, fast=fast,",
+ "wf_observe_stdout": "{\"decision_id\":\"dec-t904-ok\",\"reason\":\"required=[] priority=5 shadow_only=true\",\"verdict\":\"accept\"}\n{\"decision_id\":\"dec-t904-nopin\",\"reason\":\"required=[] priority=5 shadow_only=true\",\"verdict\":\"accept\"}\n{\"decision_id\":\"dec-t904-empty\",\"reason\":\"required=[] priority=5 shadow_only=true\",\"verdict\":\"accept\"}\n{\"decision_id\":\"dec-t904-oldrev\",\"reason\":\"revisões pinadas pela intenção não conferem (questions/policy/catalog/checkpoint): checkpoint_revision divergente do pin da intenção\",\"verdict\":\"reject\"}\n{\"decision_id\":\"dec-t904-expired\",\"reason\":\"revisões pinadas pela intenção não conferem (questions/policy/catalog/checkpoint): checkpoint_revision divergente do pin da intenção\",\"verdict\":\"reject\"}\n{\"decision_id\":\"dec-t904-badpin\",\"reason\":\"revisões pinadas pela intenção não conferem (questions/policy/catalog/checkpoint): checkpoint_revision divergente do pin da intenção\",\"verdict\":\"reject\"}\n{\"decision_id\":\"dec-t904-stale\",\"reason\":\"janela de validade violada (valid_until > deadline+skew ou created > valid_until): created 1792607735204532123 valid_until 1792607675204461129 deadline 1792608335204526723 (skew 5000000000ns)\",\"verdict\":\"reject\"}\n{\"decision_id\":\"dec-t904-badcal\",\"reason\":\"required=[] priority=5 shadow_only=true\",\"verdict\":\"accept\"}\n{\"accepted\":4,\"decisions\":8,\"errors\":0,\"intents\":8,\"rejected\":4,\"shadow_only\":4,\"tasks_seen\":0}",
+ "wf_observe_stderr": ""
+}

@@ -1,0 +1,30 @@
+{
+  "date": "2026-10-21",
+  "what": "Shadow REAL do laya-worker com checkpoint T900 em DDS (CycloneDDS loopback, domínio 231 isolado)",
+  "harness": "workers/laya-worker/harness/run_shadow_t904.py",
+  "raw_output": "m5-shadow-real-output.txt",
+  "worker": {
+    "adapter": "RealLayaAdapter LOCAL (checkpoint_path, hash verificado no start)",
+    "checkpoint": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+    "stats": {"intents_seen": 5, "decisions_ok": 3, "decisions_error": 2, "tasks_written": 0},
+    "identity_in_decisions": "model_id=local:laya-t900-specialized-v1, checkpoint_revision=35813054…",
+    "calibration_revision": "(vazio — sem calibração do T900)"
+  },
+  "wf_observe": {
+    "policy": "calibration_pin=<pin v4 do BASE 10ef5945…> (propositamente diverso do worker)",
+    "counters": {"intents": 8, "decisions": 8, "accepted": 4, "errors": 0, "rejected": 4, "shadow_only": 4, "tasks_seen": 0}
+  },
+  "scenarios": [
+    {"id": "t904-ok", "intent": "pin=T900, rev=1", "worker": "DS_OK qos=QI_STREAM_LIKE(2) conf=0.9998", "verdict": "accept shadow_only=true"},
+    {"id": "t904-nopin", "intent": "pin=vazio", "worker": "DS_OK", "verdict": "accept shadow_only=true"},
+    {"id": "t904-empty", "intent": "prompt vazio", "worker": "DS_OK qos=QI_BALANCED conf=0.9956 (OBSERVADO: modelo classifica prompt vazio; intake pode rejeitar — fora de escopo)", "verdict": "accept shadow_only=true"},
+    {"id": "t904-oldrev", "intent": "questions_revision=2", "worker": "DS_ERROR reason=4 RC_SCHEMA_MISMATCH", "verdict": "reject RevisionPin (validator é fail-closed: decisão de erro tem checkpoint vazio ≠ pin da intenção — checagem de revisão precede status×reason)"},
+    {"id": "t904-expired", "intent": "deadline no passado", "worker": "DS_ERROR reason=3 RC_TIMEOUT", "verdict": "reject RevisionPin (mesma ordem fail-closed do validator)"},
+    {"id": "t904-badpin (forjada)", "decision": "checkpoint=BASE 891102d3… vs pin da intenção=T900", "verdict": "reject RevisionPin", "note": "decisão com checkpoint divergente NUNCA passa"},
+    {"id": "t904-stale (forjada)", "decision": "valid_until < now-5s", "verdict": "reject ValidityWindow (janela violada, detail com timestamps)"},
+    {"id": "t904-badcal (forjada)", "decision": "calibration_revision=ffff… ≠ policy pin", "verdict": "accept shadow_only=true — calibração divergente NUNCA ativa execução"}
+  ],
+  "gates": {"tasks_seen": 0, "tasks_written": 0, "no_silent_fallback": true, "exit": 0},
+  "lan_leak_check": "nenhum ddsi_udp_conn_write para 192.168.1.x (loopback obrigatório em TODOS os processos, incluindo o publicador)",
+  "verdict": "GATE M5 PASS"
+}

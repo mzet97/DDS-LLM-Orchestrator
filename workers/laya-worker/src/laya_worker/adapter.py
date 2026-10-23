@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol
 
 from . import rules_baseline
@@ -19,6 +20,18 @@ from .questions import CAPABILITY_CATALOG, QOS_PROFILES, QUESTIONS_REVISION, QUE
 
 class LayaUnavailableError(RuntimeError):
     """SDK Laya ausente/não pinado — inferência real BLOCKED (R-LAYA)."""
+
+
+class CheckpointMissingError(LayaUnavailableError):
+    """checkpoint_path inexistente (T904/REQ-904-002) — sem fallback."""
+
+
+class CheckpointIncompleteError(LayaUnavailableError):
+    """Diretório do checkpoint sem arquivos exigidos pelo SDK (T904/REQ-904-002)."""
+
+
+class CheckpointHashMismatchError(LayaUnavailableError):
+    """sha256 do model.safetensors diverge do pin esperado (T904/REQ-904-002)."""
 
 
 class LayaTimeoutError(TimeoutError):
@@ -92,6 +105,38 @@ CHECKPOINT_MODEL_SHA256 = "891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be
 CHECKPOINT_CONFIG_SHA256 = "ae287b56bbcf5f8c4f4541ae9dfd00c914c4c48b940b8398c3058af37ba92bbd"
 PINNED_SDK = "laya==0.4.10 (Apache-2.0)"
 
+# T904/REQ-904-002: arquivos que o laya==0.4.10 exige num diretório de checkpoint
+# (agent.py: rl_agent_config.json + model.safetensors + tokenizer/* + encoder/*).
+# Pesos sozinhos NÃO são carregáveis — ver workers/laya-worker/tools/assemble_checkpoint.py.
+CHECKPOINT_REQUIRED_FILES = (
+    "model.safetensors",
+    "rl_agent_config.json",
+    "encoder/config.json",
+    "tokenizer/tokenizer_config.json",
+    "tokenizer/tokenizer.json",
+)
+
+
+def _sha256_file(path: str) -> str:
+    """SHA-256 em stream (arquivos de ~842 MB não cabem em slurp)."""
+    import hashlib as _h
+
+    h = _h.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _laya_load(path: str, expected_sha256: dict[str, str] | None = None):
+    """Ponto ÚNICO de carga do SDK (injetável nos testes; import LAZY).
+
+    `expected_sha256` usa a verificação NATIVA do SDK ({caminho relativo: hexdigest}).
+    """
+    import laya
+
+    return laya.load(path, expected_sha256=expected_sha256)
+
 
 def _laya_questions() -> dict:
     """QUESTIONS_V1 no formato do SDK: choice + bateria noul por capability + scores."""
@@ -112,22 +157,33 @@ def _laya_questions() -> dict:
 class RealLayaAdapter:
     """Adapter do SDK Laya REAL (pinado; desbloqueado por autorização).
 
-    Import LAZY de `laya` (nunca no caminho de unit tests). Verifica o PIN do
-    checkpoint (sha256 do model.safetensors no cache HF) no primeiro uso e
-    recusa divergência. Timeout: inferência roda em thread com prazo derivado
-    do deadline da intenção (`LayaTimeoutError` tipado).
+    Import LAZY de `laya` (nunca no caminho de unit tests). Dois modos:
 
-    Nota de calibração (honestidade/D10): o checkpoint emite aviso de
-    temperaturas inválidas — confianças NÃO calibradas; o worker segue
-    marcando calibration_revision vazia (shadow) e o validator Rust exige
-    calibração para ativar execução.
+    - LOCAL (T904): `checkpoint_path` + `checkpoint_sha256` obrigatórios. O
+      sha256 do `model.safetensors` é calculado ANTES do load (erros tipados
+      `CheckpointMissingError`/`CheckpointIncompleteError`/
+      `CheckpointHashMismatchError`); o load é offline e SEM fallback para o
+      ID remoto. Identidade: `model_id` = `local:<dir>` (ou explícito),
+      `checkpoint_revision` = hash verificado.
+    - LEGADO (sem `checkpoint_path`): ID remoto do BASE pinado — mantido para
+      reprodução dos experimentos de calibração v1–v4.
+
+    Timeout: inferência roda em thread com prazo derivado do deadline da
+    intenção (`LayaTimeoutError` tipado).
+
+    Nota de calibração (honestidade/D10): as calibrações existentes (v1–v4)
+    pertencem ao BASE; sem calibração vinculada ao checkpoint carregado,
+    `calibration_revision` fica vazia e o validator Rust mantém a decisão em
+    shadow.
     """
 
     EXPECTED_SDK = PINNED_SDK
     MODEL_ID = "convaiinnovations/laya"
 
     def __init__(self, checkpoint_sha256: str | None = None,
-                 calibration_path: str | None = None) -> None:
+                 calibration_path: str | None = None,
+                 checkpoint_path: str | None = None,
+                 model_id: str | None = None) -> None:
         self.checkpoint_sha256 = checkpoint_sha256 or CHECKPOINT_MODEL_SHA256
         if len(self.checkpoint_sha256) != 64:
             raise LayaUnavailableError(
@@ -145,9 +201,40 @@ class RealLayaAdapter:
             blob = _P(calibration_path).read_bytes()
             self.calibration_pin = _h.sha256(blob).hexdigest()
 
+        # T904/REQ-904-001: modo local EXPLÍCITO. Sem checkpoint_path, o modo
+        # legado (ID remoto do BASE, reprodução de experimentos) é preservado.
+        self.checkpoint_dir = ""
+        self._expected_digests: dict[str, str] | None = None
+        if checkpoint_path is None:
+            self.model_id = model_id or self.MODEL_ID
+            return
+
+        path = Path(checkpoint_path)
+        if path.is_file():  # aceita <dir>/model.safetensors ou o diretório
+            path = path.parent
+        if not path.is_dir():
+            raise CheckpointMissingError(f"checkpoint_path inexistente: {checkpoint_path}")
+        missing = [rel for rel in CHECKPOINT_REQUIRED_FILES if not (path / rel).is_file()]
+        if missing:
+            raise CheckpointIncompleteError(
+                f"checkpoint incompleto em {path}; faltam (monte com "
+                f"tools/assemble_checkpoint.py): {', '.join(missing)}"
+            )
+        got = _sha256_file(str(path / "model.safetensors"))
+        if got != self.checkpoint_sha256:
+            raise CheckpointHashMismatchError(
+                f"checkpoint divergente do pin: {got} != {self.checkpoint_sha256}"
+            )
+        self.checkpoint_dir = str(path.resolve())
+        self._expected_digests = {"model.safetensors": got}
+        self.checkpoint_sha256 = got
+        self.model_id = model_id or f"local:{path.name}"
+
     def _load(self):
         if self._agent is not None:
             return self._agent
+        if self.checkpoint_dir:
+            return self._load_local()
         try:
             import laya
         except ImportError as e:
@@ -155,18 +242,42 @@ class RealLayaAdapter:
                 f"SDK Laya não instalado ({e}); esperado: {self.EXPECTED_SDK}"
             ) from e
         import glob as _glob
-        import hashlib as _hash
 
         snaps = _glob.glob(
             f"{_home_hf()}/hub/models--convaiinnovations--laya/snapshots/*/model.safetensors"
         )
         if snaps:
-            got = _hash.sha256(open(snaps[0], "rb").read()).hexdigest()
+            got = _sha256_file(snaps[0])
             if got != self.checkpoint_sha256:
-                raise LayaUnavailableError(
+                raise CheckpointHashMismatchError(
                     f"checkpoint divergente do pin: {got} != {self.checkpoint_sha256}"
                 )
-        self._agent = laya.load(self.MODEL_ID)
+        self._agent = _laya_load(self.MODEL_ID)
+        if self.calibration_path:
+            self._agent.load_calibration(self.calibration_path)
+        return self._agent
+
+    def _load_local(self):
+        """T904/REQ-904-002+003: carrega SÓ o diretório local verificado.
+
+        Hash conferido no __init__ ANTES daqui; offline forçado durante o load
+        (sem registry/alias/rede); o path com separador faz o SDK tratar como
+        checkpoint local. Nenhum fallback para `convaiinnovations/laya`.
+        """
+        import os as _os
+
+        saved = {k: _os.environ.get(k) for k in ("HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE")}
+        for k in saved:
+            _os.environ[k] = "1"
+        try:
+            self._agent = _laya_load(self.checkpoint_dir,
+                                     expected_sha256=self._expected_digests)
+        finally:
+            for k, prev in saved.items():
+                if prev is None:
+                    _os.environ.pop(k, None)
+                else:
+                    _os.environ[k] = prev
         if self.calibration_path:
             self._agent.load_calibration(self.calibration_path)
         return self._agent
@@ -248,7 +359,7 @@ class RealLayaAdapter:
             priority_probabilities=prio3,
             confidence=float(qos_ans.get("confidence", 0.0)),
             answer_confidence=float(qos_ans.get("answer_confidence", 0.0)),
-            model_id=self.MODEL_ID,
+            model_id=self.model_id,
             checkpoint_revision=self.checkpoint_sha256,
             calibration_revision=self.calibration_pin,
         )

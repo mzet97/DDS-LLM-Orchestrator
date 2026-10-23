@@ -1,8 +1,10 @@
 # `workflow-engine` — runtime adaptativo da fase 900 (Laya)
 
-> Crate: `src/rust/crates/workflow-engine/` · Fase 900 (2026-10) · Estudo
-> complementar (não-RQ5) · Worker Python: `src/rust/workers/laya-worker/` ·
-> Dossiê SDD completo: `src/rust/specs/900-laya-adaptive-routing/`.
+> Crate: `src/rust/crates/workflow-engine/` · Fase 900 (2026-10) · **PARTE DA
+> DISSERTAÇÃO** (decisão do autor 2026-10-19 — menções antigas a "estudo
+> complementar/não-RQ5" estão superadas) · Worker Python:
+> `src/rust/workers/laya-worker/` · Dossiê SDD: `specs/900-laya-adaptive-routing/`
+> · Integração do checkpoint T900 no runtime: `specs/904-laya-runtime-integration/`.
 
 ## Propósito
 
