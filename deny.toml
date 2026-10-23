@@ -6,7 +6,9 @@ unmaintained = "workspace"
 # upgrades de russh/egui.
 ignore = [
     { id = "RUSTSEC-2023-0071", reason = "sem fix upstream (pre-release via russh); handshake SSH admin" },
-    { id = "RUSTSEC-2026-0192", reason = "unmaintained; parsing local de fontes da GUI (egui)" },
+        { id = "RUSTSEC-2026-0192", reason = "unmaintained; parsing local de fontes da GUI (egui)" },
+    { id = "RUSTSEC-2026-0370", reason = "unmaintained; zvariant 5.x na pilha zbus da GUI (sem substituto; sem rede não confiável) — revisitar 2027-01" },
+    { id = "RUSTSEC-2026-0371", reason = "unmaintained; zbus_names 4.x na pilha zbus da GUI (sem substituto) — revisitar 2027-01" },
 ]
 
 [bans]
