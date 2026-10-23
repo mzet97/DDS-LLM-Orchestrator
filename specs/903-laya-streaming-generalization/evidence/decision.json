@@ -1,0 +1,19 @@
+{
+  "task": "T903 laya-streaming-generalization",
+  "verdict": "KEEP_T900",
+  "vigente": "T900 358130541619651210825cec965e2141a2650e8d20ec0d3f714cd3f98123a76f",
+  "finalist": {"arm": "arm_C", "loss": "soft-ce", "seed": 903,
+    "sha256": "7de213c7b24fca603f1f58e04ad4f8029fef396d5cf0e24e3c0067bb996cd05d"},
+  "gate": {"stream_recall_min": 0.75, "qos_f1_min": 0.85, "precision_min": 0.5},
+  "dev_arm_C": {"qos_acc": 0.94, "qos_macroF1": 0.9497, "stream_p": 1.0, "stream_r": 0.7857,
+    "urgency_f1": 0.9924, "planning_acc": 1.0, "complexity_acc": 1.0,
+    "itemCI_macroF1": [0.9143, 0.9787]},
+  "sealed_arm_C": {"n": 506, "qos_acc": 0.7391, "qos_macroF1": 0.8186,
+    "stream_p": 0.5464, "stream_r": 0.7143, "stream_f1": 0.6192,
+    "urgency_f1": 0.9632, "sha": "7578942a962bf3eb2dacb83e146802866d1d31abae5eea17628167d79f88d166"},
+  "sealed_B0": {"qos_acc": 0.5909, "qos_macroF1": 0.5437, "stream_r": 0.0},
+  "gate_result": "FAIL: sealed qos_macroF1 0.8186 < 0.85; sealed stream_r 0.7143 < 0.75 (precision 0.5464 >= 0.5 ok). Dev margins passed except caps/research (B0 also fails: 0.667 -> not a regression, arm_C 0.787).",
+  "mechanism": "83 BALANCED->STREAM false positives + 40 STREAM misses on unseen phrase bank D, uniform across 10 sealed scenarios; dev template-mirrored clusters masked the gap (cluster bootstrap degenerate).",
+  "sealed_openings": 1,
+  "note": "Sealed opened once post-freeze; no tuning on sealed. arm_A/B/C archived with SHA, not promoted."
+}

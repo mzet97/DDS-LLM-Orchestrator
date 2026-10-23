@@ -103,12 +103,19 @@ def main() -> int:
     n = 30
     if "--n" in sys.argv:
         n = int(sys.argv[sys.argv.index("--n") + 1])
+    ckpt_path = ckpt_sha = ckpt_label = None
+    if "--checkpoint-path" in sys.argv:
+        ckpt_path = sys.argv[sys.argv.index("--checkpoint-path") + 1]
+        ckpt_sha = sys.argv[sys.argv.index("--checkpoint-sha256") + 1]
+        ckpt_label = sys.argv[sys.argv.index("--label") + 1] if "--label" in sys.argv else Path(ckpt_path).name
     outdir.mkdir(parents=True, exist_ok=True)
     rows = _ev.load()
     by_id = {r["id"]: r for r in rows}
     lat_rows = [by_id[i] for i in LATENCY_IDS]
-    adapter = RealLayaAdapter()
+    adapter = (RealLayaAdapter(checkpoint_path=ckpt_path, checkpoint_sha256=ckpt_sha)
+               if ckpt_path else RealLayaAdapter())
     adapter.decide("warmup", time.time_ns() + 60_000_000_000)  # load fora da medição
+    print(f"checkpoint_label={ckpt_label or 'base-891102d3'}")
 
     arms = ["rules", "laya", "planner_only", "laya_planner"]
 

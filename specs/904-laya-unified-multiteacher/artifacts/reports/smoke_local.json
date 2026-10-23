@@ -1,0 +1,63 @@
+{"sha256": "bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a", "bytes": 842609220}
+{
+ "profiles_seen": [
+  "QI_BALANCED",
+  "QI_CRITICAL",
+  "QI_FAILOVER",
+  "QI_LOW_COST"
+ ],
+ "all_profiles_covered": false,
+ "smoke": [
+  {
+   "expect": "QI_STREAM_LIKE",
+   "got": "QI_BALANCED",
+   "ok": false,
+   "needs_planning": false,
+   "complexity": 1.0002,
+   "urgency": 1.0001,
+   "latency_s": 1.89
+  },
+  {
+   "expect": "QI_BALANCED",
+   "got": "QI_BALANCED",
+   "ok": true,
+   "needs_planning": false,
+   "complexity": 1.0002,
+   "urgency": 1.0002,
+   "latency_s": 1.78
+  },
+  {
+   "expect": "QI_CRITICAL",
+   "got": "QI_CRITICAL",
+   "ok": true,
+   "needs_planning": false,
+   "complexity": 1.0101,
+   "urgency": 1.9969,
+   "latency_s": 1.9
+  },
+  {
+   "expect": "QI_LOW_COST",
+   "got": "QI_LOW_COST",
+   "ok": true,
+   "needs_planning": false,
+   "complexity": 1.0006,
+   "urgency": 0.1495,
+   "latency_s": 1.77
+  },
+  {
+   "expect": "QI_FAILOVER",
+   "got": "QI_FAILOVER",
+   "ok": true,
+   "needs_planning": true,
+   "complexity": 1.9999,
+   "urgency": 1.0,
+   "latency_s": 1.79
+  }
+ ],
+ "caps_fired_on_probe": [
+  "code_review",
+  "python_refactor",
+  "unit_testing"
+ ],
+ "load_and_smoke": "PASS"
+}

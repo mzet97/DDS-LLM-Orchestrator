@@ -1,0 +1,42 @@
+# Matriz de SHA-256 dos model.safetensors — computada nesta execução (M0, 2026-10-21)
+
+Comando: `sha256sum <arquivo>` + `stat -L -c %s` (tamanho resolvido, seguindo symlink).
+
+| # | Caminho | Tamanho (bytes) | SHA-256 | Papel |
+|---|---|---|---|---|
+| 1 | /home/mzet/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/7b928d828b7b0e022f929d9bd2e44165aa270148/model.safetensors | 842609210 | 891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c | BASE (pin do adapter) |
+| 2 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_specialized_v1/model.safetensors | 842609220 | 358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f | **T900 VIGENTE** |
+| 3 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_taskbench_aux/model.safetensors | 842609220 | 030f34b5f417af18af94a30e62b3cbd3aa2ec1924e483fb82484dbb3a9f1f84e | T900 auxiliar (etapa intermediária) |
+| 4 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_A/model.safetensors | 842609220 | f86164262d428db56903fc6546ff378b26c886c355020cac8bf85610930eade3 | T902 braço A (rejeitado) |
+| 5 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_B/model.safetensors | 842609220 | 5d7dd6522d94347f47566499e09cbd2ad90b4fccbeb26a91c6885fa8c0eda4c0 | T902 braço B (rejeitado; finalista) |
+| 6 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_C/model.safetensors | 842609220 | b03a5f82cb3c8fc34be23dcc0ff2511f531a0aa795f528cd0463a7d22fee2b6a | T902 braço C (rejeitado) |
+| 7 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_A/model.safetensors | 842609220 | b2d9d950a46ef7ae57669b6cfbce41c577f1e423d310d7299f189be6859f3b50 | T903 braço A (rejeitado) |
+| 8 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_B/model.safetensors | 842609220 | ccb50b391d698d6b84a13a00a5d6936259800cd6c79b93a5d6f91cc30f025e81 | T903 braço B (rejeitado) |
+| 9 | /var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_C/model.safetensors | 842609220 | 7de213c7b24fca603f1f58e04ad4f8029fef396d5cf0e24e3c0067bb996cd05d | T903 braço C (rejeitado; finalista) |
+
+## Verificações cruzadas
+
+- T900 `35813054…` (#2) confere **EXATAMENTE** com o esperado no PROMPT MESTRE T904 e com
+  `RESULTADO_COMPLETO_T900_T901.md` ("Checkpoint especializado: SHA `35813054…` (842 MB)").
+  842609220 bytes = 842,6 MB decimal (o texto "842 MB" e o `ls` "803.6M" são MiB — consistentes).
+- T900 auxiliar `030f34b5…` (#3) confere com §2.2 do relatório T900.
+- T902 finalista arm_B `5d7dd652…` (#5) confere com `t902/decision.json` (`finalist`).
+- T903 finalista arm_C `7de213c7…` (#9) confere com `t903/decision.json` (`finalist.sha256`).
+- BASE `891102d3…` (#1) confere com o pin `CHECKPOINT_MODEL_SHA256` de
+  `workers/laya-worker/src/laya_worker/adapter.py:91` e com `CHECKPOINT_SNAPSHOT`
+  (`7b928d82…`, rev do snapshot HF). NOTA: `stat` SEM `-L` reporta 76 B (tamanho do
+  symlink); o arquivo resolvido tem 842609210 bytes e é um safetensors válido
+  (header JSON verificado com `od -c`).
+
+## Divergência de documento (não de peso)
+
+- `laya_t900_handoff/t903/decision.json` campo `vigente` contém typo:
+  `…0ec0d3f714cd3f98123a76f` (tem `f7`) — o correto, confirmado pelo peso real e pelo
+  T902/T900, é `…0ec0d3e714cd3f98123a76f` (com `e7`). O peso real (#2) prevalece.
+  Documento NÃO foi editado (preservação do histórico — correção datada só no M8).
+
+## T901 — braços A–D
+
+Pesos AUSENTES localmente (ficaram na VM Colab). Preservados: `t901/manifest_t901.json`
+(hashes), `t901/train_report_arm_{A,B,C,D}.json`, `t901/m4_golden_armD.json`,
+`t901/m4_validation_summary.json`, `t901/RELATORIO_T901.md`.

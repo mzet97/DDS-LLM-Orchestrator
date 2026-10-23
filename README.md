@@ -105,10 +105,18 @@ DDS-backed tests must run with `--test-threads=1` to avoid participant
 contention.
 
 Run the orchestrator end-to-end (requires a built `llama-server` with DDS —
-see `src/llama_cpp/`; the fork rebuild with gemma4+HIP lives in
-`third_party/llama.cpp_dds`, branch `sync/upstream-20261018` — always start it
-with `--alias <model_name_used_by_tasks>`; the bridge silently drops requests
-with a mismatched model):
+see `src/llama_cpp/`; **build it STATIC: `-DBUILD_SHARED_LIBS=OFF` is mandatory
+on 0.7.0**, the shared layout breaks DDS request delivery, verified 2026-10-21
+in `notes.md` §I.10). Production binaries (2026-10-21): local RX 7900 XTX
+`~/.cache/tese-benchmarks/llama-prebuilt/llama-070-hip/llama-server` (HIP,
+Muse-Glimmer-30B + draft-dflash + vision), VM .61 `~/llama-070/llama-server`
+(CUDA, gemma-4-12b + draft-mtp + vision on :8083, Qwen + DDS 170 on :8082),
+VM .64 `~/llama-070/llama-server` (CPU). The historical fork rebuild with
+gemma4+HIP lives in `third_party/llama.cpp_dds`, branch `sync/upstream-20261018`
+(its O-1 parity patch is now merged into `src/llama_cpp`). Always start the
+server with `--alias <model_name_used_by_tasks>`; the bridge silently drops
+requests with a mismatched model. Use `-np 1` (`-np` auto forks the 0.7.0
+server into router/child processes):
 
 ```bash
 CYCLONEDDS_STATIC=1 cargo run -p orchestrator --features dds

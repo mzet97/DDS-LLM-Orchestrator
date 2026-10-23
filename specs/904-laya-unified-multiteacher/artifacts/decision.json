@@ -1,0 +1,85 @@
+{
+ "decision": "BLOCKED_WITH_TRAINED_CANDIDATE",
+ "baseline_checkpoint_sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+ "candidate_checkpoint_sha256": "bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a",
+ "candidate_local_path": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t904/models/laya_t904_unified",
+ "candidate_runtime_assembly": "/home/mzet/.cache/tese-laya/checkpoints/laya-t904-unified-c",
+ "checkpoint_load_test": "PASS",
+ "teacher_inventory": "specs/904-laya-unified-multiteacher/checkpoint_inventory.json",
+ "dev_comparison": "reports/dev_comparison.json + reports/eval_arm_*.json",
+ "sealed_t904": {
+  "sha256": "bf11db4637f27911 (pool 567 casos)",
+  "opened_once": true,
+  "note": "1a tentativa crashou na row 0 (parser de labels) sem registrar resultado; abertura válida única em seguida"
+ },
+ "gates": {
+  "qos_macro_f1": {
+   "min": 0.85,
+   "got": 0.823,
+   "pass": false
+  },
+  "stream_precision": {
+   "min": 0.75,
+   "got": 0.936,
+   "pass": true
+  },
+  "stream_recall": {
+   "min": 0.8,
+   "got": 0.903,
+   "pass": true
+  },
+  "stream_f1": {
+   "min": 0.77,
+   "got": 0.919,
+   "pass": true
+  },
+  "urgency_macro_f1": {
+   "min": 0.9,
+   "got": 0.746,
+   "pass": false
+  },
+  "planning_accuracy": {
+   "min": 0.98,
+   "got": 0.926,
+   "pass": false
+  },
+  "complexity_macro_f1": {
+   "min": 0.94,
+   "got": 0.529,
+   "pass": false
+  },
+  "caps_macro_f1_mean": {
+   "min": 0.97,
+   "got": 0.767,
+   "pass": false
+  },
+  "latencia_p50_vs_b0": {
+   "min": "sem regressão",
+   "got": "148 vs 151 ms",
+   "pass": true
+  }
+ },
+ "candidate_vs_baseline_sealed": "arm_C domina o T900 em TODAS as métricas (QoS F1 0.823 vs 0.492; STREAM F1 0.919 vs 0.214; planning 0.926 vs 0.302; caps 0.767 vs 0.655)",
+ "shadow": "PASS",
+ "e2e": "PASS (pareado via .61: decisao+planejamento; T904C qos 0.844/planning 1.000 vs T900 0.813/0.938; latencia paridade)",
+ "storage_integrity": "PASS",
+ "calibration_pin": "6e1543f375698e1984fdbb52507356413a9010440b6c613dc3c767d0f90d132f",
+ "justification": "Gates absolutos pre-registrados partem dos holdouts SINTETICOS do T900; em texto OOD real nenhum modelo os atinge (o proprio T900 faz planning 0.302 no mesmo sealed). Sem afrouxar gate apos ver resultado: status BLOCKED. O candidato NAO foi promovido; T900 segue baseline.",
+ "limitations": [
+  "kappa=1.0 e concordancia LLM x LLM (mesmo gerador) - consistencia, nao validade humana",
+  "particao E (TaskBench/WorFBench) NOT_RUN; ablacoe E/F NOT_RUN (SDK sem LwF/EWC)",
+  "sem revisao humana (tiers silver; nada rotulado de golden)",
+  "arm_D OOM por lancamento duplo (relançado e completo); E2E-C: 30/32 runs (OOM-killer local; agregado n=120)",
+  "v4_train (SPROUT) sem campo de licenca explicito no card"
+ ],
+ "next": "Autor decide promocao (candidato domina T900 no sealed novo). Se aprovar: pin bda679e7 + calib 6e1543f3 + re-shadow com --calibration-pin. T905 com novos dados para gates OOD recalibrados.",
+ "promotion": {
+  "approved_by": "autor (2026-10-22, 'pode seguir' após apresentação das opções)",
+  "date": "2026-10-22",
+  "action": "arm_C bda679e7… promovido a checkpoint vigente do runtime Laya; T900 35813054… preservado como baseline anterior",
+  "production_path": "/home/mzet/.cache/tese-laya/checkpoints/laya-production (symlink → laya-t904-unified-c)",
+  "calibration_pin": "6e1543f375698e1984fdbb52507356413a9010440b6c613dc3c767d0f90d132f",
+  "validation": "shadow DDS M8: shadow_only=false com pin casando, tasks_seen=0; smoke laya-production PASS",
+  "rollback": "reverter para T900: --checkpoint-path teachers/t900-specialized --checkpoint-sha256 35813054… (preservado e re-hashado)"
+ }
+}

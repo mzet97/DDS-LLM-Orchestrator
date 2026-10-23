@@ -1,0 +1,33 @@
+# Estado git no M0 (2026-10-21)
+
+```
+## studio/phase-800-node...origin/studio/phase-800-node
+ M README.md
+ M specs/900-laya-adaptive-routing/README.md
+ M workers/laya-worker/src/laya_worker/__pycache__/cli.cpython-314.pyc
+ M workers/laya-worker/src/laya_worker/__pycache__/space.cpython-314.pyc
+?? specs/900-laya-adaptive-routing/CONFERENCIA_IMPLEMENTACAO_X_DOC_LAYA.md
+?? specs/900-laya-adaptive-routing/HANDOFF_LAYA_IMPLEMENTACAO.md
+?? specs/902-laya-data-centric-training/
+?? specs/903-laya-streaming-generalization/
+?? specs/904-laya-runtime-integration/
+?? workers/laya-worker/tests/__pycache__/test_adapter.cpython-314-pytest-9.0.3.pyc
+?? workers/laya-worker/tests/__pycache__/test_decide.cpython-314-pytest-9.0.3.pyc
+?? workers/laya-worker/tests/__pycache__/test_digest.cpython-314-pytest-9.0.3.pyc
+?? workers/laya-worker/tools/__pycache__/gen_dataset.cpython-314.pyc
+?? workers/laya-worker/tools/__pycache__/targets.cpython-314.pyc
+?? workers/laya-worker/tools/colab_calib/__pycache__/
+HEAD: fc56e60daa22b792dc990df9d27e83bc6763e28c
+fc56e60 (HEAD -> studio/phase-800-node, origin/studio/phase-800-node) [900-decisao] AUTOR define a frente Laya DENTRO da dissertacao — nota de supersessao do enquadramento 'estudo complementar' (vindo do D8/PROMPT_MASTER pre-campanha) no REPORT e README; numeracao editorial (RQ5 vs integrada) fica para a pass do .tex
+011e7c6 [cleanup] arquiva cohort legado da raiz em docs/history/ (MIGRATION_*/PLANO_EXECUCAO/OPTIMIZATION_*/ACTION_PLAN/debug-journal/PROMOCAO) + 17 refs de codigo/docs atualizadas + docs/ do repo e o CANONICO unico (sync das edicoes de hoje: workflow-engine.md novo, hub 20 crates, agent/client O-2); duplicata nao versionada <tese>/docs/rust arquivada fora do repo
+d5a2e10 [docs] README/CONTEXTO pos-PR10: submit-one com flags no Quick Start, runbook do fork gemma4 (--alias), otimizacoes O-1/O-2, aviso dos 2 bins wf-run; doc oficial (docs/rust/, fora do repo) ganhou pagina workflow-engine.md + hub 20 crates + agent/client atualizados
+9b7c68c Merge pull request #10 from mzet97/studio/phase-800-node
+882c183 [PR10-CI] fix cfg da const SECURITY_SNAPSHOT_FUTURE_SKEW_NS (insercao tinha deslocado o #[cfg(dds)] do struct DataSpace; builds SEM a feature dds — Miri e sandbox — quebravam com E0428 duplicado). 3 modos de feature verdes local
+3eb0a2a [PR10-CI] fix raiz do dds_policy_recovery (vermelho no main desde o PR #9): stream descarta snapshot FUTURO na admissao — antes entrava no cache e o dedupe por timestamp suprimia snapshots legitimos posteriores (recovery nunca chegava ao gateway; flake por ordem de take). Teste 6/6 estavel; mcp-gateway+dds-dataspace 92/0; clippy/fmt ok
+4ec40f7 [PR10-review] corrige 7 P1 + 4 P2 do Codex review + CI: shadow não materializa (fronteira); expiry com now real; barreira consulta AgentState do registry; Task carrega model/target/max_tokens do PlanNode; CANCEL compara plan_revision (e publica WS_CANCELLED=6 correto); IN_DOUBT não re-publicado (ReserveOutcome respeitado + recovery bloqueia); timeout marca 1x e terminaliza; heartbeat no runtime adaptive; DAG memoiza profundidade (MAX_DEPTH volta a valer); chat UI repassa spec+max_tokens (ordinais do contrato); read_latest_where keyeado (N workflows no histórico); fmt + rustls 0.23.46 (RUSTSEC-2026-0346..0349)
+f232a8c [T-895-03] docs sync: README crates+licoes O-1 + CONTEXTO novidades 900/O-* + T-814 marcado (publish pende token do autor)
+5ffdd4d [O-4b-parcial] republisher idempotente do terminal (default OFF, env AGENT_ENSURE_TERMINAL) + harness EXP4-style + ACHADO: republisher e no-op (readback do proprio B aceita o DONE) e cliente segue cego — perda e cliente-side/orch-requeue; 2/5 sem fix vs 0/5 com
+5f3f14e [O-2] revalidacao pre-claim no MESH (read_task_mesh) elimina dupla-execucao sob rajada (7%/13.5% -> 0/700) + janela confirm 250->50ms (p50 sequencial 506->306ms); hipotese 2026-10-16 corrigida
+32571ae [O-1] streaming DDS nativo com gemma4: fork b11759 HIP+DDS rebuild + ttfc_ms no TaskResult + paridade de conteúdo 20/20 (patch split reasoning no fork) — TTFC pipeline 6%, content-bound ao modelo
+4961579 [O-45-restored+A6-v4] reaplica flags O-4/O-5 perdidas (agents-stale-after/registry/control/qos-interval + heartbeat-ms) + submit-one --max-tokens/--temperature/--stream + shadow calibrada v4 PASS (pin 10ef5945)
+```

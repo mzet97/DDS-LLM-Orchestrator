@@ -1,0 +1,28 @@
+{
+  "date": "2026-10-21",
+  "what": "Smoke real de carga do T900 pelo RealLayaAdapter (SDK laya==0.4.10, torch 2.14.1+cpu)",
+  "checkpoint_path": "/home/mzet/.cache/tese-laya/checkpoints/laya-t900-specialized-v1",
+  "assembly_manifest": "/home/mzet/.cache/tese-laya/checkpoints/laya-t900-specialized-v1/MANIFEST.assembly.json",
+  "checkpoint_sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+  "constructed": {"model_id": "local:laya-t900-specialized-v1", "construction_s": 7.2},
+  "decision": {
+    "prompt": "Live streaming dashboard that must render partial results incrementally for a sports event, users expect interactive latency.",
+    "qos_profile": "QI_STREAM_LIKE",
+    "needs_planning": 0.0001,
+    "complexity_expected": 1.0,
+    "urgency_expected": 0.9999,
+    "confidence": 0.9998,
+    "calibration_revision": "",
+    "self_consistent": true,
+    "decide_s": 13.8,
+    "note": "primeira inferência inclui warmup CPU; leitura semântica correta (streaming → QI_STREAM_LIKE, fraqueza histórica do BASE recall 0.21)"
+  },
+  "negative_control": {
+    "pin": "bbbb...(64)",
+    "result": "CheckpointHashMismatchError",
+    "detail": "checkpoint divergente do pin: 35813054... != bbbb...",
+    "loaded": false
+  },
+  "sdk_warning": "RuntimeWarning: this checkpoint ships invalid temperatures or values outside [0.5, 5] ... Treat confidence from the affected entries as uncalibrated. — confianças do T900 NÃO calibradas ⇒ SHADOW_ONLY",
+  "verdict": "GATE M3 PASS"
+}

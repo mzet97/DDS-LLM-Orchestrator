@@ -1,0 +1,6 @@
+cyclonedds==11.0.1
+laya==0.4.10
+numpy==2.5.4
+torch==2.14.1+cpu
+transformers==5.20.1
+sdk: laya==0.4.10 (venv /home/mzet/.cache/tese-laya/venv, python 3.13); colab T4: torch 2.11.0+cu130

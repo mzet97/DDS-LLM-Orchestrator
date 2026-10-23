@@ -1,0 +1,9 @@
+891102d372688fc2a094dac56a384bc537b87c63f21f9f3dac0be2b7cbc8d86c  /home/mzet/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/7b928d828b7b0e022f929d9bd2e44165aa270148/model.safetensors
+358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f  /var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_specialized_v1/model.safetensors
+030f34b5f417af18af94a30e62b3cbd3aa2ec1924e483fb82484dbb3a9f1f84e  /var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_taskbench_aux/model.safetensors
+f86164262d428db56903fc6546ff378b26c886c355020cac8bf85610930eade3  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_A/model.safetensors
+5d7dd6522d94347f47566499e09cbd2ad90b4fccbeb26a91c6885fa8c0eda4c0  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_B/model.safetensors
+b03a5f82cb3c8fc34be23dcc0ff2511f531a0aa795f528cd0463a7d22fee2b6a  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t902/models/arm_C/model.safetensors
+b2d9d950a46ef7ae57669b6cfbce41c577f1e423d310d7299f189be6859f3b50  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_A/model.safetensors
+ccb50b391d698d6b84a13a00a5d6936259800cd6c79b93a5d6f91cc30f025e81  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_B/model.safetensors
+7de213c7b24fca603f1f58e04ad4f8029fef396d5cf0e24e3c0067bb996cd05d  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t903/models/arm_C/model.safetensors

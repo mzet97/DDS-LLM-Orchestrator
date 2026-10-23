@@ -1,0 +1,90 @@
+{
+  "B0": {
+    "qos_macroF1": 0.5454,
+    "stream_recall": 0.0,
+    "stream_prec": 0,
+    "clusterCI_macroF1": [
+      0.5429,
+      0.5515
+    ],
+    "clusterCI_streamRec": [
+      0.0,
+      0.0
+    ],
+    "itemCI_macroF1": [
+      0.4098,
+      0.63
+    ],
+    "clusters": [
+      "train-sc11",
+      "train-sc12",
+      "train-sc13"
+    ]
+  },
+  "arm_A": {
+    "qos_macroF1": 0.9474,
+    "stream_recall": 0.7619,
+    "stream_prec": 1.0,
+    "clusterCI_macroF1": [
+      0.9364,
+      0.9562
+    ],
+    "clusterCI_streamRec": [
+      0.7143,
+      0.7857
+    ],
+    "itemCI_macroF1": [
+      0.9122,
+      0.9765
+    ],
+    "clusters": [
+      "train-sc11",
+      "train-sc12",
+      "train-sc13"
+    ]
+  },
+  "arm_B": {
+    "qos_macroF1": 0.9497,
+    "stream_recall": 0.7857,
+    "stream_prec": 1.0,
+    "clusterCI_macroF1": [
+      0.9497,
+      0.9497
+    ],
+    "clusterCI_streamRec": [
+      0.7857,
+      0.7857
+    ],
+    "itemCI_macroF1": [
+      0.9133,
+      0.9788
+    ],
+    "clusters": [
+      "train-sc11",
+      "train-sc12",
+      "train-sc13"
+    ]
+  },
+  "arm_C": {
+    "qos_macroF1": 0.9497,
+    "stream_recall": 0.7857,
+    "stream_prec": 1.0,
+    "clusterCI_macroF1": [
+      0.9497,
+      0.9497
+    ],
+    "clusterCI_streamRec": [
+      0.7857,
+      0.7857
+    ],
+    "itemCI_macroF1": [
+      0.9143,
+      0.9787
+    ],
+    "clusters": [
+      "train-sc11",
+      "train-sc12",
+      "train-sc13"
+    ]
+  }
+}
