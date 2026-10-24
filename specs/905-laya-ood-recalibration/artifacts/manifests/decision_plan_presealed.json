@@ -1,0 +1,19 @@
+{
+  "frozen_at": "2026-10-24 (ANTES da abertura do sealed T905)",
+  "finalist": {
+    "arm": "n2",
+    "checkpoint_sha256": "fa48606b3b4b",
+    "init": "vigente bda679e7…",
+    "data": "train T905 (4.802: novas medidas 1.965 + replay herdado)",
+    "loss": "soft-ce",
+    "seed": 906,
+    "epochs": 4,
+    "calibration_pin": "d43d90c13777dcee28105866ef50cfad39fdaafbac612bab5e3c8dfb4924dea3",
+    "calibration_split": "calibration (111 pares, nunca usado em treino)"
+  },
+  "selection_basis": "dev 130: precedencia QoS F1 (0.779 vs 0.736) e STREAM P (0.941 vs 0.895); STREAM F1 empate (0.941/0.944); seeds 905/906 concordantes. Risco registrado: complexity dev 0.698 marginal vs gate 0.70 (n=130)",
+  "baselines_no_sealed": ["vigente bda679e7… (B0)"],
+  "gates": "gates_preregistration.json (congelados 2026-10-22, antes de qualquer treino)",
+  "sealed_t905": {"n": 450, "pool_sha256": "4872d8c0aa953947", "labels_sha256": "267e3cc2d55ab39c", "openings_allowed": 1},
+  "rule_after": "sem re-tentativa; falha => novo teste exigiria T906; promocao sempre por decisao do autor"
+}

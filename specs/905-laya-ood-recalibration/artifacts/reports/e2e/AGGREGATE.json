@@ -1,0 +1,27 @@
+{
+ "rules": {
+  "n": 80,
+  "p50_ms": 0,
+  "p95_ms": 0,
+  "mean_ms": 0.0
+ },
+ "laya": {
+  "n": 80,
+  "p50_ms": 1290,
+  "p95_ms": 1528,
+  "mean_ms": 1297.2
+ },
+ "planner_only": {
+  "n": 80,
+  "p50_ms": 12105,
+  "p95_ms": 13714,
+  "mean_ms": 9447.7
+ },
+ "laya_planner": {
+  "n": 80,
+  "p50_ms": 13271,
+  "p95_ms": 15156,
+  "mean_ms": 7720.0
+ },
+ "_note": "20/32 runs (processo local interrompido - OOM-killer); n=80 por bra\u00e7o"
+}

@@ -1,0 +1,189 @@
+{
+ "model": "/content/laya_t905/models/arm_n2",
+ "split": "/content/laya_t905/data/sealed_anon.jsonl",
+ "n": 450,
+ "qos": {
+  "confusion_matrix": {
+   "QI_BALANCED": {
+    "QI_BALANCED": 66,
+    "QI_CRITICAL": 21,
+    "QI_STREAM_LIKE": 2,
+    "QI_LOW_COST": 7,
+    "QI_FAILOVER": 1
+   },
+   "QI_CRITICAL": {
+    "QI_BALANCED": 21,
+    "QI_CRITICAL": 155,
+    "QI_STREAM_LIKE": 1,
+    "QI_LOW_COST": 2,
+    "QI_FAILOVER": 9
+   },
+   "QI_STREAM_LIKE": {
+    "QI_BALANCED": 4,
+    "QI_CRITICAL": 6,
+    "QI_STREAM_LIKE": 46,
+    "QI_LOW_COST": 0,
+    "QI_FAILOVER": 0
+   },
+   "QI_LOW_COST": {
+    "QI_BALANCED": 10,
+    "QI_CRITICAL": 2,
+    "QI_STREAM_LIKE": 0,
+    "QI_LOW_COST": 21,
+    "QI_FAILOVER": 1
+   },
+   "QI_FAILOVER": {
+    "QI_BALANCED": 1,
+    "QI_CRITICAL": 4,
+    "QI_STREAM_LIKE": 0,
+    "QI_LOW_COST": 0,
+    "QI_FAILOVER": 70
+   }
+  },
+  "per_class": {
+   "QI_BALANCED": {
+    "precision": 0.6471,
+    "recall": 0.6804,
+    "f1": 0.6633,
+    "support": 97
+   },
+   "QI_CRITICAL": {
+    "precision": 0.8245,
+    "recall": 0.8245,
+    "f1": 0.8245,
+    "support": 188
+   },
+   "QI_STREAM_LIKE": {
+    "precision": 0.9388,
+    "recall": 0.8214,
+    "f1": 0.8762,
+    "support": 56
+   },
+   "QI_LOW_COST": {
+    "precision": 0.7,
+    "recall": 0.6176,
+    "f1": 0.6562,
+    "support": 34
+   },
+   "QI_FAILOVER": {
+    "precision": 0.8642,
+    "recall": 0.9333,
+    "f1": 0.8974,
+    "support": 75
+   }
+  },
+  "macro_f1": 0.7835,
+  "accuracy": 0.7956
+ },
+ "stream": {
+  "precision": 0.9388,
+  "recall": 0.8214,
+  "f1": 0.8762,
+  "fpr_balanced_to_stream": 0.0076
+ },
+ "needs_planning": {
+  "accuracy": 0.9333
+ },
+ "complexity": {
+  "macro_f1": 0.8147,
+  "confusion": [
+   [
+    103,
+    30,
+    0,
+    0
+   ],
+   [
+    8,
+    98,
+    5,
+    10
+   ],
+   [
+    0,
+    18,
+    86,
+    5
+   ],
+   [
+    0,
+    1,
+    9,
+    77
+   ]
+  ],
+  "mae": 0.3234,
+  "within_one": 0.9133
+ },
+ "urgency": {
+  "macro_f1": 0.9067,
+  "confusion": [
+   [
+    77,
+    8,
+    8
+   ],
+   [
+    4,
+    158,
+    3
+   ],
+   [
+    7,
+    7,
+    178
+   ]
+  ],
+  "mae": 0.172,
+  "within_one": 0.9556
+ },
+ "caps_macro_f1_mean": 0.6755,
+ "caps": {
+  "rust_refactor": {
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0
+  },
+  "python_refactor": {
+   "precision": 0.0,
+   "recall": 0.0,
+   "f1": 0.0
+  },
+  "unit_testing": {
+   "precision": 1.0,
+   "recall": 0.9608,
+   "f1": 0.98
+  },
+  "security_audit": {
+   "precision": 0.9878,
+   "recall": 0.9643,
+   "f1": 0.9759
+  },
+  "code_review": {
+   "precision": 0.9467,
+   "recall": 0.9861,
+   "f1": 0.966
+  },
+  "research": {
+   "precision": 1.0,
+   "recall": 0.984,
+   "f1": 0.9919
+  },
+  "summarization": {
+   "precision": 0.8514,
+   "recall": 0.6429,
+   "f1": 0.7326
+  },
+  "translation": {
+   "precision": 0.7442,
+   "recall": 0.7711,
+   "f1": 0.7574
+  }
+ },
+ "latency_ms": {
+  "p50": 125.4,
+  "p95": 151.1,
+  "p99": 158.1
+ },
+ "total_s": 56.8
+}

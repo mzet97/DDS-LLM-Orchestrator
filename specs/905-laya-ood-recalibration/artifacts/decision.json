@@ -1,0 +1,82 @@
+{
+ "decision": "BLOCKED_WITH_TRAINED_CANDIDATE",
+ "baseline_vigente_sha256": "bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a (+ calib 6e1543f3…)",
+ "candidate_checkpoint_sha256": "fa48606b3b4b4701c963ac75230e61298036449681702315ab57ebd5dde740fd",
+ "candidate_local_path": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t905/models/arm_n2",
+ "candidate_runtime_assembly": "/home/mzet/.cache/tese-laya/checkpoints/laya-t905-n2",
+ "checkpoint_load_test": "PASS (assemble + calib_v1 no dir; laya.load na validação de assembly)",
+ "gates_pre_registrados": {
+  "qos_macro_f1": {
+   "min": 0.85,
+   "got": 0.783,
+   "pass": false
+  },
+  "stream_precision": {
+   "min": 0.75,
+   "got": 0.939,
+   "pass": true
+  },
+  "stream_recall": {
+   "min": 0.8,
+   "got": 0.821,
+   "pass": true
+  },
+  "stream_f1": {
+   "min": 0.77,
+   "got": 0.876,
+   "pass": true
+  },
+  "urgency_macro_f1": {
+   "min": 0.85,
+   "got": 0.907,
+   "pass": true
+  },
+  "planning_accuracy": {
+   "min": 0.95,
+   "got": 0.933,
+   "pass": false
+  },
+  "complexity_macro_f1": {
+   "min": 0.7,
+   "got": 0.815,
+   "pass": true
+  },
+  "caps_macro_f1_mean": {
+   "min": 0.85,
+   "got": 0.675,
+   "pass": false
+  },
+  "latencia_p50": {
+   "min": "sem regressão",
+   "got": "125 ms vs 132 ms (vigente)",
+   "pass": true
+  }
+ },
+ "nao_inferioridade_vs_vigente": {
+  "margin": -0.02,
+  "resultado": "6/6 PASS",
+  "deltas": {
+   "qos": "+0.124",
+   "stream_f1": "+0.032",
+   "urgency": "+0.346",
+   "planning": "+0.195",
+   "complexity": "+0.556",
+   "caps": "+0.094"
+  }
+ },
+ "sealed_t905": {
+  "sha256": "4872d8c0aa953947 (pool 450 casos)",
+  "opened_once": true
+ },
+ "shadow": "PASS (t904-ok aceito com shadow_only=false, pin d43d90c1 casando; tasks_seen=0, tasks_written=0)",
+ "e2e": "PASS (pareado via .61: N2 qos 0.875 vs vigente 0.844; latência p50 1290 vs 1478 ms; híbrido plan_validity 1.0; 20/32 runs de latência, n=80 por braço)",
+ "storage_integrity": "PASS",
+ "justification": "Gates recalibrados: 5/8 (urgency e complexity RESOLVIDOS pelos rótulos medidos — 0.907 e 0.815). Restam qos (gap 0.067), planning (gap 0.017, marginal) e caps (gap 0.175, o mais duro — caps reais em OOD continuam difíceis). Não-inferioridade total vs vigente. Sem afrouxar gate: status BLOCKED; promoção é decisão do autor.",
+ "limitations": [
+  "kappa=1.0 LLM×LLM (consistência, não validade humana); lote de revisão humana (300 estratificados) entregue em reports/human_review_batch.json para camada golden async",
+  "auditoria 8-gram excluiu 264 rows/18 famílias (boilerplate compartilhado com v4_test/sealed 567) — conservador",
+  "E2E-C latência 20/32 runs (OOM-killer local; agregado n=80/braço)",
+  "arm N1 (seed 905) treinado e arquivado; seeds concordaram no dev"
+ ],
+ "next": "Autor decide: (a) manter vigente bda679e7 e investir em caps/qos (dados de execução real); (b) promover N2 fa48606b + calib d43d90c1 (domina o vigente em tudo, mas 3 gates absolutos abertos). T906 só com novos dados."
+}
