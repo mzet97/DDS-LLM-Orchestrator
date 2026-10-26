@@ -12,7 +12,7 @@ commit `[T-907-XX]` por task.
 - [x] T-907-06 Cenários recovery + retry (fault 1× em C / transiente) nos 2 frameworks + contagem de chamadas por estágio. **Aceite:** retomada sem reexecução de A/B; rastro de tentativas (REQ-004/005).
 - [x] T-907-07 Cenário stream (TTFC) nos 2 frameworks + DDS (`TaskOutput` chunks); PARCIAL documentado se API não expuser. **Aceite:** TTFC medido de evento nativo ou PARCIAL com evidência (REQ-007).
 - [x] T-907-08 Cenário concurrency c∈{1,2,4} com isolamento por sessão + teste anti-cross-talk. **Aceite:** zero cross-talk, métricas por workflow (REQ-006).
-- [ ] T-907-09 `systems/dds_rust.py`: HTTP sync (T1–T6) + submit-one; células 1 e 2 agentes; smoke com llama real (skip sem server, padrão do EXP0). **Aceite:** run DDS e2e verde com server no ar; skip limpo sem (REQ-009).
+- [x] T-907-09 `systems/dds_rust.py`: HTTP sync (T1–T6) + submit-one; células 1 e 2 agentes; smoke com llama real (skip sem server, padrão do EXP0). **Aceite:** run DDS e2e verde com server no ar; skip limpo sem (REQ-009).
 - [ ] T-907-10 `driver.py` (CLI, interleave, warmup, manifest, JSONL) + `analysis.py` (percentis, TOST IC90, Hodges–Lehmann, MEIs Tab. 7) + testes com fixtures sintéticas. **Aceite:** análise reproduz veredicto em fixture conhecida (REQ-010/011).
 - [ ] T-907-11 Piloto smoke n=2–3 por célula com LLM real → ajustes + REPORT parcial. **Aceite:** 3 sistemas × cenários executados; manifest completo (REQ-008/009/013).
 - [ ] T-907-12 **Campanha EXP1–EXP4 n≥30** intercalada → `benchmarks/orchestration/results/<run_id>/`. **Aceite:** ≥30 runs/condição, sanity em todo JSONL, manifest por run (REQ-010/013).
