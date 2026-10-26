@@ -1,0 +1,11 @@
+schema_version: 1
+workload_id: fork_join_v1
+workload_version: v1
+calls_per_completion: 3
+nodes:
+  - {step_id: A, role: correctness, prompt_file: prompts/fork_A_correctness_v1.txt, needs: [ENTRY]}
+  - {step_id: B, role: security, prompt_file: prompts/fork_B_security_v1.txt, needs: [ENTRY]}
+  - {step_id: C, role: consolidator, prompt_file: prompts/fork_C_consolidator_v1.txt, needs: [ENTRY, A, B]}
+ordering: [A, B]
+consolidation_order: [A, B]
+forbidden_flows: [A_to_B]

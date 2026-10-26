@@ -1,0 +1,9 @@
+schema_version: 1
+workload_id: seq_chain_v1
+workload_version: v1
+calls_per_completion: 3
+nodes:
+  - {step_id: A, role: analyst, prompt_file: prompts/seq_A_analyst_v1.txt, needs: [ENTRY]}
+  - {step_id: B, role: reviewer, prompt_file: prompts/seq_B_reviewer_v1.txt, needs: [ENTRY, A]}
+  - {step_id: C, role: consolidator, prompt_file: prompts/seq_C_consolidator_v1.txt, needs: [ENTRY, A, B]}
+ordering: [A, B, C]

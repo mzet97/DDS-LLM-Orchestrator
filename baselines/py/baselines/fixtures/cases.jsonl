@@ -1,0 +1,5 @@
+{"case_id": "caso-01", "entry_text": "O cache expira em 60 segundos e deve ser invalidado por escrita."}
+{"case_id": "caso-02", "entry_text": "O serviço responde em 200ms no p99 com 100 conexões simultâneas."}
+{"case_id": "caso-03", "entry_text": "A fila limitada a 1000 itens descarta excedente com erro tipado."}
+{"case_id": "caso-04", "entry_text": "O retry exponencial para após 5 tentativas e registra a causa."}
+{"case_id": "caso-05", "entry_text": "O checkpoint incremental salva apenas páginas alteradas desde o último marco."}

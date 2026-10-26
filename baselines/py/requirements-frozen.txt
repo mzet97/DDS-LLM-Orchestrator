@@ -1,0 +1,9 @@
+# Pins do venv usado na fase 907 (FS local: ~/.cache/tese-venv-exp0, Python 3.14.7).
+# Dependências diretas; o lock completo (233 pacotes) vive no próprio venv da 880.
+langgraph==1.2.11
+langgraph-checkpoint==4.2.0
+langchain-core==1.6.2
+agent-framework==1.18.0
+httpx==0.28.1
+pytest==9.1.1
+scipy==1.18.1
