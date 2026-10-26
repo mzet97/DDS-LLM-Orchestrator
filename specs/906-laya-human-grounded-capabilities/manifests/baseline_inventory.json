@@ -1,0 +1,38 @@
+{
+  "date": "2026-10-25",
+  "method": "SHA-256 recalculado sobre os bytes nesta execução (M0 T906); linhagem T900→T904→T905",
+  "b0_incumbent": {
+    "id": "T904 Unified (PROMOVIDO 2026-10-22)",
+    "sha256": "bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a",
+    "bytes": 842609220,
+    "local": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t904/models/laya_t904_unified/model.safetensors",
+    "runtime": "~/.cache/tese-laya/checkpoints/laya-production",
+    "calibration_pin": "6e1543f375698e1984fdbb52507356413a9010440b6c613dc3c767d0f90d132f",
+    "lineage": "T900 35813054… → (T904 braço C: init T900 + destilação T900/T902B/T903C + replay + contrastivos) → bda679e7",
+    "evidence": "VERIFIED (bytes re-hasheados nesta execução; smoke laya.load PASS na T904 M10)"
+  },
+  "reference_t905_n2": {
+    "sha256": "fa48606b3b4b4701c963ac75230e61298036449681702315ab57ebd5dde740fd",
+    "bytes": 842609220,
+    "local": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t905/models/arm_n2/model.safetensors",
+    "calibration_pin": "d43d90c13777dcee28105866ef50cfad39fdaafbac612bab5e3c8dfb4924dea3",
+    "lineage": "init bda679e7 → (T905 dados medidos, seed 906) → fa48606b",
+    "evidence": "VERIFIED (re-hasheado; sealed T905 5/8 gates, não-inferior 6/6)"
+  },
+  "t900_historical": {
+    "sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+    "bytes": 842609220,
+    "local": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_specialized_v1/model.safetensors",
+    "evidence": "VERIFIED (re-hasheado); NOTA: NÃO é o B0 vigente — B0 é o T904",
+    "status": "rollback preservado"
+  },
+  "sdk": {"laya": "0.4.10", "venv": "/home/mzet/.cache/tese-laya/venv", "torch_local": "2.14.1+cpu"},
+  "environment": {
+    "colab_balance_cu": 342.61,
+    "t906_budget": {"ceiling_used": 14, "floor_stop": 328.5},
+    "smb_free": "11G (pesos de campanha em ~/.cache; só entrega final no SMB)",
+    "generator": ".61 gemma4 :8083 saudável e livre"
+  },
+  "missing": [],
+  "questioms_v1": "revision 1 — workers/laya-worker/src/laya_worker/questions.py (byte-exato, intocado)"
+}

@@ -1,0 +1,3 @@
+bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t904/models/laya_t904_unified/model.safetensors
+fa48606b3b4b4701c963ac75230e61298036449681702315ab57ebd5dde740fd  /var/mnt/HD1TB/tese/src/laya_t900_handoff/t905/models/arm_n2/model.safetensors
+358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f  /var/mnt/HD1TB/tese/src/laya_t900_handoff/colab_results/models/laya_specialized_v1/model.safetensors

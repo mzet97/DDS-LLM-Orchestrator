@@ -1,0 +1,346 @@
+#!/usr/bin/env python3
+"""T906-M1 — gerador de corpus de capabilities + QoS adversarial (roda na .61).
+
+Corrige o defeito estrutural da T905 (rust/python sem positivos): cenários com
+OUROS medidos de caps — o texto é construído para requerer (ou negar) as
+capabilities do cenário, incluindo rust_refactor/python_refactor positivos e
+negativos difíceis. QoS permanece por dual-LLM + política v4 (fronteira
+semântica). Anti-atalho-lexical: metade dos pedidos é natural (sem nomes de
+capability), e os negativos mencionam os nomes sem pedir a ação.
+
+Segurança: conexão HTTP apenas para o endpoint LITERAL 127.0.0.1:8083 (http.client
+com host/porta fixas — nenhuma URL dinâmica, nenhuma resolução de nomes, nenhum
+redirect). Diretório de saída FIXO (constante) — nenhum caminho vindo de
+argumento. Sequência pseudoaleatória própria (LCG semeado) usada SOMENTE para
+embaralhar/sortear exemplos de dataset — determinística para reprodutibilidade;
+não empregada para fins criptográficos.
+"""
+import argparse
+import http.client
+import itertools
+import json
+import os
+import time
+
+OUT_ROOT = os.path.realpath("/tmp/laya_t906_gen")  # caminho FIXO permitido
+
+MODEL = "/home/agent/models/gemma-4-12b-it-UD-Q4_K_XL.gguf"
+HOST, PORT = "127.0.0.1", 8083  # gerador local da VM — endpoint fixo e literal
+MAXTOK = 3000
+T0 = time.time()
+
+QOS_CRITERIA = {
+    "QI_BALANCED": "balanced latency and resource use",
+    "QI_CRITICAL": "deadline and reliability-sensitive work",
+    "QI_STREAM_LIKE": "interactive incremental streaming",
+    "QI_LOW_COST": "resource-efficient batch work",
+    "QI_FAILOVER": "resilience when execution resources are unavailable",
+}
+POLICY = """Labeling policy v4 (binding):
+- QI_STREAM_LIKE ONLY when the user asks to RECEIVE usable intermediate results AS PRODUCED (partial deliverables). Progress bars, parallelism, or streaming TECHNOLLOGY names do not count.
+- QI_BALANCED: complete result delivered at the end.
+- QI_CRITICAL: failure has real consequence - hard deadline, production/SLA risk (the word urgent alone does NOT make it critical; the CONSEQUENCE does).
+- QI_LOW_COST: explicit priority on cost/economy over speed.
+- QI_FAILOVER: explicit intent to continue in degraded mode / survive outages with retries or failover (not merely mentioning an outage).
+- urgency: ONLY temporal evidence; ambiguity => 1. qos is NEVER derived from the deadline word alone."""
+
+
+class Seq:  # LCG determinístico (reprodutibilidade de dataset; não-criptográfico)
+    def __init__(self, seed: int):
+        self.state = seed & 0x7FFFFFFF or 1
+
+    def next(self) -> int:
+        self.state = (self.state * 48271) % 0x7FFFFFFF
+        return self.state
+
+    def shuffle(self, items: list) -> None:
+        for i in range(len(items) - 1, 0, -1):
+            j = self.next() % (i + 1)
+            items[i], items[j] = items[j], items[i]
+
+    def sample(self, items: list, k: int) -> list:
+        pool = list(items)
+        out = []
+        while pool and len(out) < k:
+            out.append(pool.pop(self.next() % len(pool)))
+        return out
+
+    def choice(self, items: list):
+        return items[self.next() % len(items)]
+
+
+def chat(prompt: str, temperature: float, retries: int = 4, maxtok: int = MAXTOK,
+         no_think: bool = False, prefill: str | None = None) -> str:
+    msgs = [{"role": "user", "content": prompt}]
+    if prefill is not None:  # assistant prefill: elimina bloco de thinking
+        msgs.append({"role": "assistant", "content": prefill})
+    payload = json.dumps({"model": MODEL,
+                          "messages": msgs,
+                          "max_tokens": maxtok, "temperature": temperature})
+    headers = {"Content-Type": "application/json", "Host": f"{HOST}:{PORT}"}
+    last = None
+    for i in range(retries):
+        conn = None
+        try:
+            conn = http.client.HTTPConnection(HOST, PORT, timeout=300)
+            conn.request("POST", "/v1/chat/completions", body=payload, headers=headers)
+            out = json.loads(conn.getresponse().read())
+            msg = out["choices"][0]["message"]
+            content = msg.get("content") or ""
+            if not content.strip():
+                # fallback: o template pode abrir <think> e nao fechar dentro do
+                # orcamento — a saida util fica no canal reasoning_content
+                rc = msg.get("reasoning_content") or ""
+                if rc.strip():
+                    content = rc
+            if content.strip():
+                return content
+            last = RuntimeError("content vazio")
+        except Exception as e:  # noqa: BLE001
+            last = e
+        finally:
+            if conn is not None:
+                conn.close()
+        time.sleep(3 * (i + 1))
+    raise RuntimeError(f"chat falhou apos {retries}: {last}")
+
+
+def strip_fence(s: str) -> str:
+    s = s.strip()
+    if s.startswith("```"):
+        s = s.split("```")[1]
+        if s.startswith("json"):
+            s = s[4:]
+    return s.strip()
+
+
+def lenient_json(raw: str):
+    import re
+    s = strip_fence(raw)
+    for c in (s, re.sub(r",\s*([\]}])", r"\1", s)):
+        for t in (c, c + '"', c + '"}]', c + "]}", c + "}"):
+            try:
+                return json.loads(t, strict=False)
+            except Exception:
+                continue
+    try:
+        obj, _ = json.JSONDecoder().raw_decode(s.strip().lstrip("["), strict=False)
+        return obj if isinstance(obj, (dict, list)) else None
+    except Exception:
+        return None
+
+
+def append(path, obj):
+    with open(path, "a") as f:
+        f.write(json.dumps(obj, ensure_ascii=False) + "\n")
+
+
+def done_batches(path):
+    done = set()
+    if os.path.exists(path):
+        with open(path) as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                    if "text" in r and r.get("batch"):
+                        done.add(r["batch"])
+                except Exception:
+                    continue
+    return done
+
+
+# ---------------- grid T906: caps primeiro, QoS adversarial depois ----------------
+DOMAINS = ["monorepo em Rust", "servico Python legado", "pipeline de dados em Python",
+           "workspace de crates Rust", "API async em Python", "CLI em Rust",
+           "biblioteca de parsing", "workers Celery", "build WASM em Rust"]
+LANGS = [("pt", "Portuguese (Brazil)"), ("en", "English")]
+DEADLINES = [(2, "in the next 2 hours"), (2, "para ontem - reuniao em 1 hora"),
+             (1, "by Friday"), (1, "ate sexta-feira"), (0, "next month, no rush"),
+             (0, "sem prazo; rode quando houver fila")]
+
+CAP_SCENARIOS = [
+    (["rust_refactor"], "pedir REESTRUTURACAO de codigo Rust existente sem mudar comportamento: dividir main gigante em modulos, extrair tipos, reduzir clones"),
+    (["rust_refactor"], "pedir reorganizacao do layout de crates e melhoria de ownership/borrowing de codigo Rust existente - melhoria, nao feature nova"),
+    (["python_refactor"], "pedir decomposicao de uma funcao Python gigante em funcoes menores tipadas, deduplicando logica repetida - so refactor"),
+    (["python_refactor"], "pedir reestruturacao de async Python baseado em callbacks para async/await com type hints - mesmo comportamento, design mais limpo"),
+    (["rust_refactor", "unit_testing"], "pedir refactor de modulo Rust E testes de regressao provando que o comportamento nao mudou"),
+    (["python_refactor", "code_review"], "pedir refactor de packaging Python com revisao do resultado"),
+    ([], "pedir codigo Rust NOVO do zero (nao existe codigo a reestruturar)"),
+    ([], "pedir DEBUG de script Python quebrado (consertar o bug, nao reestruturar)"),
+    ([], "pedir traducao de documentacao e auditoria de um servico Rust - citar Rust e Python mas SEM pedir reestruturacao"),
+    ([], "pedir AVALIACAO se um refactor vale a pena (apenas decisao; pode concluir que nao)"),
+    ([], "pedir adicao de feature PROIBINDO reestruturacao ('nao refactora nada, so adiciona a feature')"),
+    ([], "mencionar 'refactoring' como possibilidade FUTURA mas pedir outra coisa agora (ex.: relatorio de review)"),
+    (["summarization", "translation"], "pedir resumo dos achados e traducao para outra audiencia"),
+    (["research"], "pedir investigacao previa antes da implementacao"),
+]
+QOS_SCENARIOS = [
+    ("QI_BALANCED", "prazo curto mas SEM consequencia real: 'na sua hora', 'quando puder hoje' - entrega unica ao final"),
+    ("QI_CRITICAL", "hard deadline COM consequencia: producao/SLA/cliente na linha esperando"),
+    ("QI_BALANCED", "pedir execucao em PARALELO com entrega unica ao final (paralelismo nao e stream)"),
+    ("QI_STREAM_LIKE", "pedir cada saida parcial utilizavel assim que produzida"),
+    ("QI_LOW_COST", "prioridade EXPLICITA de economia: off-peak, capacidade ociosa, custo>velocidade"),
+    ("QI_BALANCED", "mencionar custo de passagem mas priorizar prazo (custo nao e o driver)"),
+    ("QI_FAILOVER", "pedir continuidade explicita em modo degradado com retries/failover"),
+    ("QI_CRITICAL", "mencionar outages passados mas pedir apenas correcao unica com prazo normal"),
+]
+NAMES_NOTE = ("Anti-atalho-lexico: em metade dos pedidos NAO use os nomes das capabilities "
+              "(descreva a acao: 'quebre em modulos menores', 'cubra com testes'); na outra metade "
+              "use o nome tecnico; em negativos, cite o nome SEM pedir a acao.")
+
+
+def gen(target: int, seed: int) -> None:
+    rng = Seq(seed)
+    grid = list(itertools.product(CAP_SCENARIOS, QOS_SCENARIOS, DOMAINS, DEADLINES, LANGS))
+    rng.shuffle(grid)
+    genp = os.path.join(OUT_ROOT, "gen.jsonl")
+    i = 0
+    while len(done_batches(genp)) < target and i < len(grid):
+        ((caps_gold, cap_spec), (qos_hint, qos_spec), domain, (urg_gold, deadline), (lang, ldesc)) = grid[i]
+        i += 1
+        bid = f"c{len(done_batches(genp)):04d}"
+        if bid in done_batches(genp):
+            continue
+        k = rng.choice([1, 2, 2, 3, 3, 4, 4, 5])
+        persona = rng.choice(["a staff engineer", "a tech lead", "um dev senior", "uma gerente de plataforma"])
+        caps_txt = ", ".join(caps_gold) if caps_gold else "none beyond coding"
+        prompt = (
+            f"You produce REALISTIC workflow requests for a software agent. Scenario (internal spec, do NOT list it):\n"
+            f"- domain: {domain}\n- required capability actions: {caps_txt} - {cap_spec}\n"
+            f"- QoS context: {qos_spec}\n- deadline: {deadline}\n"
+            f"- pipeline stages to describe: EXACTLY {k}, in order\n"
+            f"- written by: {persona}, language: {ldesc}\n- {NAMES_NOTE}\n\n"
+            f"Write 3 DIFFERENT natural requests (2-3 sentences each, be concise). Vary phrasing strongly. "
+            f'Return ONLY a JSON array: [{{"text": "...", "evidence": "<paraphrase max 12 words, no quotes>"}}, ...].'
+        )
+        try:
+            arr = lenient_json(chat(prompt, 0.95, maxtok=7000))
+            items = arr if isinstance(arr, list) else []
+        except Exception as e:  # noqa: BLE001
+            append(genp, {"id": bid, "error": str(e)[:160]})
+            continue
+        for j, it in enumerate(items[:3]):
+            if isinstance(it, dict) and it.get("text"):
+                append(genp, {"id": f"{bid}-{j}", "batch": bid, "domain": domain,
+                              "caps_gold": caps_gold, "qos_hint": qos_hint,
+                              "lang": lang, "k_stages": k,
+                              "complexity_gold": 0 if k == 1 else 1 if k <= 3 else 2 if k <= 6 else 3,
+                              "needs_planning_gold": k > 1,
+                              "urgency_gold": urg_gold, "deadline": deadline,
+                              "text": it["text"][:1200],
+                              "gen_evidence": str(it.get("evidence", ""))[:200]})
+    print(f"[GEN done] {len(done_batches(genp))} batches in {time.time()-T0:.0f}s", flush=True)
+
+
+def extract_last_json_array(raw: str) -> list | None:
+    """Extrai o último array JSON balanceado de um texto com ruído de raciocínio."""
+    import re
+    s = strip_fence(raw)
+    best = None
+    dec = json.JSONDecoder()
+    for m in re.finditer(r"\[", s):
+        try:
+            obj, _ = dec.raw_decode(s[m.start():], strict=False)
+            if isinstance(obj, list) and obj:
+                best = obj
+        except Exception:
+            continue
+    return best
+
+
+def label_all(src: str, out: str, style: int, temp: float, chunk: int = 5) -> None:
+    seen = set()
+    if os.path.exists(out):
+        with open(out) as f:
+            for line in f:
+                try:
+                    seen.add(json.loads(line)["id"])
+                except Exception:
+                    continue
+    rows = []
+    with open(src) as f:
+        for line in f:
+            r = json.loads(line)
+            if "text" in r and f"{r['id']}:s{style}" not in seen:
+                rows.append(r)
+    caps = ["rust_refactor", "python_refactor", "unit_testing", "security_audit",
+            "code_review", "research", "summarization", "translation"]
+    for i in range(0, len(rows), chunk):
+        part = rows[i:i + chunk]
+        texts = "\n\n".join(f"[{r['id']}] \"\"\"{r['text']}\"\"\"" for r in part)
+        prompt = (
+            f"{POLICY}\n\nQuestions:\n"
+            f"qos_profile (choice): Which QoS objective best fits this workload?\n" +
+            "\n".join(f"  - {k}: {v}" for k, v in QOS_CRITERIA.items()) + "\n"
+            f"needs_planning (bool): multiple dependent tasks?\n"
+            f"complexity (0-3), urgency (0-2), caps (8 bools: {', '.join(caps)}).\n"
+            f"caps=TRUE only if the request actually REQUIRES that action on existing code/artifacts.\n\n"
+            f"Label EACH numbered request INDEPENDENTLY. Evidence = short paraphrase (max 12 words, no quotes).\n"
+            f'Return ONLY a JSON array: [{{"id": "...", "qos_profile": "...", "needs_planning": bool, '
+            f'"complexity": 0-3, "urgency": 0-2, "caps": {{...}}, "evidence": "..."}}, ...]\n\n{texts}'
+        )
+        raw = chat(prompt, temp, maxtok=2200, no_think=True, prefill="[")
+        full = raw if raw.lstrip().startswith("[") else "[" + raw
+        arr = lenient_json(full)
+        if not isinstance(arr, list):
+            arr = extract_last_json_array(full)
+        items = arr if isinstance(arr, list) else []
+        if not items:
+            append(out, {"id": f"chunk{i}:s{style}", "error": raw[-140:]})
+            continue
+        for it in items:
+            if not isinstance(it, dict) or "id" not in it:
+                continue
+            lab = dict(it.get("label", it))
+            lab.pop("id", None)
+            try:
+                lab["complexity"] = max(0, min(3, int(lab.get("complexity", 1))))
+                lab["urgency"] = max(0, min(2, int(lab.get("urgency", 1))))
+                lab["needs_planning"] = bool(lab.get("needs_planning"))
+                lab["caps"] = {c: bool(lab.get("caps", {}).get(c, False)) for c in caps}
+            except Exception:
+                continue
+            if lab.get("qos_profile") in QOS_CRITERIA:
+                append(out, {"id": f"{it['id']}:s{style}", "label": lab})
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--target", type=int, default=380)
+    ap.add_argument("--seed", type=int, default=906)
+    ap.add_argument("--label-b-frac", type=float, default=0.12)
+    ap.add_argument("--phase", choices=["gen", "label", "all"], default="all")
+    args = ap.parse_args()
+    os.makedirs(OUT_ROOT, exist_ok=True)
+    t0 = time.time()
+    genp = os.path.join(OUT_ROOT, "gen.jsonl")
+    if args.phase in ("gen", "all"):
+        gen(args.target, args.seed)
+    if args.phase == "gen":
+        print("[gen-only]", flush=True)
+        return
+    label_all(genp, os.path.join(OUT_ROOT, "label_a.jsonl"), style=0, temp=0.0)
+    print(f"[LABEL_A done] {time.time()-t0:.0f}s", flush=True)
+    rng = Seq(args.seed + 7)  # deterministico
+    strat = {}
+    with open(genp) as f:
+        for line in f:
+            r = json.loads(line)
+            if "text" in r:
+                strat.setdefault((r.get("qos_hint"), r.get("lang")), []).append(r["id"])
+    subset = set()
+    for key, ids in sorted(strat.items()):
+        k = max(1, round(len(ids) * args.label_b_frac))
+        subset.update(rng.sample(sorted(ids), k))
+    tmp = os.path.join(OUT_ROOT, "gen_subset_b.jsonl")
+    with open(genp) as f, open(tmp, "w") as g:
+        for line in f:
+            r = json.loads(line)
+            if r.get("id") in subset:
+                g.write(line)
+    label_all(tmp, os.path.join(OUT_ROOT, "label_b.jsonl"), style=1, temp=0.2)
+    print(f"[ALL done] {time.time()-t0:.0f}s", flush=True)
+
+
+if __name__ == "__main__":
+    main()
