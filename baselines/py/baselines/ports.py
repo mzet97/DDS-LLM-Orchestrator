@@ -76,3 +76,22 @@ class CallCounterPort:
                         expects: tuple[str, ...] = ()) -> tuple[str, dict]:
         self.counts[stage] = self.counts.get(stage, 0) + 1
         return await self._inner.acomplete(messages, stage, expects)
+
+
+class TimingPort:
+    """Envelope que registra (stage, t0, t1, ns) por chamada — métricas por estágio."""
+
+    def __init__(self, inner: LLMPort):
+        import time
+        self._inner = inner
+        self._time = time
+        self.records: list[dict] = []
+
+    async def acomplete(self, messages: list[dict], stage: str,
+                        expects: tuple[str, ...] = ()) -> tuple[str, dict]:
+        t0 = self._time.monotonic()
+        content, usage = await self._inner.acomplete(messages, stage, expects)
+        t1 = self._time.monotonic()
+        self.records.append({"stage": stage, "t0_monotonic": t0, "t1_monotonic": t1,
+                             "dur_s": t1 - t0})
+        return content, usage
