@@ -21,13 +21,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from baselines.contracts import WorkflowInput
-from baselines.ports import TimingPort
+from baselines.ports import CallCounterPort, FaultyPort, TimingPort
 from baselines.providers.llama import LlamaClient
 from baselines.scenarios.concurrency import (run_concurrency_langgraph,
                                              run_concurrency_maf)
+from baselines.scenarios.recovery import run_recovery_langgraph, run_recovery_maf
 from baselines.scenarios.stream import stream_langgraph, stream_maf
-from baselines.systems.dds_rust import (DdsSubmitOne, run_forkjoin_dds,
-                                        run_seq_dds)
+from baselines.systems.dds_rust import (DdsSubmitOne, run_concurrency_dds,
+                                        run_forkjoin_dds, run_seq_dds)
 from baselines.systems.langgraph.forkjoin import run_forkjoin_langgraph
 from baselines.systems.langgraph.seq import run_seq_langgraph
 from baselines.systems.maf.forkjoin import run_forkjoin_maf
@@ -36,7 +37,7 @@ from baselines.systems.maf.seq import run_seq_maf
 PROMPTS_DIR = str(Path(__file__).resolve().parents[1] / "baselines" / "prompts")
 FIXTURES = Path(__file__).resolve().parents[1] / "baselines" / "fixtures" / "cases.jsonl"
 
-SCENARIOS = ("seq", "forkjoin", "serial", "concurrency", "stream")
+SCENARIOS = ("seq", "forkjoin", "serial", "concurrency", "stream", "recovery")
 
 
 def load_entry(case_id: str) -> str:
@@ -115,18 +116,47 @@ async def run_one(system: str, scenario: str, args, port, entry: str,
             r = None
         elif scenario == "concurrency":
             if system == "dds":
-                raise SystemExit("concurrency DDS: usar --systems dds com cenário seq em loop externo (c células via agentes); ver plan.md")
-            base = {"langgraph": run_concurrency_langgraph,
-                    "maf": run_concurrency_maf}[system]
-            rep = await base(wf, port, PROMPTS_DIR, entry, c=args.concurrency)
-            rec.update(completed=rep.completed, failed=rep.failed,
-                       makespan_s=rep.makespan_s,
-                       per_workflow_s=rep.per_workflow_s, errors=rep.errors)
+                rep = await run_concurrency_dds(wf, port, PROMPTS_DIR, entry,
+                                                c=args.concurrency)
+            else:
+                base = {"langgraph": run_concurrency_langgraph,
+                        "maf": run_concurrency_maf}[system]
+                rep = await base(wf, port, PROMPTS_DIR, entry, c=args.concurrency)
+            rec.update(completed=rep["completed"], failed=rep["failed"],
+                       makespan_s=rep["makespan_s"],
+                       per_workflow_s=rep["per_workflow_s"], errors=rep["errors"])
+            r = None
+        elif scenario == "recovery":
+            if system == "dds":
+                raise SystemExit("recovery DDS = protocolo EXP4/880 congelado "
+                                 "(reaper/orchestrator); ver REPORT")
+            client = _Llama(LlamaClient(args.llama_url, args.model,
+                                        temperature=args.temperature,
+                                        seed=args.seed_base + run_idx,
+                                        max_tokens=args.max_tokens,
+                                        timeout_s=args.timeout_s))
+            counter = CallCounterPort(client)
+            port = FaultyPort(counter, fail_on_stage="C", times=1)
+            if system == "langgraph":
+                rep = await run_recovery_langgraph(wf, port, PROMPTS_DIR, entry,
+                                                   counter)
+            else:
+                maf_dir = Path(args.out) / "maf-ckpt"
+                maf_dir.mkdir(parents=True, exist_ok=True)
+                rep = await run_recovery_maf(wf, port, PROMPTS_DIR, entry,
+                                             str(maf_dir), counter)
+            rec["status"] = ("completed" if (rep.failed_first_run
+                                             and rep.completed_on_resume) else "failed")
+            rec.update(failed_first_run=rep.failed_first_run,
+                       completed_on_resume=rep.completed_on_resume,
+                       stage_counts=rep.stage_counts, t_fail_s=rep.t_fail_s,
+                       t_recover_s=rep.t_recover_s, detail=rep.detail)
             r = None
         else:
             raise SystemExit(f"cenário desconhecido: {scenario}")
         rec["t_total_s"] = time.monotonic() - t0
-        rec["status"] = "completed" if r is None else r.status
+        if "status" not in rec:
+            rec["status"] = "completed" if r is None else r.status
         if r is not None:
             rec["stages"] = [{"step_id": s.step_id,
                               "tokens_prompt": s.tokens_prompt,

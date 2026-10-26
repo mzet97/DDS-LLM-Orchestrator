@@ -128,6 +128,43 @@ async def run_seq_dds(wf: WorkflowInput, dds: DdsSubmitOne, prompts_dir: str,
                                   _stage_out("C", cc, uc)))
 
 
+async def run_concurrency_dds(wf: WorkflowInput, dds: DdsSubmitOne, prompts_dir: str,
+                              entry: str, c: int) -> dict:
+    """c workflows seq simultâneos: gather de submit-one → tasks disputadas por agentes.
+
+    Devolve {completed, failed, makespan_s, per_workflow_s, errors} no formato do
+    ConcurrencyReport dos baselines in-process.
+    """
+    t0 = time.monotonic()
+
+    async def one(i: int):
+        s0 = time.monotonic()
+        wfi = WorkflowInput(case_id=wf.case_id, workflow_id=f"{wf.workflow_id}-{i}",
+                            workload_id="seq_chain_v1")
+        r = await run_seq_dds(wfi, dds, prompts_dir, entry)
+        return r, time.monotonic() - s0
+
+    results = await asyncio.gather(*[one(i) for i in range(c)], return_exceptions=True)
+    completed = failed = 0
+    per_wf: list[float] = []
+    errors: list[str] = []
+    for r in results:
+        if isinstance(r, Exception):
+            failed += 1
+            errors.append(str(r)[:200])
+            continue
+        res, dt = r
+        if res.status == "completed" and len(res.stages) == 3:
+            completed += 1
+            per_wf.append(dt)
+        else:
+            failed += 1
+            errors.append(f"status={res.status}")
+    return {"system": "dds", "concurrency": c, "completed": completed,
+            "failed": failed, "makespan_s": time.monotonic() - t0,
+            "per_workflow_s": per_wf, "errors": errors}
+
+
 async def run_forkjoin_dds(wf: WorkflowInput, dds: DdsSubmitOne, prompts_dir: str,
                            entry: str, serial: bool = False) -> WorkflowResult:
     """Fork-join: A∥B (2 tasks → claim disputável entre agentes) + C canônico.

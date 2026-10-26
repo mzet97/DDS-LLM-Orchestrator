@@ -65,11 +65,13 @@ class StageExecutor(Executor):
             prior = tuple((label, self._shared[label]) for label in self._prior_labels)
         messages = build_messages(load_prompt(self._prompts_dir, self._prompt_file),
                                   self._entry, prior)
-        content, _ = await self._port.acomplete(messages, self._stage,
-                                                tuple(c for _, c in prior))
+        content, usage = await self._port.acomplete(messages, self._stage,
+                                                    tuple(c for _, c in prior))
         self._shared[self._publish_label] = content
         self._record.append(StageOutput(request_id=self._stage, step_id=self._stage,
-                                        content=content))
+                                        content=content,
+                                        tokens_prompt=int(usage.get("prompt_tokens", 0)),
+                                        tokens_completion=int(usage.get("completion_tokens", 0))))
         if self._stage == "C":
             await ctx.yield_output(OutC(content=content))
         elif self._stage == "B":

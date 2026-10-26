@@ -64,10 +64,12 @@ class BranchExecutor(Executor):
         # `object` (em vez de `Go`) permite encadear a→b no modo serial.
         messages = build_messages(load_prompt(self._prompts_dir, self._prompt_file),
                                   self._entry)
-        content, _ = await self._port.acomplete(messages, self._stage, ())
+        content, usage = await self._port.acomplete(messages, self._stage, ())
         self._shared[self._publish_label] = content
         self._record.append(StageOutput(request_id=self._stage, step_id=self._stage,
-                                        content=content))
+                                        content=content,
+                                        tokens_prompt=int(usage.get("prompt_tokens", 0)),
+                                        tokens_completion=int(usage.get("completion_tokens", 0))))
         await ctx.send_message(self._out_cls(content=content))
 
 
@@ -88,8 +90,10 @@ class Consolidator(Executor):
         messages = build_messages(
             load_prompt(self._prompts_dir, "fork_C_consolidator_v1.txt"),
             self._entry, prior)
-        content, _ = await self._port.acomplete(messages, "C", tuple(c for _, c in prior))
-        self._record.append(StageOutput(request_id="C", step_id="C", content=content))
+        content, usage = await self._port.acomplete(messages, "C", tuple(c for _, c in prior))
+        self._record.append(StageOutput(request_id="C", step_id="C", content=content,
+                                        tokens_prompt=int(usage.get("prompt_tokens", 0)),
+                                        tokens_completion=int(usage.get("completion_tokens", 0))))
         await ctx.yield_output(Consolidated(content=content))
 
 
