@@ -1,0 +1,45 @@
+{
+  "audit_date": "2026-11-02",
+  "campaign": "T907-laya-unified-confirmatory",
+  "checkpoints": {
+    "t900_historical": {
+      "sha256": "358130541619651210825cec965e2141a2650e8d20ec0d3e714cd3f98123a76f",
+      "role": "rollback histórico",
+      "status": "VERIFIED"
+    },
+    "t904_b0_vigente": {
+      "sha256": "bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a",
+      "role": "baseline em produção",
+      "status": "VERIFIED",
+      "reference_fixed": "2026-11-02 (b0_reference do T906 corrigido de T900 para T904)"
+    },
+    "t905_n2": {
+      "sha256": "fa48606b3b4b4701c963ac75230e61298036449681702315ab57ebd5dde740fd",
+      "role": "experimental T905",
+      "status": "VERIFIED"
+    },
+    "t906_c1_interrompido": {
+      "sha256": "ec40027a89b6ab4c8e7629d4e0dcdb5ff157540be2a9c5615f6343ca9428bbb0",
+      "role": "treino interrompido ~2-3/4 épocas",
+      "status": "VERIFIED (preservado)"
+    },
+    "t906_c2_completo": {
+      "sha256": "624de57e87bdae5d3da07f7e2a340a98005bc6ebbcbc99cf7f364345b50675db",
+      "role": "candidato T906 (4/4 épocas)",
+      "status": "VERIFIED"
+    }
+  },
+  "environment": {
+    "sdk": "laya==0.4.10",
+    "venv": "/home/mzet/.cache/tese-laya/venv",
+    "colab_balance_cu": 424.59,
+    "colab_budget_t907": {"phase_a": 0, "phase_b_conditional": 15, "phase_c": 5, "max_total": 20}
+  },
+  "key_corrections_from_t906_audit": [
+    "b0_reference corrigido (era T900, agora T904)",
+    "predições por exemplo serão persistidas",
+    "security_audit coverage será garantida",
+    "avaliador único CPU/GPU com paridade",
+    "relatórios distinguem VERIFICADO/REPORTADO/INCONSISTENTE/NÃO_EXECUTADO"
+  ]
+}

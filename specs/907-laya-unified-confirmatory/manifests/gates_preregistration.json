@@ -1,0 +1,44 @@
+{
+  "frozen_at": "2026-11-02 (ANTES de qualquer treino T907; herda correções da auditoria T906)",
+  "baseline": "T904 bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a",
+  "reference_models": ["T905 N2 fa48606b…", "T906 C2 624de57e…"],
+  "gates_absolutos": {
+    "qos_macro_f1_min": 0.85,
+    "stream_precision_min": 0.75,
+    "stream_recall_min": 0.80,
+    "stream_f1_min": 0.77,
+    "urgency_macro_f1_min": 0.85,
+    "planning_accuracy_min": 0.95,
+    "complexity_macro_f1_min": 0.70,
+    "caps_macro_f1_min_scorable": 0.85
+  },
+  "guardrails_por_classe": {
+    "balanced_recall_min": 0.75,
+    "critical_recall_min": 0.75,
+    "failover_recall_min": 0.70,
+    "low_cost_recall_min": 0.65,
+    "balanced_to_critical_max_fpr": 0.15
+  },
+  "guardrails_por_capability": {
+    "cada_capability_f1_min": 0.70,
+    "nota": "UNSCORABLE não conta como FAIL; exige coverage de >=30 pos e >=30 neg"
+  },
+  "coverage_obrigatoria": {
+    "min_pos_por_capability": 30,
+    "min_neg_por_capability": 30,
+    "min_por_classe_qos": 50,
+    "security_audit": "CRÍTICO: T906 tinha 0 positivos em dev/cal/sealed"
+  },
+  "regras": {
+    "unscorable": "INVALID_EVALUATION, não FAIL do modelo",
+    "sem_predicoes_por_exemplo": "INVALID_EVALUATION",
+    "human_review": "PENDING = SILVER_ONLY, nunca GOLD_HUMAN",
+    "sealed_opening": "1x, somente após freeze de finalista+calibração+thresholds",
+    "promocao": "sempre decisão do autor, nunca automática"
+  },
+  "pre requisitos_bloqueantes": {
+    "avaliador_deterministico": "M1 PASS (3 execuções CPU idênticas confirmadas 2026-11-02)",
+    "b0_reference_correto": "M0 PASS (corrigido de T900 para T904 2026-11-02)",
+    "coverage_8_8": "PENDENTE (esperando suplemento .61)"
+  }
+}
