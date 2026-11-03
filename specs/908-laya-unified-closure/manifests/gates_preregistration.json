@@ -1,0 +1,40 @@
+{
+  "campaign": "T908",
+  "frozen_at": "2026-11-03",
+  "frozen_before": "QUALQUER treino do T908 (M5)",
+  "source_of_gates": "spec 908-laya-unified-closure/README.md + PROMPT_MESTRE_T908 (fechamento >0.80)",
+  "questions": "QUESTIONS_V1 rev 1 (12 perguntas, imutavel)",
+  "evaluator": "T907-M1-v1 (unico, deterministico, predicoes por exemplo)",
+  "sealed": "sealed_t908 (novo, gerado apos pool de treino congelado, 8-gram limpo, abertura unica)",
+  "comparison": "pareado por exemplo no MESMO sealed: B0 (T904 bda679e7), N2 (T905 fa48606b), C2 (T906 624de57e), finalista T908",
+  "gates": {
+    "qos_macro_f1": {"target": 0.80, "comparison": ">="},
+    "qos_per_class_f1": {"target": 0.80, "classes": ["QI_BALANCED", "QI_CRITICAL", "QI_STREAM_LIKE", "QI_LOW_COST", "QI_FAILOVER"], "comparison": ">="},
+    "stream_precision": {"target": 0.80, "comparison": ">="},
+    "stream_recall": {"target": 0.80, "comparison": ">="},
+    "stream_f1": {"target": 0.80, "comparison": ">="},
+    "planning_accuracy": {"target": 0.90, "comparison": ">=", "note": "0.95 inatingivel por design com ruido de rotulo medido (T907: 0.835); 0.90 fechamento realista"},
+    "planning_f1_both_classes": {"target": 0.80, "comparison": ">="},
+    "complexity_macro_f1": {"target": 0.80, "comparison": ">=", "note": "exige suporte de nivel 3 no sealed (correcao T908)"},
+    "complexity_per_level_f1": {"target": 0.80, "levels": [0, 1, 2, 3], "comparison": ">=", "min_support_per_level": 30},
+    "urgency_macro_f1": {"target": 0.80, "comparison": ">="},
+    "urgency_per_level_f1": {"target": 0.80, "levels": [0, 1, 2], "comparison": ">="},
+    "caps_macro_f1": {"target": 0.80, "comparison": ">="},
+    "caps_per_capability_f1": {"target": 0.80, "capabilities": 8, "comparison": ">=", "min_pos_support": 30},
+    "security_audit_no_regression": {"floor_f1": 0.76, "note": "B0 fez 0.7606 no sealed T907; T908 NAO pode regredir abaixo disso"},
+    "balanced_recall_guardrail": {"floor": 0.80, "note": "licao T905: nao sacrificar BALANCED para ganhar CRITICAL"}
+  },
+  "dominance": "finalista T908 nao pode regredir vs C2 (624de57e) em NENHUMA metrica agregada (qos macro, stream F1, urgency macro, planning acc, complexity macro, caps macro) com margem > 0.01",
+  "promotion": {
+    "automatic": false,
+    "rule": "BLOCKED_WITH_TRAINED_CANDIDATE se qualquer gate falhar; decisao de promover SEMPRE do autor",
+    "rollback": "T904 bda679e7 (vigente em laya-production)"
+  },
+  "budget": {"colab_cu_available_at_freeze": 424.59, "max_t908": 15.0, "stop_floor": 409.5},
+  "data_policy": {
+    "gold_supplement": "medido por construcao (k_stages -> complexity/planning; banco de prazos -> urgency; cenario -> caps/qos) com filtro de concordancia LLM nas dims constrangidas",
+    "no_training_on_sealeds": "T902/T903/T905/T906/T907 sealeds JAMAIS em treino/otimizacao/selecao",
+    "leak_control": "8-gram bidirecional (pool vs sealeds antigos; sealed novo vs pool+sealeds antigos)",
+    "human_review": "nunca tratar concordancia LLM x LLM como revisao humana"
+  }
+}
