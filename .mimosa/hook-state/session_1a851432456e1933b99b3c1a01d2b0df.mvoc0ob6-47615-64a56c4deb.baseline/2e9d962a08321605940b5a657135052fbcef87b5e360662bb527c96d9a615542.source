@@ -1,0 +1,75 @@
+# Workspace da migração para Rust do orquestrador DDS-LLM.
+# Usa o candidato auditado de `cyclonedds` publicado no crates.io — mesmo
+# wire format (XTypes/XCDR) do C++
+# (llama_cpp) e do Python atual, permitindo migração incremental nos MESMOS
+# tópicos DDS. Ver docs/history/MIGRATION_PLAN.md (arquivado).
+[workspace]
+resolver = "2"
+members = [
+    "crates/orch-common",
+    "crates/qos-nfcm",
+    "crates/dds-contract",
+    "crates/dds-dataspace",
+    "crates/llm-gateway",
+    "crates/agent",
+    "crates/orchestrator",
+    "crates/client",
+    "crates/spike-interop",
+    "crates/context-store",
+    "crates/policy-engine",
+    "crates/mcp-gateway",
+    "crates/observability",
+    "crates/benchmarks",
+    "crates/det-responder",
+    "crates/studio-core",
+    "crates/orchestrator-studio",
+    "crates/studio-node",
+    "crates/studio-ssh",
+    "crates/workflow-engine",
+    "crates/control-panel",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+authors = ["Matheus Zeitune <matheus.zeitune.developer@gmail.com>"]
+license = "MIT"
+
+[workspace.dependencies]
+cyclonedds = { version = "=3.0.1" }
+cyclonedds-rust-sys = { version = "=1.2.1" }
+cyclonedds-build = { version = "=3.0.1" }
+# T-890-05: persistência relacional do journal do nó (bundled = sqlite3 C
+# embutido, sem depender do sqlite do sistema — requer CC p/ cross musl).
+rusqlite = { version = "0.32", features = ["bundled"] }
+# Runtime async multicore (Ryzen 5900X: 24 threads) e utilidades de perf.
+tokio = { version = "1", features = ["full"] }
+rayon = "1"                       # paralelismo data-parallel (treino/refresh)
+futures = "0.3"
+axum = "0.7"                      # ingestão HTTP (substitui aiohttp)
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+anyhow = "1"
+russh = "0.63"
+russh-keys = "0.49"
+rand = "0.10"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+parking_lot = "0.12"             # locks rápidos (substitui threading.Lock)
+dashmap = "6"                    # caches concorrentes lock-free (substitui dicts+lock)
+crossbeam-channel = "0.5"        # filas MPMC (substitui a fila de escrita única)
+ahash = "0.8"
+
+[workspace.lints.rust]
+warnings = "deny"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"
+opt-level = 3
+
+[profile.bench]
+lto = "thin"

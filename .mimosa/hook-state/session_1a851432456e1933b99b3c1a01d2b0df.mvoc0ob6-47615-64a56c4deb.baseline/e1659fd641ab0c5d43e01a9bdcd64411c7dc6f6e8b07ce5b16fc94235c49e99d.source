@@ -1,0 +1,210 @@
+//! # qos-nfcm — [LEGADO — disciplina]
+//!
+//! Neuro-Fuzzy Cognitive Map para seleção adaptativa e interpretável de QoS.
+//! Porte Rust de `src/orchestrator/neuro_fuzzy/` (Python). Mantido por
+//! compatibilidade/histórico de disciplina; fora do hot path DDS-first e
+//! desligado por padrão no orquestrador (`--fuzzy-qos`).
+//!
+//! Reproduz os números do artigo (Seção 8) e discrimina os 4 cenários canônicos.
+
+pub mod baselines;
+pub mod dataset;
+pub mod decider;
+pub mod fcm;
+pub mod membership;
+pub mod nfcm;
+pub mod stability;
+pub mod trainer;
+pub mod utility;
+pub mod zadeh;
+
+pub use baselines::{FixedRulesDecider, MamdaniDecider, SwUcbDecider, Ucb1Decider};
+pub use decider::{QoSDecision, QoSMetrics, QosDecider, StaticDecider};
+pub use fcm::{FcmDecider, FcmDhlDecider};
+pub use nfcm::{Nfcm, NfcmConfig, NfcmResult, METRICS, NODES, PROFILES};
+pub use zadeh::ZadehDecider;
+
+/// Trava um `Mutex` sem panic: se outro thread panificou com o lock
+/// (poison), prossegue com o estado parcial em vez de derrubar o
+/// control-loop — deciders são totais por desenho, com fallback.
+pub(crate) fn lock<T>(m: &std::sync::Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Perfis QoS disponíveis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum QoSProfile {
+    Critical,
+    Failover,
+    StreamLike,
+    LowCost,
+    Balanced,
+}
+
+impl QoSProfile {
+    /// Índice canônico — MESMA ordem de `PROFILES`/`NfcmResult::winner`
+    /// (0=Critical..4=Balanced) e do `StabilityConfig::fallback` (4=Balanced).
+    pub fn index(&self) -> usize {
+        match self {
+            QoSProfile::Critical => 0,
+            QoSProfile::Failover => 1,
+            QoSProfile::StreamLike => 2,
+            QoSProfile::LowCost => 3,
+            QoSProfile::Balanced => 4,
+        }
+    }
+
+    /// Inverso de [`QoSProfile::index`]; índices fora de 0..=4 caem em Balanced
+    /// (o fallback do `StabilityController`).
+    pub fn from_index(idx: usize) -> Self {
+        match idx {
+            0 => QoSProfile::Critical,
+            1 => QoSProfile::Failover,
+            2 => QoSProfile::StreamLike,
+            3 => QoSProfile::LowCost,
+            _ => QoSProfile::Balanced,
+        }
+    }
+}
+
+/// Explicação interpretável da decisão (trilha causal resumida).
+pub fn explain_text(r: &NfcmResult) -> String {
+    // pertinência dominante por métrica
+    let mut dom: Vec<(usize, usize, f64)> = (0..nfcm::N_METRICS)
+        .map(|m| {
+            let (t, mu) = (0..3)
+                .map(|t| (t, r.memberships[m][t]))
+                .fold((0usize, f64::MIN), |a, b| if b.1 > a.1 { b } else { a });
+            (m, t, mu)
+        })
+        .collect();
+    // `total_cmp`: ordem total sem panic mesmo com NaN (explicação é
+    // observabilidade — nunca pode derrubar a decisão).
+    dom.sort_by(|a, b| b.2.total_cmp(&a.2));
+    let terms = ["baixo", "medio", "alto"];
+    let tops: Vec<String> = dom
+        .iter()
+        .take(3)
+        .map(|(m, t, mu)| format!("{} é '{}' (μ={:.2})", METRICS[*m], terms[*t], mu))
+        .collect();
+    let nfis: Vec<String> = r
+        .adjusted
+        .iter()
+        .map(|(m, _t, n, w)| format!("{}→{} ajustado p/ {:.3}", METRICS[*m], NODES[*n], w))
+        .collect();
+    // "score", não "confiança": o softmax produz probabilidade predita NÃO
+    // calibrada — o artigo (§ terminologia) bane deliberadamente a palavra
+    // "confiança" para não sugerir calibração que não existe.
+    format!(
+        "{} selecionado (score {:.3}, margem {:.3}). Dominantes: {}. NFIS: {}.",
+        r.winner_name(),
+        r.scores[r.winner],
+        r.margin,
+        tops.join("; "),
+        nfis.join("; ")
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dataset::{split, synthetic_dataset, CANONICAL};
+    use crate::trainer::{accuracy, NfcmTrainer, TrainConfig};
+
+    #[test]
+    fn discrimina_os_quatro_cenarios() {
+        let nfcm = Nfcm::qos_default();
+        for (x, expected) in CANONICAL.iter() {
+            let r = nfcm.infer(x);
+            assert_eq!(
+                r.winner,
+                *expected,
+                "cenário {:?} -> {}",
+                x,
+                r.winner_name()
+            );
+        }
+    }
+
+    #[test]
+    fn reproduz_numeros_do_artigo_degradado() {
+        let nfcm = Nfcm::qos_default();
+        // cenário degradado (mesmo do exemplo numérico da Seção 8)
+        let x = [0.60, 0.40, 0.85, 0.80, 0.90, 0.20, 0.50, 0.10];
+        let r = nfcm.infer(&x);
+        // μ_alto(error_rate=0.90) ≈ 0.923
+        assert!((r.memberships[4][2] - 0.923).abs() < 5e-3);
+        // peso NFIS ajustado ≈ -0.585
+        assert!(
+            (r.adjusted[0].3 - (-0.585)).abs() < 5e-3,
+            "w={}",
+            r.adjusted[0].3
+        );
+        // saúde ≈ 0.002, pressão ≈ 0.712
+        assert!(r.h_final[1] < 0.02, "h_health={}", r.h_final[1]);
+        assert!(
+            (r.h_final[0] - 0.712).abs() < 0.02,
+            "h_pressure={}",
+            r.h_final[0]
+        );
+        // vence Failover (idx 1) com softmax ≈ 0.551, margem ≈ 0.369
+        assert_eq!(r.winner, 1);
+        assert!((r.scores[1] - 0.551).abs() < 1e-2, "score={}", r.scores[1]);
+        assert!((r.margin - 0.369).abs() < 1e-2, "margin={}", r.margin);
+        assert!(r.converged);
+    }
+
+    #[test]
+    fn explicacao_menciona_vencedor() {
+        let r = Nfcm::qos_default().infer(&CANONICAL[2].0);
+        let txt = explain_text(&r);
+        assert!(txt.contains("QoS_Failover") && txt.contains("μ="));
+    }
+
+    #[test]
+    fn trainer_paralelo_reduz_perda_e_melhora_acuracia() {
+        let ds = synthetic_dataset(25, 0.06, 3);
+        let (tr, va, te) = split(&ds, 0.6, 0.2);
+        let mut cfg = NfcmConfig::qos_default();
+        // degrada para haver o que aprender
+        cfg.nfis[0].beta = 0.0;
+        cfg.wo[1][1] = -0.5; // Failover.h_health
+        let acc0 = accuracy(&cfg, &te);
+
+        let mut trainer = NfcmTrainer::new(
+            cfg,
+            TrainConfig {
+                lr: 0.3,
+                epochs: 25,
+                ..Default::default()
+            },
+        );
+        let hist = trainer.fit(&tr, Some(&va));
+
+        assert!(hist.train_loss.last().unwrap() < hist.train_loss.first().unwrap());
+        let acc1 = accuracy(&trainer.cfg, &te);
+        assert!(acc1 >= acc0);
+        assert!(acc1 >= 0.7, "acc final {}", acc1);
+    }
+
+    #[test]
+    fn treina_pertinencias_quando_habilitado() {
+        let ds = synthetic_dataset(20, 0.06, 7);
+        let (tr, va, _) = split(&ds, 0.6, 0.2);
+        let cfg = NfcmConfig::qos_default();
+        let c0: Vec<f64> = cfg.terms.iter().map(|t| t.c).collect();
+        let mut trainer = NfcmTrainer::new(
+            cfg,
+            TrainConfig {
+                lr: 0.2,
+                epochs: 12,
+                train_membership: true,
+                ..Default::default()
+            },
+        );
+        trainer.fit(&tr, Some(&va));
+        let moved = (0..3).any(|i| (trainer.cfg.terms[i].c - c0[i]).abs() > 1e-6);
+        assert!(moved, "centros de pertinência deveriam ter sido ajustados");
+        assert!(trainer.cfg.terms.iter().all(|t| t.sigma() > 0.0));
+    }
+}

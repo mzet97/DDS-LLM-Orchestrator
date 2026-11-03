@@ -1,0 +1,14 @@
+{
+  "schemaVersion": "mimosa-hook-status/v1",
+  "recordedAt": "2026-10-25T21:26:33.164Z",
+  "sessionId": "session_1a851432456e1933b99b3c1a01d2b0df",
+  "event": "PostToolUse",
+  "toolName": "Edit",
+  "file": "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t905/reports/REPORT_T905.md",
+  "outcome": "clear",
+  "coverage": "complete",
+  "findingCount": 0,
+  "durationMs": 5,
+  "hostState": "hook_complete",
+  "reportHint": ".mimosa/reports/"
+}

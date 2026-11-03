@@ -25,7 +25,7 @@ on live metrics, rather than static thresholds.
 On top of that data plane, **phase 900+ adds Laya adaptive routing**: a Python
 worker classifies each workflow intent (QoS profile, planning, complexity,
 urgency, capabilities) and publishes a typed `Routing.Decision`; the Rust
-`workflow-engine` validates it (pin de checkpoint/calibração, TTL, budget),
+`workflow-engine` validates it (checkpoint/calibration pin, TTL, budget),
 plans a DAG, journals it in SQLite and materializes `laya1-*` tasks. The Laya
 model in production is the **T904 Unified checkpoint** (`bda679e7…`,
 multi-teacher distilled; T900 `35813054…` kept as rollback) — see
@@ -124,8 +124,8 @@ contention.
 
 Run the orchestrator end-to-end (requires a built `llama-server` with DDS —
 see `src/llama_cpp/`; **build it STATIC: `-DBUILD_SHARED_LIBS=OFF` is mandatory
-on 0.7.0**, the shared layout breaks DDS request delivery, verified 2026-10-21
-in `notes.md` §I.10). Production binaries (2026-10-21): local RX 7900 XTX
+on 0.7.0**, the shared layout breaks DDS request delivery). Production
+binaries: local RX 7900 XTX
 `~/.cache/tese-benchmarks/llama-prebuilt/llama-070-hip/llama-server` (HIP,
 Muse-Glimmer-30B + draft-dflash + vision), VM .61 `~/llama-070/llama-server`
 (CUDA, gemma-4-12b + draft-mtp + vision on :8083, Qwen + DDS 170 on :8082),
@@ -156,32 +156,32 @@ the HTTP engine byte-for-byte.
 
 ### Adaptive routing (Laya)
 
-Fase 900 (decisão do autor: **faz parte da dissertação**) — um único modelo
-Laya decide objetivos semânticos de QoS/planejamento; quem valida, planeja e
-executa é o núcleo Rust. Semântica **at-least-once**; a decisão do modelo é
-dado não confiável até o validator (`workflow-engine/src/decision.rs`).
+Phase 900 — a single Laya model decides the semantic QoS/planning objectives;
+validation, planning, and execution stay in the Rust core. Semantics are
+**at-least-once**; the model's decision is untrusted data until the validator
+accepts it (`workflow-engine/src/decision.rs`).
 
-**Contrato**: 19 tópicos DDS canônicos intactos + 5 tópicos opt-in
+**Contract**: the 19 canonical DDS topics stay intact + 5 opt-in topics
 (`WorkflowPlanning.idl`): `Workflow.Intent`, `Routing.Decision`,
 `Agent.Capabilities`, `Workflow.Plan`, `Workflow.State`.
 
-**Checkpoint vigente (T904 Unified, promovido pelo autor em 2026-10-22)**:
+**Current checkpoint (T904 Unified, promoted 2026-10-22)**:
 
 | | |
 |---|---|
-| Pesos | `bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a` |
-| Calibração | pin `6e1543f3…` (split de calibração dedicado) |
-| Caminho de produção | `~/.cache/tese-laya/checkpoints/laya-production` |
+| Weights | `bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a` |
+| Calibration | pin `6e1543f3…` (dedicated calibration split) |
+| Production path | `~/.cache/tese-laya/checkpoints/laya-production` |
 | Rollback | T900 `35813054…` (`~/.cache/tese-laya/checkpoints/teachers/t900-specialized`) |
-| Sealed T904 (n=567, OOD real) | QoS F1 **0.823** (T900: 0.492) · STREAM P/R/F1 **0.936/0.903/0.919** (T900: 0.214) · planning 0.926 (T900: 0.302) |
+| Sealed T904 evaluation (n=567, OOD) | QoS F1 **0.823** (T900: 0.492) · STREAM P/R/F1 **0.936/0.903/0.919** (T900: 0.214) · planning 0.926 (T900: 0.302) |
 
-Gates absolutos de urgency/planning/complexity/caps ficaram registrados como
-limitações conhecidas (alvos herdados de holdouts sintéticos; recalibração
-planejada no [T905](./specs/905-laya-ood-recalibration/PLAN.md)).
+Absolute gates for urgency/planning/complexity/caps are recorded as known
+limitations (targets inherited from synthetic holdouts; recalibration planned
+in [T905](./specs/905-laya-ood-recalibration/PLAN.md)).
 
-**Executar o worker** (requer a venv do SDK — `laya==0.4.10` em
-`~/.cache/tese-laya/venv`; checkpoint completo montado por
-`workers/laya-worker/tools/assemble_checkpoint.py`, já disponível em
+**Running the worker** (requires the SDK venv — `laya==0.4.10` in
+`~/.cache/tese-laya/venv`; full checkpoint assembled by
+`workers/laya-worker/tools/assemble_checkpoint.py`, already available under
 `laya-production`):
 
 ```bash
@@ -192,14 +192,16 @@ PYTHONPATH=workers/laya-worker/src ~/.cache/tese-laya/venv/bin/python -m laya_wo
   --checkpoint-sha256 bda679e71295593904370eba5d9130609aea985f0b0d183d2527fcd398ca039a
 ```
 
-O worker assina `Workflow.Intent` e publica **somente** `Routing.Decision`
-(sem caminho para `Tasks`); decisões com calibração vazia/divergente ficam em
-`shadow_only` no validator. Shadow observável com
-`workers/laya-worker/harness/run_shadow_t904.py` (gate: `tasks_seen=0`).
+The worker subscribes to `Workflow.Intent` and publishes **only**
+`Routing.Decision` (no path to `Tasks`); decisions with a missing or
+mismatched calibration pin stay `shadow_only` in the validator. Shadow mode is
+observable with `workers/laya-worker/harness/run_shadow_t904.py` (gate:
+`tasks_seen=0`).
 
-**Rollback** (uma linha): trocar `--checkpoint-path`/`--checkpoint-sha256`
-para o T900. Histórico científico completo: `specs/904-laya-unified-multiteacher/`
-(campanha, ablações, sealed único, decisão) e `specs/904-laya-runtime-integration/`.
+**Rollback** (one line): switch `--checkpoint-path`/`--checkpoint-sha256`
+to the T900 checkpoint. Full campaign record: `specs/904-laya-unified-multiteacher/`
+(training, ablations, sealed evaluation, promotion) and
+`specs/904-laya-runtime-integration/`.
 
 ### DDS Security (local-only)
 
@@ -242,19 +244,19 @@ certificates are test fixtures only; do not reuse them in production.
 | `mcp-gateway` | Routes MCP tool calls (filesystem/github/web) with policy enforcement |
 | `observability` | Collects QoS metrics, violations, and execution traces |
 | `benchmarks` | Generates load (Poisson/burst traffic) and drives validation scenarios |
-| `workflow-engine` | Fase 900 (Laya adaptive routing): validator de `Routing.Decision` com pin de calibração, journal SQLite transacional, DAG validator, planner HTTP — ver `specs/900-laya-adaptive-routing/` |
-| `studio-*` (`orchestrator-studio`, `studio-core`, `studio-node`) | Studio: GUI egui multi-host (19º tópico `Studio.NodePresence`) + daemon de instalações |
+| `workflow-engine` | Phase 900 (Laya adaptive routing): `Routing.Decision` validator with calibration pin, transactional SQLite journal, DAG validator, HTTP planner — see `specs/900-laya-adaptive-routing/` |
+| `studio-*` (`orchestrator-studio`, `studio-core`, `studio-node`) | Studio: multi-host egui GUI (19th topic `Studio.NodePresence`) + installation daemon |
 
-Extras fora de `crates/`: `workers/laya-worker/` (worker Python Laya real + harness de
-calibração/interop/E2E/shadow + ferramentas de dataset/treino da T904) e
-`specs/905-otimizacao/` (evidências das otimizações O-1/O-2/O-4b do plano de otimização
-do orquestrador).
+Extras outside `crates/`: `workers/laya-worker/` (the real Python Laya worker
+plus calibration/interop/E2E/shadow harnesses and T904 dataset/training tools)
+and `specs/905-otimizacao/` (evidence for the O-1/O-2/O-4b orchestrator
+optimizations).
 
 ## Configuration
 
 - DDS transport configs live in the main project at `src/llama_cpp/dds/cyclonedds-*.xml` and `config/dds/`; this Rust workspace consumes the same topic namespace but does not ship the C++ server configs
 - Set transport via: `CYCLONEDDS_URI=file://path/to/cyclonedds-*.xml`
-- **Todos os processos de um mesmo teste DEVEM usar a mesma `CYCLONEDDS_URI`** (config divergente entre processos = zero descoberta mútua; o default do host mira uma NIC stale — lição O-1, ver `specs/905-otimizacao/o1/README.md`)
+- **All processes in the same test MUST use the same `CYCLONEDDS_URI`** (divergent config across processes = zero mutual discovery; the host default points at a stale NIC — O-1 lesson, see `specs/905-otimizacao/o1/README.md`)
 - Build target dir (required off SMB/CIFS): `CARGO_TARGET_DIR=$HOME/.cache/tese-rust-target`
 - Static CycloneDDS link (required on SMB/CIFS): `CYCLONEDDS_STATIC=1`
 
@@ -264,7 +266,7 @@ do orquestrador).
 - [`docs/history/PLANO_EXECUCAO.md`](./docs/history/PLANO_EXECUCAO.md) — detailed build/validation log with measured numbers per subsystem
 - [`AGENTS.md`](./AGENTS.md) — conventions for whoever works in this crate
 - [`specs/`](./specs/) — spec-driven-development docs (spec/plan/tasks/report) per subsystem
-- [`specs/904-laya-unified-multiteacher/`](./specs/904-laya-unified-multiteacher/) — campanha T904 Unified (treino, sealed, promoção) + evidências em `artifacts/`
-- [`specs/904-laya-runtime-integration/`](./specs/904-laya-runtime-integration/) — integração do runtime com checkpoint local explícito
-- [`specs/905-laya-ood-recalibration/PLAN.md`](./specs/905-laya-ood-recalibration/PLAN.md) — plano T905 (recalibração OOD dos gates)
+- [`specs/904-laya-unified-multiteacher/`](./specs/904-laya-unified-multiteacher/) — T904 Unified campaign (training, sealed evaluation, promotion) + evidence in `artifacts/`
+- [`specs/904-laya-runtime-integration/`](./specs/904-laya-runtime-integration/) — runtime integration with an explicit local checkpoint
+- [`specs/905-laya-ood-recalibration/PLAN.md`](./specs/905-laya-ood-recalibration/PLAN.md) — T905 plan (OOD recalibration of the gates)
 - [`docs/`](docs/) — official documentation (PT-BR): hub + one page per crate + Studio user manual
