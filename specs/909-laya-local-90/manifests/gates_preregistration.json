@@ -1,0 +1,60 @@
+{
+  "campaign": "T909",
+  "frozen_at": "2026-11-05",
+  "frozen_before": "construcao/freeze do sealed T909 e primeiro treino T909",
+  "objective": "F1 estritamente > 0.900000 por classe QoS, nivel de urgency/complexity, ambas as classes de planning e cada uma das 8 capabilities, no sealed T909 (abertura unica). Meta de pesquisa; nao garantia de atingimento.",
+  "questions": "QUESTIONS_V1 rev 1 (12 perguntas, imutavel)",
+  "evaluator": "T909-v1 (scripts/evaluator_t909.py; decodificacao oficial = argmax/threshold 0.5, identica a T907/T908 para comparabilidade; distribuições completas persistidas por exemplo)",
+  "gold_note": "SILVER (construcao v6 + LLM v6); selo NOT_HUMAN_VALIDATED ate revisao humana existir; gates >0.90 em SILVER nao alegam validade humana",
+  "gates": {
+    "qos_macro_f1": {"target_strict": ">0.90"},
+    "qos_per_class_f1": {"target_strict": ">0.90", "classes": ["QI_BALANCED", "QI_CRITICAL", "QI_STREAM_LIKE", "QI_LOW_COST", "QI_FAILOVER"]},
+    "stream_precision": {"target_strict": ">0.90"},
+    "stream_recall": {"target_strict": ">0.90"},
+    "qos_recall_BALANCED": {"target_strict": ">0.90"},
+    "qos_recall_CRITICAL": {"target_strict": ">0.90"},
+    "planning_accuracy": {"target_min": 0.95},
+    "planning_f1_true": {"target_strict": ">0.90"},
+    "planning_f1_false": {"target_strict": ">0.90"},
+    "complexity_macro_f1": {"target_strict": ">0.90"},
+    "complexity_per_level_f1": {"target_strict": ">0.90", "levels": [0, 1, 2, 3]},
+    "complexity_mae_reported": true,
+    "complexity_distance_gt1_reported": true,
+    "urgency_macro_f1": {"target_strict": ">0.90"},
+    "urgency_per_level_f1": {"target_strict": ">0.90", "levels": [0, 1, 2]},
+    "urgency_mae_reported": true,
+    "caps_macro_f1": {"target_strict": ">0.90"},
+    "caps_per_capability_f1": {"target_strict": ">0.90", "capabilities": 8},
+    "coverage": "toda classe com suporte >= quota do SPLIT_MANIFEST; UNSCORABLE/sem suporte = FAIL (nunca ZERO nem PASS)"
+  },
+  "uncertainty": {
+    "ic95_bootstrap": "agrupado por familia (batch do gerador), 2000 reamostragens, por classe e macro",
+    "verdicts": ["PASS_STRONG_EVIDENCE (ponto >0.90 E IC95 inferior >0.90)", "PASS_POINT_ESTIMATE (ponto >0.90, IC95 inferior <=0.90)", "FAIL", "UNSCORABLE", "INCONCLUSIVE"],
+    "nota": "suporte <100 por classe => reportar INSUFFICIENT_POWER junto do IC largo"
+  },
+  "regression_gates": {
+    "stream_noninferiority_vs_C2": {"margin": 0.02, "rule": "STREAM F1 do T909 >= C2 STREAM F1 - 0.02 no mesmo sealed"},
+    "security_audit_recall_noninferiority_vs_T908a": {"margin": 0.03},
+    "rust_python_refactor_recall": {"rule": "sem regressao material (>0.03) vs T908-a"},
+    "balanced_recall": {"floor": 0.90},
+    "pareado": "B0/N2/C2/T908-a/T909 avaliados no MESMO sealed, predicoes por exemplo persistidas"
+  },
+  "selection_rule_dev": {
+    "metric": "minimo F1 entre TODAS as classes/niveis/caps (pior competencia manda), desempate: media harmonica das macros",
+    "split": "dev (nunca sealed)",
+    "decoder": "argmax oficial; ablacoes (EV+round, cortes) reportadas a parte, nunca substituem a oficial sem emenda pre-registrada"
+  },
+  "budget": {
+    "arms_max": 3, "epochs_max": 6, "seeds_finalistas": 1, "seed": 909,
+    "early_stop": "sem melhoria do min-F1 dev por 2 epocas",
+    "hard_stop": "sem treino adicional apos avaliacao do sealed (nenhum re-open)"
+  },
+  "promotion": {
+    "automatic": false,
+    "conditions": ["gates com PASS_STRONG_EVIDENCE ou PASS_POINT_ESTIMATE documentado por classe",
+                   "sem regressao critica (stream/security)", "shadow DDS + E2E executados",
+                   "rollback T904 bda679e7 garantido", "aprovacao explicita do autor"],
+    "fallback_decision": "BLOCKED_WITH_TRAINED_CANDIDATE (ou BLOCKED_BEFORE_TRAINING)"
+  },
+  "infra_policy": {"colab": "PROIBIDO", "hosts": "RX 7900 XTX (treino lider) + .61 3080 (geracao/reserva)", "persistent_ckpts": "fora de /tmp, SHA verificado, laya.load() pos-save"}
+}
