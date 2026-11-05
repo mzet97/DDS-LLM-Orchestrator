@@ -1,0 +1,29 @@
+{
+ "campaign": "T910",
+ "frozen_at": "2026-11-05",
+ "frozen_before": "treino dos bracos T910 (B1-B4) e abertura do sealed T910",
+ "objective": "superar T909/T908-a/T904 por classe com F1 > 0.90 como meta de pesquisa; gates de promovacao por nao-inferioridade",
+ "sealed": {"n": 2000, "sha256_pool": "VER sealed_t910/SEALED_OPEN_PROTOCOL.json", "abertura_unica": true},
+ "gates": {
+  "por_classe": ">0.90 F1 estrito por classe/nivel/cap (meta de pesquisa; reportar PASS_STRONG com IC95 inferior >0.90)",
+  "ic95": "bootstrap agrupado por familia, 2000 reamostragens",
+  "insufficient_power": "suporte < 100 => INSUFFICIENT_POWER reportado junto do IC"
+ },
+ "noninferiority_vs_t909": {
+  "stream_f1": {"margin": 0.02},
+  "security_audit_f1": {"margin": 0.03},
+  "urgency_macro": {"margin": 0.02},
+  "planning_accuracy": {"margin": 0.01}
+ },
+ "selection_rule": "min-F1 por classe no dev (inclui raras: cx0/cx3/urg1/urg2/caps)",
+ "arms": {
+  "B0_repro": {"init": "T909 fa4c33e0", "data": "treino T909 (replay)", "objetivo": "reproducao dev/cal"},
+  "B1_real": {"init": "T909 fa4c33e0", "data": "+ corpus real curado (externals 3.6k)", "hipotese": "H1 dados reais"},
+  "B2_cx3": {"init": "T909 fa4c33e0", "data": "+ pares cx3/cx2 contrastivos", "hipotese": "H2 representacao cx3"},
+  "B3_urg": {"init": "T909 fa4c33e0", "data": "+ contrastivos urgency in-texta", "hipotese": "H3"},
+  "B4_caps": {"init": "T909 fa4c33e0", "data": "+ negativos dificeis caps", "hipotese": "H4"}
+ },
+ "budget": {"epochs_max": 6, "early_stop": "min-F1 dev 2 epocas sem melhora", "seed": 909,
+            "thermal": "junction > 112C persistente = parar", "colab": 0},
+ "promotion": {"automatica": false, "rollback": "T904 bda679e7", "exige": ["gates/IC95", "shadow DDS", "E2E", "autor"]}
+}
