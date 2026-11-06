@@ -1,0 +1,16 @@
+{
+ "campaign": "T911",
+ "status": "NOT_OPENED",
+ "open_count": 0,
+ "n": 2306,
+ "sha256_pool": "30ba7617a0e530456a668a73d4290978e3ecb2b7ab27125e08fffc18b0d3ec32",
+ "sha256_labels": "1b4b04abfec47c659eb0b93c138d2748a9e4ad0bad56fab5b46d6171db69ca5e",
+ "sha256_source_sealed_t911_jsonl": "e98eb6725c552a251f4a009053e93273ccfe0fcece2aaf9aafb7e66feb737f4b",
+ "created": "2026-11-06",
+ "rule": "abertura UNICA apos freeze pesos+calibrador+decision_plan; eval dos 4 bracos pareado na mesma abertura",
+ "integrity": {
+  "exact_text_overlap_train_dev_cal_vs_sealed": 0,
+  "boilerplate_8gram_shared_train_vs_sealed": 66,
+  "note": "8-grams compartilhados sao templates do gerador sintetico (ex: 'pronto antes da reuniao do dia 15'); nenhum item duplicado"
+ }
+}

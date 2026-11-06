@@ -1,0 +1,57 @@
+{
+  "campaign": "T911 — Unsloth Decision Models + XML Prompt Ablation",
+  "preregistered_at": "2026-11-06",
+  "committed_before_sealed_open": true,
+  "question": "Substituir o encoder Laya (~150M, teto arquitetural documentado na T910) por Qwen3.5 (0.8B/2B) via Unsloth FastDecisionModel resolve a discriminação ordinal fina OOD (cx 0-3, urg 0-2) a ponto de atingir F1 > 0.90 por classe?",
+  "arms": {
+    "A0": {"encoder": "unsloth/Qwen3.5-0.8B", "prompt": "P0 plain", "status": "TRAINED 2026-11-06, eval_loss 1.445, sha ver CHECKPOINT_LINEAGE.json"},
+    "A1": {"encoder": "unsloth/Qwen3.5-0.8B", "prompt": "P1 xml", "status": "TRAINED 2026-11-06"},
+    "B0": {"encoder": "unsloth/Qwen3.5-2B", "prompt": "P0 plain", "status": "TRAINING 2026-11-06"},
+    "B1": {"encoder": "unsloth/Qwen3.5-2B", "prompt": "P1 xml", "status": "QUEUED"}
+  },
+  "training_fixed": {
+    "lora": {"r": 16, "alpha": 16, "dropout": 0},
+    "epochs": 6,
+    "lr": 2e-4,
+    "scheduler": "cosine",
+    "warmup_steps": 10,
+    "weight_decay": 0.01,
+    "bf16": true,
+    "seed": 909,
+    "data": "train_t911.jsonl n=3978 (pool T910 + boost + externals, dedup 8-gram vs sealeds históricos)",
+    "dev": "dev_t911.jsonl n=1037",
+    "cal": "cal_t911.jsonl n=691",
+    "sealed": "sealed_t911.jsonl n=2306 (pool sem gold + labels.json, SHAs em sealed/SEALED_OPEN_PROTOCOL.json)"
+  },
+  "selection_rule": "min-F1: para cada braço computa-se o MINENO das métricas por classe no DEV; finalista = braço com maior min-F1 no dev. Desempate: maior média macro. Empate técnico (<0.01): preferir o braço de MENOR custo (0.8B > 2B; P0 > P1).",
+  "calibration": "Calibração no CAL (n=691) APENAS do braço finalista, via FastDecisionModel.calibrate; calibrador freeze com SHA antes da abertura do sealed.",
+  "gates": {
+    "primary": "F1 > 0.90 em TODA classe individual das 5 perguntas (16 classes) no sealed T911 (n=2306), com IC95 bootstrap (n=1000, percentil) cujo lower bound > 0.88",
+    "classes": {
+      "qos_profile": ["QI_BALANCED", "QI_CRITICAL", "QI_STREAM_LIKE", "QI_LOW_COST", "QI_FAILOVER"],
+      "needs_planning": ["True", "False"],
+      "complexity": ["0", "1", "2", "3"],
+      "urgency": ["0", "1", "2"],
+      "capabilities_aggregate": ["True", "False"],
+      "note": "QUESTIONS_V1 de 5 perguntas (caps agregada em 1 noul) é o formato do treino E do runtime; discriminação per-cap (8 booleanos individuais) fica fora do escopo T911 e permanece documentada pelo teto de T909/T910"
+    },
+    "secondary_noninferiority": "STREAM F1 e security_audit F1 não inferiores ao melhor braço T910 (B3 stream 0.966; B4 caps 0.546) com margem de 0.05 (limite de não-inferioridade −0.05 no IC95)",
+    "reference_baseline": "T910 B1 (melhor do encoder Laya): qos 0.773, stream 0.891, urg 0.606, plan 0.815, cx 0.335, caps 0.529 — comparação INDIRETA (sealeds diferentes, n comparável)"
+  },
+  "decision_rules": {
+    "PROMOTE": "gate primário PASS nos 24+ níveis de classe com IC95 → shadow DDS + E2E + DECISION PROMOTED",
+    "BLOCKED_WITH_TRAINED_CANDIDATE": "falha parcial (algumas classes ≥0.90) → documentar quais classes passam, comparar com teto do encoder T910, entregar candidato + DECISION para o autor",
+    "BLOCKED": "nenhum braço supera o baseline indireto T910 B1 de forma consistente → documentar que nem LLM 2B resolve; recomendar Opção B (formulação binária) ou C (encerrar linha Laya)"
+  },
+  "paired_evaluation": "Todos os 4 braços avaliados no MESMO sealed na MESMA abertura (open_count=1); predições por exemplo preservadas em evaluation/predictions_{arm}.jsonl",
+  "budget": {
+    "colab": 0,
+    "infra": ".61 RTX 3080 (treino) + máquina local RX 7900 XTX / CPU (eval)",
+    "max_train_time_per_arm": "6 épocas já fixadas; sem retreino adicional além de 1 retry por falha técnica (OOM/disk)"
+  },
+  "frozen_hashes": {
+    "sealed_pool_sha256": "30ba7617a0e53045…",
+    "sealed_labels_sha256": "1b4b04abfec47c65…",
+    "note": "SHAs completos em sealed/SEALED_OPEN_PROTOCOL.json; treinamento A0/A1 iniciado 2026-11-06 ~20h ANTES do prereg commit, mas NENHUM acesso ao sealed ocorreu antes da abertura"
+  }
+}
