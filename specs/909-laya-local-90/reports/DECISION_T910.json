@@ -1,0 +1,46 @@
+{
+ "decision": "BLOCKED_WITH_TRAINED_CANDIDATE",
+ "decision_date": "2026-11-06",
+ "campaign": "T910 (Laya Unified 0.90, local-only, dual-host, datasets públicos + contrastivos)",
+ "headline": "Meta F1 >0.90 por classe NÃO alcançada. Melhor braço (B1) atinge qos 0.77, stream 0.89, urg 0.61 no sealed OOD de 2.000. O encoder Laya tem limite arquitetural para discriminação ordinal fina em domínio novo (cx:3 = 0.02-0.15 em todos os braços). T904 permanece vigente.",
+ "finalista": {
+  "checkpoint": "~/.cache/tese-laya/t910_train/arm_B1/",
+  "init": "T909 fa4c33e032187ba66bc9c3565c2d444c0d9e78d3f4500df5f8199a359c813572",
+  "sha256_model": "VER CHECKPOINT_LINEAGE.json",
+  "treino": "6 épocas, soft-ce, mb8, seed 909, RX 7900 XTX ROCm"
+ },
+ "sealed_t910": {
+  "n": 2000,
+  "5_classes_qos": true,
+  "abertura_unica": true,
+  "opened_at": "VER SEALED_OPEN_PROTOCOL.json"
+ },
+ "resultados_pareados": {
+  "B0repro": {"qos": 0.7576, "stream": 0.9391, "urg": 0.5944, "plan": 0.8010, "cx": 0.3358, "caps": 0.5310},
+  "B1_real": {"qos": 0.7726, "stream": 0.8909, "urg": 0.6055, "plan": 0.8145, "cx": 0.3345, "caps": 0.5294},
+  "B3_urg": {"qos": 0.7262, "stream": 0.9655, "urg": 0.5790, "plan": 0.7840, "cx": 0.3553, "caps": 0.5144},
+  "B4_caps": {"qos": 0.7303, "stream": 0.8870, "urg": 0.6375, "plan": 0.8095, "cx": 0.3431, "caps": 0.5460}
+ },
+ "gates_090_por_classe": "NENHUM braço atinge >0.90 em TODAS as classes simultaneamente. A melhor classe individual (QI_BALANCED) atinge 0.903 (B1) mas as demais ficam em 0.56-0.79.",
+ "limitacao_arquitetural": {
+  "cx3": "F1 0.02-0.15 em todos os braços (nível very_complex nunca predizido com confiança em OOD)",
+  "urg1": "F1 0.36-0.39 (nível normal confundido com low em domínio novo)",
+  "causa": "Encoder Laya pequeno (~150M params) não codifica traços semânticos sutis que distinguem níveis ordinais finos em domínio não-visto",
+  "evidência": "Análise de logits mostra P(cx3) médio 0.02 nos gold-3 e P(cx3) 0.52-0.95 nos poucos FP (padrão inverso ao esperado)"
+ },
+ "entrega": {
+  "tree": "src/laya_t900_handoff/t910/",
+  "pesos": "models/arm_{B0repro,B1,B2_NaN,B3,B4}/ + laya_t909_unified/ (na .61 e NVMe local)",
+  "dataset": "datasets/ (pool 8.850 + splits_t910 + sealed_t910 NOT_OPENED→OPENED)",
+  "audit": "audit/ (GATE_M0 PASS, triagem 105, sha_manifest 6/6)",
+  "infra": "infra/ (ROCm validado, HOST_DECISION)",
+  "colab_gasto": 0.0
+ },
+ "backlog_T911": [
+  "Encoder maior (fazer fine-tuning de um modelo base maior ou usar um LLM como feature extractor)",
+  "Loss ordinal custom (requer patch no SDK laya ou implementação externa com testes)",
+  "Ampliar o corpus contrastivo com mais domínios e mais dose de cx3/urg1",
+  "Revisão humana das filas 300+300 (pré-requisito para validação GOLD)",
+  "Avaliar se o bottleneck é o encoder ou a formulação das perguntas ordinais"
+ ]
+}
