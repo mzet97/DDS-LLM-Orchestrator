@@ -1,0 +1,54 @@
+{
+  "campaign": "T912 — Dose por classe + 8 capacidades individuais (Qwen3.5 na RX 7900 XTX)",
+  "preregistered_at": "PENDENTE (commit antes do treino; SHAs do sealed preenchidos apos F1b)",
+  "question": "Com (a) contrato de 12 perguntas (4 eixos + 8 caps individuais, corrigindo o bug E1 da T911 onde a pergunta capabilities foi pulada) e (b) dose minima por classe no treino (>=150 raras/cx3, >=150 positivas por cap, >=250 urg1), o Qwen3.5-2B atinge F1 > 0.90 por classe e por capacidade num sealed novo independente, preservando os ganhos ordinais da T911?",
+  "arms": {
+    "C0": {"encoder": "unsloth/Qwen3.5-2B", "prompt": "P0 plain", "role": "primario (autor)"},
+    "C1": {"encoder": "unsloth/Qwen3.5-0.8B", "prompt": "P0 plain", "role": "baseline comparativo (autor)"}
+  },
+  "hardware_rule": "RX 7900 XTX prioritaria (venv-t909-rocm, torch 2.9.1+rocm6.4, unsloth 2026.11.3; smoke F0 PASS 0.8B e 2B, layout clef com 12 targets, VRAM 9.2/24GB em mb4, junction 68C). RTX 3080 da .61 apenas para geracao/rotulagem/avaliacao/contingencia. Sem Colab. Qualquer incompatibilidade ROCm: diagnosticar e documentar ANTES de mudar de plataforma.",
+  "training_fixed": {
+    "lora": {"r": 16, "alpha": 16, "dropout": 0},
+    "epochs": 3, "lr": 2e-4, "scheduler": "cosine", "warmup_steps": 20,
+    "weight_decay": 0.01, "bf16": true, "seed": 909, "mb": "16 (ajustavel por VRAM; registro no train_report)",
+    "questions": "Q12 canônico = QUESTIONS_V1 4 eixos + 8 cap__{c} noul (instrucao identica a evaluator_t909/adapter worker)",
+    "max_seq_length": 2048, "load_in_4bit": false, "trainer": "unsloth.DecisionTrainer"
+  },
+  "data": {
+    "sources": "pool_t910_items 8.850 + replay t909_train (sdk 12q) + replay t911_train + T912GEN novo (4 eixos, 40 dominios, seed 912, gemma local temp 0.9 gen + temp 0 label v6, concordancia construcao-prevalece)",
+    "filters": "dedup texto exato; exclusao EXATA e 8-gram vs TODOS os 7 sealeds historicos (t905/t906/t907/t908/t909/t910/t911)",
+    "train_floors_failfast": {"qos_raras": 150, "cx3": 150, "urg1": 250, "caps_positivas": 150, "balanced_cap": 3000},
+    "dev": 1000, "cal": 700, "sealed_t912": 2000,
+    "sealed_bias": "quotas de raras/caps preenchidas preferencialmente com itens T912GEN (dominios novos) => teste mais proximo de OOD",
+    "worfbench": "REJEITADO com justificativa (multimodal QA/receitas; 3/5003 sobreviveram na T910); taskbench reaproveitado do cache",
+    "versioning": "t912/datasets/MANIFEST.json com proveniencia, censos por split e SHA-256; NADA em /tmp"
+  },
+  "selection_rule": "min-F1 no DEV sobre as 22 classes (5 qos + 4 cx + 3 urg + 2 plan + 8 caps positiva). Desempate: maior caps_pos_macro; segundo desempate: menor custo (C1 0.8B). Calibracao (temperature via FastDecisionModel.calibrate) SOMENTE do finalista em CAL n=700; checkpoint calibrado com SHA antes da abertura.",
+  "gates": {
+    "primary": "F1 > 0.90 em TODAS as 22 classes no sealed T912 (n=2000) com IC95 bootstrap (n=1000, percentil, seed 909) lower bound > 0.88",
+    "classes": ["qos:QI_BALANCED", "qos:QI_CRITICAL", "qos:QI_STREAM_LIKE", "qos:QI_LOW_COST", "qos:QI_FAILOVER",
+                 "cx:0", "cx:1", "cx:2", "cx:3", "urg:0", "urg:1", "urg:2",
+                 "plan:True", "plan:False",
+                 "cap:rust_refactor:True", "cap:python_refactor:True", "cap:unit_testing:True",
+                 "cap:security_audit:True", "cap:code_review:True", "cap:research:True",
+                 "cap:summarization:True", "cap:translation:True"],
+    "noninferiority_indirect": "urg_macro >= 0.800, cx_macro >= 0.555, plan_acc >= 0.863 (T911 A0 sealed menos margem 0.05; comparacao INDIRETA, sealeds diferentes, flagged)",
+    "decision_rules": {
+      "PROMOTE_CANDIDATE": "gate primario PASS nos 2 criterios -> segue para F6 (compat worker Python 12q + shadow DDS Cyclone + E2E); promocao final SOMENTE com F6 verde",
+      "BLOCKED_WITH_TRAINED_CANDIDATE": "gate primario FAIL mas nao-inferioridade OK -> candidato experimental preservado + limitacoes documentadas (curva dose-resposta por cap e resultado cientifico)",
+      "BLOCKED": "nem nao-inferioridade -> documentar e encerrar sem candidato"
+    }
+  },
+  "sealed_open_protocol": "abertura UNICA (open_count 0->1) apos freeze de pesos+calibrador+decision_plan; avaliacao pareada C0/C1 no MESMO sealed; predicoes por exemplo preservadas (evaluation/predictions/predictions_{C0,C1}_sealed.jsonl)",
+  "budget": {"colab_cu": 0, "max_arms": 2, "retries_tecnicos_por_braco": 1 (OOM/disco; sem tuning de hiperparametros alem do mb)"},
+  "worker_compatibility_F6": {
+    "python": "predict 12 perguntas em 50 prompts runtime; schema {choice|noul|score, probabilities}; dict de perguntas identico ao adapter.py::_laya_questions()",
+    "rust_dds": "laya-worker em modo shadow (shadow_only, padrao T904) com checkpoint T912 via venv local; CycloneDDS real; T904 vigente intocado; E2E somente se gates PASS"
+  },
+  "frozen_hashes": {
+    "sealed_pool_sha256": "PREENCHER APOS F1b",
+    "sealed_labels_sha256": "PREENCHER APOS F1b",
+    "train/dev/cal_sha256": "ver MANIFEST.json",
+    "prereg_commit": "PREENCHER NO COMMIT"
+  }
+}
