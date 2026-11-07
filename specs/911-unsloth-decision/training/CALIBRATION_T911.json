@@ -1,0 +1,42 @@
+{
+ "source_arm": "/home/agent/t911_train/arm_A0",
+ "calibrated_dir": "/home/agent/t911_train/arm_A0_cal",
+ "cal_split": "cal_t911.jsonl n=691",
+ "decision_config_before": {
+  "layout": "clef",
+  "max_len": 2048,
+  "temperature": [
+   1.0,
+   1.0,
+   1.0
+  ],
+  "base_model": "unsloth/Qwen3.5-0.8B",
+  "load_in_4bit": false,
+  "fine_tuned": true
+ },
+ "decision_config_after": {
+  "layout": "clef",
+  "max_len": 2048,
+  "temperature": [
+   0.9686394333839417,
+   0.9656230211257935,
+   1.2202075719833374
+  ],
+  "base_model": "unsloth/Qwen3.5-0.8B",
+  "load_in_4bit": false,
+  "fine_tuned": true,
+  "head_temperature": 4.340381622314453
+ },
+ "report": {
+  "accuracy": 0.8889290882778582,
+  "ece": 0.043913561597401785,
+  "loss": 0.3338091554539346,
+  "record_accuracy": 0.6439942112879884,
+  "fitted_types": [
+   0,
+   1,
+   2
+  ]
+ },
+ "saved_at": "2026-11-07T01:05:06"
+}

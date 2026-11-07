@@ -1,7 +1,7 @@
 {
  "campaign": "T911",
- "status": "NOT_OPENED",
- "open_count": 0,
+ "status": "OPENED",
+ "open_count": 1,
  "n": 2306,
  "sha256_pool": "30ba7617a0e530456a668a73d4290978e3ecb2b7ab27125e08fffc18b0d3ec32",
  "sha256_labels": "1b4b04abfec47c659eb0b93c138d2748a9e4ad0bad56fab5b46d6171db69ca5e",
@@ -12,5 +12,23 @@
   "exact_text_overlap_train_dev_cal_vs_sealed": 0,
   "boilerplate_8gram_shared_train_vs_sealed": 66,
   "note": "8-grams compartilhados sao templates do gerador sintetico (ex: 'pronto antes da reuniao do dia 15'); nenhum item duplicado"
+ },
+ "opened_at": "2026-11-06T22:05:43",
+ "frozen_before_open": {
+  "finalista": "A0 (Qwen3.5-0.8B + P0 plain) por regra min-F1 do PREREG (empate 0.0 em todos -> menor custo)",
+  "dev_selection": {
+   "A0": 0.0,
+   "A1": 0.0,
+   "B0": 0.0,
+   "B1": 0.0
+  },
+  "calibrador": "arm_A0_cal: temperature [0.9686, 0.9656, 1.2202] (choice/noul/score), CAL n=691, ECE 0.0439",
+  "arms_evaluated_paired": [
+   "A0",
+   "A1",
+   "B0",
+   "B1"
+  ],
+  "prereg_commit": "871efe8"
  }
 }

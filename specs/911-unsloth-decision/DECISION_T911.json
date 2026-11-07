@@ -1,0 +1,59 @@
+{
+  "decision": "BLOCKED_WITH_TRAINED_CANDIDATE",
+  "decision_date": "2026-11-07",
+  "campaign": "T911 (Unsloth Decision Models Qwen3.5 0.8B/2B + ablação de prompt P0/P1, 100% local na .61 RTX 3080)",
+  "headline": "Gate primário (F1>0.90 em TODAS as classes com IC95) NÃO alcançado: min F1 = 0.0 em todos os 4 braços. MAS o gargalo ordinal do encoder documentado em T909/T910 foi RESOLVIDO pelo LLM (urg 0.85 vs 0.61; cx 0.61 vs 0.34; plan 0.91 vs 0.82, comparação indireta). O colapso remanescente (qos LOW_COST/STREAM/FAILOVER e cx3 = 0.0) é FOME DE DADOS no train_t911 (6/6/4 e 27 exemplos), não arquitetura: urgency:2 com 140 exemplos de treino atingiu F1 0.864. T904 permanece vigente.",
+  "finalista": {
+    "arm": "A0",
+    "selecao": "regra mecânica do PREREG (871efe8): todos min-F1=0.0 no dev -> empate -> menor custo (0.8B, P0 plain)",
+    "checkpoint": ".61:/home/agent/t911_train/arm_A0 (adapter d2603508..., joint_head 339ef5ad...)",
+    "calibrado": ".61:/home/agent/t911_train/arm_A0_cal (temperature [0.969, 0.966, 1.220], folded 4.340 no joint_head dc43df05..., CAL n=691, ECE 0.044)"
+  },
+  "sealed_t911": {
+    "n": 2306,
+    "abertura_unica": true,
+    "opened_at": "2026-11-07T01:06:43Z",
+    "open_count": 1,
+    "sha_pool": "30ba7617a0e53045...",
+    "sha_labels": "1b4b04abfec47c65...",
+    "paired_arms": ["A0", "A1", "B0", "B1"],
+    "bootstrap": "IC95 percentil n=1000 por classe individual (16 classes)"
+  },
+  "resultados_pareados_sealed": {
+    "A0":  {"minF1": 0.0, "qos": 0.3407, "cx": 0.6053, "urg": 0.8500, "plan": 0.9128, "caps_agg": 0.4203},
+    "A1":  {"minF1": 0.0, "qos": 0.3390, "cx": 0.5878, "urg": 0.8407, "plan": 0.9128, "caps_agg": 0.5103},
+    "B0":  {"minF1": 0.0, "qos": 0.3419, "cx": 0.5681, "urg": 0.8508, "plan": 0.9150, "caps_agg": 0.3671},
+    "B1":  {"minF1": 0.0, "qos": 0.3391, "cx": 0.5814, "urg": 0.8581, "plan": 0.9172, "caps_agg": 0.3517}
+  },
+  "gates_090_por_classe": "FAIL em todos os braços. Classes atingidas (A0): urg:0 0.971, plan:True 0.949, urg:2 0.864, qos BAL 0.863. Classes zeradas (A0): qos STREAM/LOW_COST/FAILOVER = 0.0 (94/143/142 gold, colapso total para BALANCED/CRITICAL), cx:3 = 0.0 (101 gold). IC95 de urg:1 = [0.665, 0.759], abaixo do gate 0.88 lower bound.",
+  "hipotese_teto_encoder": {
+    "status": "CONFIRMADA E RESOLVIDA",
+    "evidencia": "Urgency macro 0.850 vs encoder 0.606 (+0.244); complexity macro 0.605 vs 0.335 (+0.270, cx1/cx2 ≈ 0.80-0.83); planning 0.913 vs 0.815. O encoder 150M não codificava traços ordinais finos; o LLM 0.8B codifica.",
+    "caveat": "comparação INDIRETA (sealeds T910/T911 diferentes); não pareada"
+  },
+  "causa_raiz_gates_fail": {
+    "tipo": "FOME DE DADOS (pipeline), não arquitetura",
+    "censo_train": {"qos": {"BALANCED": 3614, "CRITICAL": 348, "LOW_COST": 6, "STREAM_LIKE": 6, "FAILOVER": 4},
+                    "cx": {"0": 270, "1": 2514, "2": 1167, "3": 27},
+                    "urg": {"0": 3586, "1": 252, "2": 140}},
+    "lei_empirica": "classe com >=~140 exemplos de treino -> F1 >= 0.71 (urg2: 140 -> 0.864); classe com <30 -> F1 ≈ 0",
+    "origem": "o boost de classes raras da T910 (S-QOS/S-URG/S-CX3 em /tmp/laya_t910b/) NÃO entrou no train_t911.jsonl; fontes em /tmp foram perdidas na reconstrução do dataset (defeito de pipeline silencioso)",
+    "licao": "datasets de treino devem ser persistidos em tree versionada (nunca /tmp) e o censo por classe deve ser um gate do prepare"
+  },
+  "ablation_p0_p1": "sem vencedor consistente (diferenças <0.03 na maioria dos grupos; P1 melhor no dev e em caps_agg sealed 0.510 vs 0.420; P0 melhor em cx sealed 0.605 vs 0.588). Recomendação runtime: P0 (mais simples). P1 permanece opção se contexto estruturado for necessário.",
+  "entrega": {
+    "tree": "src/laya_t900_handoff/t911/",
+    "spec_in_repo": "src/rust/specs/911-unsloth-decision/ (PREREG + protocolo + avaliador, branch t911-unsloth-decision, commits 871efe8+)",
+    "pesos": ".61:/home/agent/t911_train/arm_{A0,A0_cal,A1,B0,B1}/ + cópia local t911/models/",
+    "metricas_e_predicoes": "t911/evaluation/ (metrics × 4 + predictions × 4 com 2.306 por braço)",
+    "gates": "t911/sealed/GATES_FINAL_T911.json",
+    "colab_gasto": 0.0
+  },
+  "proximo_passo_T912_proposta": [
+    "Reconstruir train com dose mínima por classe: >=150 exemplos/classe para qos LOW_COST/STREAM/FAILOVER, >=150 cx3 (reusar gerador de contrastivos T910, PERSISTIR em t912/datasets/)",
+    "Gate de censo no prepare: nenhuma classe com <100 exemplos de treino (fail-fast)",
+    "Manter A0/A0_cal como candidatos; re-treino 1 braço (0.8B P0) já pode ser suficiente",
+    "Revisão humana da fila 599 (T910) continua pendente como validação GOLD"
+  ],
+  "t904_inalterado": true
+}

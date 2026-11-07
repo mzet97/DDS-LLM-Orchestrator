@@ -1,0 +1,49 @@
+{
+  "campaign": "T911 — Unsloth Decision Models (Qwen3.5) + XML prompt ablation",
+  "generated": "2026-11-07",
+  "host_train": ".61 RTX 3080 10GB, CUDA 12.6, torch 2.14.1+cu126, Unsloth 2026.11.3, transformers 5.17.0, venv-t908",
+  "data": {
+    "train": "train_t911.jsonl n=3978 (qos: BALANCED 3614 / CRITICAL 348 / LOW_COST 6 / STREAM 6 / FAILOVER 4)",
+    "dev": "dev_t911.jsonl n=1037",
+    "cal": "cal_t911.jsonl n=691",
+    "sealed": "sealed/pool.jsonl n=2306 sha256 30ba7617a0e53045… + labels.json sha256 1b4b04abfec47c65…",
+    "questions": "QUESTIONS_V1 (5 perguntas: qos_profile choice, needs_planning noul, capabilities noul AGREGADA, complexity score 0-3, urgency score 0-2)"
+  },
+  "training_common": {"lora_r": 16, "lora_alpha": 16, "dropout": 0, "epochs": 6, "lr": 2e-4, "sched": "cosine", "warmup": 10, "wd": 0.01, "bf16": true, "seed": 909, "mb": 16, "ga": 1, "trainer": "unsloth.DecisionTrainer", "max_seq_length": 2048, "load_in_4bit": false},
+  "arms": {
+    "A0": {"base": "unsloth/Qwen3.5-0.8B", "prompt": "P0 plain", "dir": ".61:/home/agent/t911_train/arm_A0", "size": "113M",
+           "adapter_sha256": "d2603508564475c24fb3805c3e4ea14ae6cbd50792bc2b301671ccdd3189327b",
+           "joint_head_sha256": "339ef5adfd6ffd409c1bc25027bcc9432348c8efe5542cdd18f9745da38666fd",
+           "train": "2838 steps (mb8) 79min, train_loss 0.1102, eval_loss 1.445", "temperature": [1.0, 1.0, 1.0]},
+    "A1": {"base": "unsloth/Qwen3.5-0.8B", "prompt": "P1 xml <decision_input version=t911-v1><user_request>", "dir": ".61:/home/agent/t911_train/arm_A1", "size": "113M",
+           "adapter_sha256": "3d5b6d66fc37d91d672b2bf5062dc76c8ccc0d5e06c5d418d2b28ab7bb6c646e",
+           "joint_head_sha256": "91a47d3ce7a489807cba855ba55a2e5a156c5c12343c3a6c6e8bd6a7c774262e",
+           "train": "1422 steps (mb16) ~20min", "temperature": [1.0, 1.0, 1.0]},
+    "B0": {"base": "unsloth/Qwen3.5-2B", "prompt": "P0 plain", "dir": ".61:/home/agent/t911_train/arm_B0", "size": "142M",
+           "adapter_sha256": "3cabbf2c03689912954fe904d98375ee4ec71e4bc69a25771ec72757dba75138",
+           "joint_head_sha256": "c0306ac63c39c03ea83017c95e4e93cf810ff9e4183547c58559361f9a760ee1",
+           "train": "1422 steps (mb16) ~35min", "temperature": [1.0, 1.0, 1.0]},
+    "B1": {"base": "unsloth/Qwen3.5-2B", "prompt": "P1 xml", "dir": ".61:/home/agent/t911_train/arm_B1", "size": "142M",
+           "adapter_sha256": "179dadb706607d599affe9b58467afea95825067962b39f3823f461cc56f6511",
+           "joint_head_sha256": "5e31dc1250da929f800b2a257e53e95a66e2763364e6c0eb9fef32a6ba5c5e14",
+           "train": "1422 steps (mb16) ~36min", "temperature": [1.0, 1.0, 1.0]}
+  },
+  "finalista": {
+    "arm": "A0",
+    "rule": "PREREG min-F1 no dev: todos 0.0 (STREAM/FAILOVER nunca preditas) -> empate -> menor custo (0.8B, P0)",
+    "calibrated_dir": ".61:/home/agent/t911_train/arm_A0_cal",
+    "calibration": {"split": "cal_t911.jsonl n=691", "method": "FastDecisionModel.calibrate (temperature LBFGS NLL por qtype)",
+                    "temperature_after": [0.9686394333839417, 0.9656230211257935, 1.2202075719833374],
+                    "folded_temperature": 4.340381622314453, "ece": 0.0439, "accuracy": 0.8889, "record_accuracy": 0.6440},
+    "adapter_sha256": "d2603508564475c24fb3805c3e4ea14ae6cbd50792bc2b301671ccdd3189327b (idêntico ao A0)",
+    "joint_head_sha256_cal": "dc43df05fd9ce58e2695b9f14554bb5dfa24f31863224e33f15a19ebf27c1820 (temperatura dobrada no head)"
+  },
+  "dev_metrics_selection": {
+    "A0": {"min_f1": 0.0, "qos": 0.3525, "cx": 0.5573, "urg": 0.839, "plan": 0.891, "caps_agg": 0.5006, "cx3": 0.0625},
+    "A1": {"min_f1": 0.0, "qos": 0.3559, "cx": 0.5618, "urg": 0.8531, "plan": 0.8968, "caps_agg": 0.5319, "cx3": 0.0625},
+    "B0": {"min_f1": 0.0, "qos": 0.3604, "cx": 0.5182, "urg": 0.8171, "plan": 0.8959, "caps_agg": 0.4713, "cx3": 0.0},
+    "B1": {"min_f1": 0.0, "qos": 0.3986, "cx": 0.5979, "urg": 0.8399, "plan": 0.891, "caps_agg": 0.4537, "cx3": 0.1765}
+  },
+  "preregistration_commit": "871efe8 (src/rust, branch t911-unsloth-decision)",
+  "sealed_opened": "2026-11-07T01:06 UTC, open_count=1, 4 braços pareados"
+}
