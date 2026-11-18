@@ -1,0 +1,194 @@
+{
+ "generated": "2026-11-18T14:01:45",
+ "sources": {
+  "T912GEN_T912-QOS-RARE": 1978,
+  "T912GEN_S-CX3": 245,
+  "T912GEN_S-URG": 0,
+  "T912GEN_S-CAPS8": 0,
+  "POOL_LLM_SILVER_v6_t909rebuild": 4274,
+  "POOL_LLM_SILVER_v6_contrast": 453,
+  "POOL_CONSTRUCTED_SILVER_urg": 233,
+  "POOL_CONSTRUCTED_SILVER_qos": 240,
+  "POOL_LLM_SILVER_v6_external": 3650,
+  "REPLAY_t909_train": 4256,
+  "REPLAY_t911_train": 3978
+ },
+ "counts": {
+  "raw": 19307,
+  "uniq": 15077,
+  "dropped_exact": 3916,
+  "dropped_8gram": 933,
+  "clean": 10228
+ },
+ "splits": {
+  "train": {
+   "n": 4979,
+   "qos": {
+    "QI_FAILOVER": 362,
+    "QI_BALANCED": 3000,
+    "QI_LOW_COST": 470,
+    "QI_CRITICAL": 775,
+    "QI_STREAM_LIKE": 372
+   },
+   "cx": {
+    "0": 295,
+    "3": 414,
+    "1": 2643,
+    "2": 1627
+   },
+   "urg": {
+    "1": 1354,
+    "0": 3019,
+    "2": 606
+   },
+   "plan": {
+    "false": 2389,
+    "true": 2590
+   },
+   "caps_pos": {
+    "summarization": 604,
+    "security_audit": 373,
+    "research": 524,
+    "translation": 367,
+    "code_review": 417,
+    "python_refactor": 463,
+    "rust_refactor": 380,
+    "unit_testing": 363
+   }
+  },
+  "dev": {
+   "n": 1000,
+   "qos": {
+    "QI_FAILOVER": 61,
+    "QI_STREAM_LIKE": 94,
+    "QI_LOW_COST": 53,
+    "QI_CRITICAL": 81,
+    "QI_BALANCED": 711
+   },
+   "cx": {
+    "2": 284,
+    "1": 591,
+    "3": 54,
+    "0": 71
+   },
+   "urg": {
+    "1": 75,
+    "0": 881,
+    "2": 44
+   },
+   "plan": {
+    "true": 461,
+    "false": 539
+   },
+   "caps_pos": {
+    "code_review": 35,
+    "research": 55,
+    "summarization": 47,
+    "security_audit": 44,
+    "translation": 40,
+    "unit_testing": 31,
+    "python_refactor": 32,
+    "rust_refactor": 30
+   }
+  },
+  "cal": {
+   "n": 700,
+   "qos": {
+    "QI_LOW_COST": 62,
+    "QI_FAILOVER": 64,
+    "QI_STREAM_LIKE": 92,
+    "QI_BALANCED": 399,
+    "QI_CRITICAL": 83
+   },
+   "cx": {
+    "1": 391,
+    "2": 217,
+    "3": 56,
+    "0": 36
+   },
+   "urg": {
+    "0": 532,
+    "1": 124,
+    "2": 44
+   },
+   "plan": {
+    "false": 334,
+    "true": 366
+   },
+   "caps_pos": {
+    "summarization": 92,
+    "security_audit": 54,
+    "research": 44,
+    "translation": 39,
+    "code_review": 36,
+    "python_refactor": 31,
+    "rust_refactor": 33,
+    "unit_testing": 30
+   }
+  },
+  "sealed": {
+   "n": 2000,
+   "qos": {
+    "QI_BALANCED": 746,
+    "QI_LOW_COST": 411,
+    "QI_FAILOVER": 406,
+    "QI_STREAM_LIKE": 303,
+    "QI_CRITICAL": 134
+   },
+   "cx": {
+    "1": 1165,
+    "0": 53,
+    "2": 698,
+    "3": 84
+   },
+   "urg": {
+    "0": 1632,
+    "1": 228,
+    "2": 140
+   },
+   "plan": {
+    "false": 1008,
+    "true": 992
+   },
+   "caps_pos": {
+    "summarization": 144,
+    "security_audit": 71,
+    "research": 85,
+    "python_refactor": 83,
+    "code_review": 74,
+    "translation": 68,
+    "rust_refactor": 65,
+    "unit_testing": 60
+   }
+  }
+ },
+ "train_floors": {
+  "qos_rare": 150,
+  "cx3": 150,
+  "urg1": 250,
+  "cap_pos": 150
+ },
+ "balanced_cap": 3000,
+ "files": {
+  "train_t912.jsonl": {
+   "sha256": "56483c616849f9d902ffc14b76776737fdcc71c0a4f11bfd8aa88f518ce6aa80",
+   "lines": 4979
+  },
+  "dev_t912.jsonl": {
+   "sha256": "af6bee4c0473d0250bdc3c8088d0daba05da47b326ed07d3be0e42066cb399cb",
+   "lines": 1000
+  },
+  "cal_t912.jsonl": {
+   "sha256": "f5f04f961c0eafa0b18b26b3c5119d8e83bff526552478b9ed9712d9acddb4f2",
+   "lines": 700
+  },
+  "pool.jsonl": {
+   "sha256": "bd4ab4c7dbbeead6e2a57a3b4ba3fd66b43a6fb18d30a2b519e93bd8f6c91e8c",
+   "lines": 2000
+  },
+  "labels.json": {
+   "sha256": "5634205db6f28b1381bc9464dcf80b9dd20064e49b533b59378c349ba44db57f",
+   "lines": 28002
+  }
+ }
+}

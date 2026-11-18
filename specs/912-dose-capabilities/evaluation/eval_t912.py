@@ -2,7 +2,7 @@
 """T912-F4/F5 — Avaliador 12 perguntas (4 eixos + 8 caps individuais).
 
 Espelha evaluator_t909 (argmax choice/score, threshold 0.5 noul) + per-cap F1.
-Roda na RX (venv-t909-rocm) ou na .61 (venv-t908).
+Portátil (RX/SDumont): laya_worker resolvido via T912_REPO/T912_ROOT ou relativo a __file__.
 
 Uso:
   eval_t912.py --arm-dir CKPT --split datasets/dev_t912.jsonl --out OUT [--limit N]
@@ -17,7 +17,10 @@ import sys
 import time
 from collections import defaultdict, Counter
 
-sys.path.insert(0, "/var/mnt/HD1TB/tese/src/rust/workers/laya-worker/src")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_SPEC = os.environ.get("T912_ROOT") or os.path.normpath(os.path.join(_HERE, ".."))
+_REPO = os.environ.get("T912_REPO") or os.path.normpath(os.path.join(_SPEC, "..", ".."))
+sys.path.insert(0, os.path.join(_REPO, "workers", "laya-worker", "src"))
 from laya_worker.questions import QUESTIONS_V1, CAPABILITY_CATALOG
 
 SEED = 909

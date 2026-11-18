@@ -1,12 +1,12 @@
 {
-  "campaign": "T912 — Dose por classe + 8 capacidades individuais (Qwen3.5 na RX 7900 XTX)",
-  "preregistered_at": "PENDENTE (commit antes do treino; SHAs do sealed preenchidos apos F1b)",
+  "campaign": "T912 — Dose por classe + 8 capacidades individuais (Qwen3.5: SDumont LNCC ou RX 7900 XTX)",
+  "preregistered_at": "2026-11-18 (freeze ANTES do treino; sealed construido em F2 2026-11-18, SHAs abaixo)",
   "question": "Com (a) contrato de 12 perguntas (4 eixos + 8 caps individuais, corrigindo o bug E1 da T911 onde a pergunta capabilities foi pulada) e (b) dose minima por classe no treino (>=150 raras/cx3, >=150 positivas por cap, >=250 urg1), o Qwen3.5-2B atinge F1 > 0.90 por classe e por capacidade num sealed novo independente, preservando os ganhos ordinais da T911?",
   "arms": {
     "C0": {"encoder": "unsloth/Qwen3.5-2B", "prompt": "P0 plain", "role": "primario (autor)"},
     "C1": {"encoder": "unsloth/Qwen3.5-0.8B", "prompt": "P0 plain", "role": "baseline comparativo (autor)"}
   },
-  "hardware_rule": "RX 7900 XTX prioritaria (venv-t909-rocm, torch 2.9.1+rocm6.4, unsloth 2026.11.3; smoke F0 PASS 0.8B e 2B, layout clef com 12 targets, VRAM 9.2/24GB em mb4, junction 68C). RTX 3080 da .61 apenas para geracao/rotulagem/avaliacao/contingencia. Sem Colab. Qualquer incompatibilidade ROCm: diagnosticar e documentar ANTES de mudar de plataforma.",
+  "hardware_rule": "ADENDO 2026-11-18 (antes do treino, prereg ainda nao congelado): plataforma primaria passa a ser GPU NVIDIA do SDumont/LNCC (alocacao do orientador, proposta 249768; pacote lncc/ com prepare+sbatch+run_all; versoes pinadas identicas as da RX: torch 2.9.1, unsloth 2026.11.3, transformers 5.17.0, datasets 4.8.5; V100 roda fp16 por is_bfloat16_supported()=False, H100 bf16; mb 16). RX 7900 XTX (venv-t909-rocm, torch 2.9.1+rocm6.4; smoke F0 PASS 0.8B e 2B, clef 12 targets, VRAM 9.2/24GB em mb4, junction 68C) passa a contingencia/replica. RTX 3080 da .61 apenas para geracao/rotulagem/avaliacao/contingencia. Sem Colab. Diferencas de precisao (fp16 V100 vs bf16) devem ser registradas no train_report/DECISION; qualificar incompatibilidade ANTES de trocar de plataforma.",
   "training_fixed": {
     "lora": {"r": 16, "alpha": 16, "dropout": 0},
     "epochs": 3, "lr": 2e-4, "scheduler": "cosine", "warmup_steps": 20,
@@ -40,15 +40,17 @@
     }
   },
   "sealed_open_protocol": "abertura UNICA (open_count 0->1) apos freeze de pesos+calibrador+decision_plan; avaliacao pareada C0/C1 no MESMO sealed; predicoes por exemplo preservadas (evaluation/predictions/predictions_{C0,C1}_sealed.jsonl)",
-  "budget": {"colab_cu": 0, "max_arms": 2, "retries_tecnicos_por_braco": 1 (OOM/disco; sem tuning de hiperparametros alem do mb)"},
+  "budget": {"colab_cu": 0, "max_arms": 2, "retries_tecnicos_por_braco": "1 (OOM/disco; sem tuning de hiperparametros alem do mb)"},
   "worker_compatibility_F6": {
     "python": "predict 12 perguntas em 50 prompts runtime; schema {choice|noul|score, probabilities}; dict de perguntas identico ao adapter.py::_laya_questions()",
     "rust_dds": "laya-worker em modo shadow (shadow_only, padrao T904) com checkpoint T912 via venv local; CycloneDDS real; T904 vigente intocado; E2E somente se gates PASS"
   },
   "frozen_hashes": {
-    "sealed_pool_sha256": "PREENCHER APOS F1b",
-    "sealed_labels_sha256": "PREENCHER APOS F1b",
-    "train/dev/cal_sha256": "ver MANIFEST.json",
-    "prereg_commit": "PREENCHER NO COMMIT"
+    "sealed_pool_sha256": "bd4ab4c7dbbeead6e2a57a3b4ba3fd66b43a6fb18d30a2b519e93bd8f6c91e8c",
+    "sealed_labels_sha256": "5634205db6f28b1381bc9464dcf80b9dd20064e49b533b59378c349ba44db57f",
+    "train_sha256": "56483c616849f9d902ffc14b76776737fdcc71c0a4f11bfd8aa88f518ce6aa80",
+    "dev_sha256": "af6bee4c0473d0250bdc3c8088d0daba05da47b326ed07d3be0e42066cb399cb",
+    "cal_sha256": "f5f04f961c0eafa0b18b26b3c5119d8e83bff526552478b9ed9712d9acddb4f2",
+    "prereg_commit": "hash do commit que adiciona este pacote ao branch t912-dose-capabilities (freeze = commit; registrado no DECISION_T912)"
   }
 }

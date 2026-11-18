@@ -1,0 +1,10 @@
+{
+ "campaign": "T912",
+ "status": "NOT_OPENED",
+ "open_count": 0,
+ "n": 2000,
+ "sha256_pool": "bd4ab4c7dbbeead6e2a57a3b4ba3fd66b43a6fb18d30a2b519e93bd8f6c91e8c",
+ "sha256_labels": "5634205db6f28b1381bc9464dcf80b9dd20064e49b533b59378c349ba44db57f",
+ "created": "2026-11-18",
+ "rule": "abertura UNICA apos freeze pesos+calibrador; leak 8-gram vs 7 sealeds historicos"
+}

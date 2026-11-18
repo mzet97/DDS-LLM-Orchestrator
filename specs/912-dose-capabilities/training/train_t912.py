@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
-"""T912-F3 — Treino na RX 7900 XTX (ROCm). Derivado do t911_train_v2.py (provado).
+"""T912-F3 — Treino (PORTÁTIL: local RX/.61 ou SDumont LNCC). Derivado do
+t911_train_v2.py (provado) e do train_t912.py da handoff (caminhos locais).
 
 Mudanças T912:
 - perguntas: bloco de 12 (4 eixos + 8 cap__*) => gold de 12 chaves bate com as perguntas
   (corrige o bug E1 da T911: pergunta capabilities sem gold era pulada)
-- checkpoints POR ÉPOCA em NVMe (~/.cache/tese-laya/t912_train/arm_{C0,C1}/ep{k}/)
-  com SHA-256 registrados no train_report.json
+- checkpoints POR ÉPOCA com SHA-256 registrados no train_report.json
 - braços: C0 = Qwen3.5-2B (primário), C1 = Qwen3.5-0.8B (baseline)
-- arg --mb (default 16) p/ tuning de VRAM 24GB
+- bf16 automático via is_bfloat16_supported() (V100 => fp16; H100/A100 => bf16)
+
+Paths via ambiente (todos opcionais):
+  T912_ROOT  spec 912 (default: dir acima deste arquivo)
+  T912_REPO  raiz do repo git (default: duas acima da spec)
+  T912_WORK  dir de checkpoints (default: ~/.cache/tese-laya/t912_train)
 
 Uso: python train_t912.py C0 [--mb 16] [--epochs 3]
 """
@@ -17,11 +22,14 @@ import os
 import sys
 import time
 
-sys.path.insert(0, "/var/mnt/HD1TB/tese/src/rust/workers/laya-worker/src")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SPEC = os.environ.get("T912_ROOT") or os.path.normpath(os.path.join(HERE, ".."))
+REPO = os.environ.get("T912_REPO") or os.path.normpath(os.path.join(SPEC, "..", ".."))
+sys.path.insert(0, os.path.join(REPO, "workers", "laya-worker", "src"))
 from laya_worker.questions import QUESTIONS_V1, CAPABILITY_CATALOG
 
-DATA = "/var/mnt/HD1TB/tese/src/laya_t900_handoff/t912/datasets"
-WORK = os.path.expanduser("~/.cache/tese-laya/t912_train")
+DATA = os.path.join(SPEC, "datasets")
+WORK = os.environ.get("T912_WORK") or os.path.expanduser("~/.cache/tese-laya/t912_train")
 SEED = 909
 CAPS = list(CAPABILITY_CATALOG)
 Q12 = {k: QUESTIONS_V1[k] for k in ("qos_profile", "needs_planning", "complexity", "urgency")}
@@ -53,9 +61,14 @@ def main():
             mb = int(sys.argv[i + 1])
         elif a == "--epochs":
             epochs = int(sys.argv[i + 1])
-    out_dir = f"{WORK}/arm_{ARM}"
+    out_dir = os.path.join(WORK, f"arm_{ARM}")
     os.makedirs(out_dir, exist_ok=True)
-    log(f"ARM={ARM} encoder={ENCODER[ARM]} mb={mb} epochs={epochs}")
+    log(f"ARM={ARM} encoder={ENCODER[ARM]} mb={mb} epochs={epochs} WORK={WORK}")
+
+    import torch
+    log(f"torch={torch.__version__} cuda={torch.cuda.is_available()} "
+        f"dev={torch.cuda.get_device_name(0) if torch.cuda.is_available() else '-'} "
+        f"bf16={torch.cuda.is_bf16_supported() if torch.cuda.is_available() else '-'}")
 
     from unsloth import FastDecisionModel, DecisionTrainer, is_bfloat16_supported
     from datasets import Dataset
@@ -68,7 +81,7 @@ def main():
         use_gradient_checkpointing="unsloth", random_state=SEED)
 
     # dataset: rows {state, questions, gold} — substitui questions pelo bloco canônico de 12
-    rows = [json.loads(l) for l in open(f"{DATA}/train_t912.jsonl") if l.strip()]
+    rows = [json.loads(l) for l in open(os.path.join(DATA, "train_t912.jsonl")) if l.strip()]
     for r in rows:
         r["questions"] = Q12
     log(f"train rows: {len(rows)}")
@@ -95,11 +108,11 @@ def main():
             if state.is_world_process_zero and state.global_step % steps_per_epoch == 0:
                 ep = state.global_step // steps_per_epoch
                 if 0 < ep < epochs:
-                    d = f"{out_dir}/ep{ep}"
+                    d = os.path.join(out_dir, f"ep{ep}")
                     os.makedirs(d, exist_ok=True)
                     model.save_pretrained(d)
                     log(f"checkpoint ep{ep} salvo -> {d} "
-                        f"(sha {sha(d + '/adapter_model.safetensors')[:16]})")
+                        f"(sha {sha(os.path.join(d, 'adapter_model.safetensors'))[:16]})")
             return control
 
     trainer = DecisionTrainer(model=model, processing_class=tokenizer,
@@ -120,13 +133,13 @@ def main():
     assert len(ans) == 12, f"predict {len(ans)} != 12"
     rep = {"arm": ARM, "encoder": ENCODER[ARM], "mb": mb, "epochs": epochs,
            "train_rows": len(rows), "items": len(items), "train_seconds": round(train_s),
-           "adapter_sha256": sha(f"{out_dir}/adapter_model.safetensors"),
-           "joint_head_sha256": sha(f"{out_dir}/joint_head.safetensors"),
+           "adapter_sha256": sha(os.path.join(out_dir, "adapter_model.safetensors")),
+           "joint_head_sha256": sha(os.path.join(out_dir, "joint_head.safetensors")),
            "predict_smoke_keys": sorted(ans.keys()),
            "predict_sample": {"qos": ans["qos_profile"].get("answer"),
                               "cap__rust_refactor": ans["cap__rust_refactor"].get("noul")},
            "finished": time.strftime("%Y-%m-%dT%H:%M:%S")}
-    json.dump(rep, open(f"{out_dir}/train_report.json", "w"), indent=1)
+    json.dump(rep, open(os.path.join(out_dir, "train_report.json"), "w"), indent=1)
     log(f"TRAIN_COMPLETE {ARM}: adapter={rep['adapter_sha256'][:16]} "
         f"rust_noul={rep['predict_sample']['cap__rust_refactor']}")
 

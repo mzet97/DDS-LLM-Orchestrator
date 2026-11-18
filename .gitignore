@@ -5,3 +5,10 @@
 *_req.pem
 
 dist/
+
+# T912 (LNCC/SDumont + treino unsloth)
+__pycache__/
+unsloth_compiled_cache/
+specs/912-dose-capabilities/results/
+slurm-*.out
+slurm-*.err
